@@ -1,0 +1,38 @@
+version: v1
+name: build-and-test
+
+concurrency:
+  group: main
+  limit: 1
+  cancel_previous: true
+
+triggers:
+  - event: push
+    branches: [main]
+  - event: pull_request
+
+stages:
+  - name: verify
+    jobs:
+      - name: unit-tests
+        image: golang:1.27-alpine
+        timeout: 15m
+        resources:
+          cpu: "2"
+          memory: 2Gi
+          pids: 256
+        steps:
+          - name: test
+            commands:
+              - go test ./...
+
+  - name: package
+    depends_on: [verify]
+    jobs:
+      - name: web
+        image: node:22-alpine
+        steps:
+          - name: build
+            commands:
+              - npm ci
+              - npm run build

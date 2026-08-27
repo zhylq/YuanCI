@@ -1,0 +1,14 @@
+name: yuanci-runner
+
+services:
+  runner:
+    image: ghcr.io/yuanci/yuanci-runner:${YUANCI_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      YUANCI_SERVER_URL: ${YUANCI_SERVER_URL:?set YUANCI_SERVER_URL}
+      YUANCI_RUNNER_TOKEN: ${YUANCI_RUNNER_SHARED_TOKEN:?set YUANCI_RUNNER_SHARED_TOKEN}
+      YUANCI_RUNNER_NAME: ${YUANCI_RUNNER_NAME:-docker-runner-1}
+      YUANCI_RUNNER_CAPACITY: ${YUANCI_RUNNER_CAPACITY:-2}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    security_opt: ["no-new-privileges:true"]

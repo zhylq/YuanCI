@@ -1,0 +1,88 @@
+openapi: 3.1.0
+info:
+  title: YuanCI API
+  version: 0.1.0
+  description: Versioned public control-plane API for YuanCI.
+servers:
+  - url: /api/v1
+paths:
+  /system/info:
+    get:
+      operationId: getSystemInfo
+      responses:
+        '200':
+          description: Server build and capability information
+          content: { application/json: { schema: { type: object } } }
+  /pipelines/validate:
+    post:
+      operationId: validatePipeline
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [content]
+              properties: { content: { type: string, maxLength: 1048576 } }
+      responses:
+        '200': { description: Valid compiled pipeline }
+        '422': { description: Pipeline validation errors }
+  /runs:
+    get:
+      operationId: listRuns
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+      responses:
+        '200':
+          description: Recent runs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Run' }
+    post:
+      operationId: createRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [pipeline]
+              properties:
+                pipeline: { type: string }
+                event: { type: string, default: manual }
+                ref: { type: string }
+                commit_sha: { type: string }
+      responses:
+        '201': { description: Run accepted and transactionally queued }
+        '422': { description: Pipeline validation errors }
+components:
+  schemas:
+    Run:
+      type: object
+      required: [id, pipeline_name, event, status, config_sha256, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        pipeline_name: { type: string }
+        event: { type: string }
+        ref: { type: string }
+        commit_sha: { type: string }
+        status:
+          type: string
+          enum: [queued, running, waiting_approval, succeeded, failed, canceled]
+        config_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        plan: { type: object }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+  securitySchemes:
+    cookieSession: { type: apiKey, in: cookie, name: yuanci_session }
+security:
+  - cookieSession: []

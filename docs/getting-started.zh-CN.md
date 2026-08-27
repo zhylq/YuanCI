@@ -1,0 +1,167 @@
+# YuanCI 中文快速入门
+
+这份指南面向希望直接使用 Docker 体验 YuanCI、但不熟悉 Go 的用户。
+通过 Docker 运行时，不需要在电脑上安装 Go、Node.js 或 PostgreSQL。
+
+> 当前版本是早期开发版本，只适合本机体验或可信的内部测试任务。OAuth、
+> RBAC、Runner mTLS 和完整的 GitHub App 接入尚未完成，请勿直接暴露到公网或
+> 用于生产发布。
+
+## 1. 准备环境
+
+需要：
+
+- Windows 10/11、macOS 或 Linux；
+- Docker Desktop，或者 Linux 上的 Docker Engine；
+- Docker Compose v2；
+- 至少 2 GB 可用内存和 5 GB 可用磁盘；
+- 本机 `8080` 端口未被其他程序占用。
+
+Windows 用户应确认 Docker Desktop 正在使用 Linux containers。
+
+## 2. 下载代码
+
+```bash
+git clone https://github.com/zhylq/YuanCI.git
+cd YuanCI
+```
+
+如果你已经在本项目目录中，可以跳过这一步。
+
+## 3. 创建本地配置
+
+复制示例配置：
+
+Windows PowerShell：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Linux 或 macOS：
+
+```bash
+cp .env.example .env
+```
+
+用文本编辑器打开 `.env`，至少替换下面两项：
+
+```dotenv
+YUANCI_POSTGRES_PASSWORD=请替换为一个较长且随机的数据库密码
+YUANCI_RUNNER_SHARED_TOKEN=请替换为至少32字节的随机Runner令牌
+```
+
+`.env` 已被 Git 忽略，不要手动强制提交。当前 Quickstart 尚未使用
+`YUANCI_MASTER_KEY_BASE64`，可以暂时保留示例值。
+
+## 4. 一键启动
+
+在仓库根目录执行：
+
+```bash
+docker compose --env-file .env -f deploy/compose.quickstart.yml up -d --build
+```
+
+首次启动会下载基础镜像并编译前后端，耗时取决于网络速度。查看状态：
+
+```bash
+docker compose --env-file .env -f deploy/compose.quickstart.yml ps
+```
+
+当 `postgres` 和 `server` 显示 `healthy`、`runner` 显示 `Up` 后，打开：
+
+- 控制台：<http://localhost:8080>
+- 健康检查：<http://localhost:8080/readyz>
+
+## 5. 当前版本可以做什么
+
+Web 控制台目前支持：
+
+- 查看 Server 状态和最近的流水线运行；
+- 在 Pipeline 编辑器中编辑并校验 `.yuanci.yml`；
+- 查看编译后的 Stage、Job 和 DAG 执行计划。
+
+Runner 可以从 PostgreSQL 事务队列领取 Job，并在隔离的 Docker 容器中
+执行命令。GitHub 适配器已经实现和测试，但 GitHub App 登录、仓库连接页面
+以及 Webhook 到自动流水线的完整链路仍在开发，因此现在还不能在 UI 中添加
+GitHub 仓库后自动触发构建。
+
+示例 Pipeline 位于 `examples/pipelines/basic.yuanci.yml`。可以复制其内容到
+控制台的 Pipeline 编辑器进行校验。
+
+## 6. 查看日志和排查问题
+
+查看全部日志：
+
+```bash
+docker compose --env-file .env -f deploy/compose.quickstart.yml logs -f
+```
+
+只看控制面或 Runner：
+
+```bash
+docker compose --env-file .env -f deploy/compose.quickstart.yml logs -f server
+docker compose --env-file .env -f deploy/compose.quickstart.yml logs -f runner
+```
+
+常见问题：
+
+- `8080` 端口被占用：停止占用该端口的程序，或修改 Compose 中的端口映射。
+- Runner 无法启动：确认 Docker Desktop/Engine 正在运行，并允许挂载 Docker
+  Socket。
+- Server 一直不健康：先查看 `postgres` 和 `server` 日志，通常是 `.env` 中的
+  数据库密码未配置或旧数据卷使用了另一密码。
+- PowerShell 请求本机地址返回代理错误：访问 `localhost`，或把
+  `localhost,127.0.0.1` 加入 `NO_PROXY`。
+
+## 7. 停止、重启和删除
+
+停止服务但保留数据库数据：
+
+```bash
+docker compose --env-file .env -f deploy/compose.quickstart.yml down
+```
+
+重新启动：
+
+```bash
+docker compose --env-file .env -f deploy/compose.quickstart.yml up -d
+```
+
+更新代码后重新构建：
+
+```bash
+git pull
+docker compose --env-file .env -f deploy/compose.quickstart.yml up -d --build
+```
+
+不要随意执行 `docker compose down -v`，`-v` 会删除 PostgreSQL 数据卷。
+
+## 8. 开发者模式
+
+只有修改源码时才需要 Go 和 Node.js：
+
+- Go：编译 Server、Runner 和 CLI；
+- Node.js/npm：编译 React 控制台；
+- PostgreSQL：保存配置、运行状态和任务队列；
+- Docker：实际执行 Pipeline Job。
+
+常用开发验证命令：
+
+```bash
+go test ./...
+go vet ./...
+npm --prefix web test
+npm --prefix web run lint
+npm --prefix web run build
+```
+
+## 9. 生产部署状态
+
+`deploy/compose.production.yml` 和 `deploy/compose.runner.yml` 已提供控制面与
+Runner 分机部署骨架，但当前版本会对缺失的身份认证安全能力采取 fail-closed
+策略，而且 GHCR 发布镜像尚未交付。因此现阶段请使用 Quickstart 做开发和
+体验，不要把 production Compose 当作可正式上线的版本。
+
+正式部署前至少还需要完成 OAuth/RBAC、Runner mTLS、密钥管理、备份恢复、
+GitHub App 安装认证和安全审计。

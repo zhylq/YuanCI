@@ -1,0 +1,33 @@
+name: yuanci-control-plane
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: yuanci
+      POSTGRES_USER: yuanci
+      POSTGRES_PASSWORD: ${YUANCI_POSTGRES_PASSWORD:?set YUANCI_POSTGRES_PASSWORD}
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yuanci -d yuanci"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt: ["no-new-privileges:true"]
+
+  server:
+    image: ghcr.io/yuanci/yuanci-server:${YUANCI_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      YUANCI_DATABASE_URL: postgres://yuanci:${YUANCI_POSTGRES_PASSWORD}@postgres:5432/yuanci?sslmode=disable
+      YUANCI_RUNNER_SHARED_TOKEN: ${YUANCI_RUNNER_SHARED_TOKEN:?set YUANCI_RUNNER_SHARED_TOKEN}
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=64m"]
+
+volumes:
+  postgres-data:

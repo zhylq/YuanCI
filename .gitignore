@@ -1,0 +1,15 @@
+/.env
+/.idea/
+/.vscode/
+/bin/
+/coverage/
+/.tools/
+/.cache/
+/web/dist/
+/web/node_modules/
+/web/.npm-cache/
+*.log
+*.test
+*.out
+*.tsbuildinfo
+.DS_Store

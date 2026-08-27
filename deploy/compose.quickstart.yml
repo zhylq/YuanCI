@@ -1,0 +1,58 @@
+name: yuanci-quickstart
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: yuanci
+      POSTGRES_USER: yuanci
+      POSTGRES_PASSWORD: ${YUANCI_POSTGRES_PASSWORD:?set YUANCI_POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yuanci -d yuanci"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt: ["no-new-privileges:true"]
+
+  server:
+    build:
+      context: ..
+      target: server
+    restart: unless-stopped
+    environment:
+      YUANCI_DATABASE_URL: postgres://yuanci:${YUANCI_POSTGRES_PASSWORD}@postgres:5432/yuanci?sslmode=disable
+      YUANCI_RUNNER_SHARED_TOKEN: ${YUANCI_RUNNER_SHARED_TOKEN:?set YUANCI_RUNNER_SHARED_TOKEN}
+      YUANCI_MILESTONE0_INSECURE_API: "true"
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=64m"]
+
+  runner:
+    build:
+      context: ..
+      target: runner
+    restart: unless-stopped
+    environment:
+      YUANCI_SERVER_URL: http://server:8080
+      YUANCI_RUNNER_TOKEN: ${YUANCI_RUNNER_SHARED_TOKEN:?set YUANCI_RUNNER_SHARED_TOKEN}
+      YUANCI_RUNNER_NAME: quickstart-docker
+      YUANCI_RUNNER_CAPACITY: "2"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      server: { condition: service_healthy }
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  postgres-data:

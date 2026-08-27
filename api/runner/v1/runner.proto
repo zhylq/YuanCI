@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package yuanci.runner.v1;
+
+option go_package = "github.com/yuanci/yuanci/gen/runner/v1;runnerv1";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+service RunnerService {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Work(stream RunnerMessage) returns (stream ServerMessage);
+  rpc RotateCertificate(RotateCertificateRequest) returns (RotateCertificateResponse);
+}
+
+message RegisterRequest {
+  string one_time_token = 1;
+  string name = 2;
+  RunnerCapabilities capabilities = 3;
+}
+
+message RegisterResponse {
+  string runner_id = 1;
+  bytes certificate_pem = 2;
+  bytes private_key_pem = 3;
+  bytes ca_certificate_pem = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+message RunnerCapabilities {
+  string os = 1;
+  string architecture = 2;
+  map<string, string> labels = 3;
+  int32 capacity = 4;
+  int64 available_disk_bytes = 5;
+  string executor = 6;
+}
+
+message RunnerMessage {
+  oneof body {
+    Heartbeat heartbeat = 1;
+    JobAccepted job_accepted = 2;
+    JobStarted job_started = 3;
+    LogChunk log_chunk = 4;
+    JobCompleted job_completed = 5;
+  }
+}
+
+message ServerMessage {
+  oneof body {
+    JobAssignment assignment = 1;
+    CancelJob cancel = 2;
+    LeaseRenewed lease_renewed = 3;
+  }
+}
+
+message Heartbeat {
+  string runner_id = 1;
+  RunnerCapabilities capabilities = 2;
+  repeated string active_job_ids = 3;
+}
+
+message JobAssignment {
+  string job_id = 1;
+  string run_id = 2;
+  string lease_token = 3;
+  google.protobuf.Timestamp lease_expires_at = 4;
+  bytes execution_plan_json = 5;
+}
+
+message JobAccepted { string job_id = 1; string lease_token = 2; }
+message JobStarted { string job_id = 1; string lease_token = 2; }
+message LeaseRenewed { string job_id = 1; google.protobuf.Timestamp expires_at = 2; }
+message CancelJob { string job_id = 1; string reason = 2; }
+
+message LogChunk {
+  string job_id = 1;
+  string step_name = 2;
+  uint64 sequence = 3;
+  bytes data = 4;
+  bool stderr = 5;
+}
+
+message JobCompleted {
+  string job_id = 1;
+  string lease_token = 2;
+  string conclusion = 3;
+  int32 exit_code = 4;
+  google.protobuf.Duration duration = 5;
+}
+
+message RotateCertificateRequest { string runner_id = 1; }
+message RotateCertificateResponse {
+  bytes certificate_pem = 1;
+  bytes private_key_pem = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}

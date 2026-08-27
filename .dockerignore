@@ -1,0 +1,12 @@
+.git
+.github
+.idea
+.vscode
+.cache
+.tools
+bin
+coverage
+web/node_modules
+web/dist
+internal/webui/dist
+*.log
