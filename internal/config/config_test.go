@@ -6,16 +6,18 @@ import (
 )
 
 func TestServerFailsClosedWithoutIdentity(t *testing.T) {
+	t.Setenv("YUANCI_AUTHENTICATED_PREVIEW", "false")
 	t.Setenv("YUANCI_DATABASE_URL", "postgres://example")
 	t.Setenv("YUANCI_DEV_IN_MEMORY", "false")
 	t.Setenv("YUANCI_MILESTONE0_INSECURE_API", "false")
 	_, err := LoadServer()
-	if err == nil || !strings.Contains(err.Error(), "identity is not implemented") {
+	if err == nil || !strings.Contains(err.Error(), "production authentication is not ready") {
 		t.Fatalf("expected fail-closed error, got %v", err)
 	}
 }
 
 func TestDevelopmentMemoryModeIsExplicit(t *testing.T) {
+	t.Setenv("YUANCI_AUTHENTICATED_PREVIEW", "false")
 	t.Setenv("YUANCI_DATABASE_URL", "")
 	t.Setenv("YUANCI_DEV_IN_MEMORY", "true")
 	cfg, err := LoadServer()

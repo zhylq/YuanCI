@@ -33,6 +33,7 @@ type API struct {
 	sessions    identity.Sessions
 	authorized  runmodel.AuthorizedStore
 	origin      string
+	oauth       *GitHubLogin
 }
 
 // NewEvaluation exposes the deliberately unauthenticated milestone API.

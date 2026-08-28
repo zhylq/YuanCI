@@ -22,7 +22,7 @@ type BrowserBackend interface {
 // NewAuthenticated is the protected browser surface. It intentionally has no
 // legacy Runner routes or public session issuer. OAuth/runtime activation is a
 // separate gate; NewEvaluation must never be mounted alongside this handler.
-func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend BrowserBackend, bodyLimit int64, publicOrigin string) (http.Handler, error) {
+func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend BrowserBackend, bodyLimit int64, publicOrigin string, login ...GitHubLogin) (http.Handler, error) {
 	u, err := url.Parse(publicOrigin)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return nil, errors.New("authenticated API requires a canonical HTTPS public origin")
@@ -31,7 +31,16 @@ func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend Browser
 		return nil, errors.New("authenticated API requires all dependencies and a request limit")
 	}
 	a := &API{logger: logger, store: store, sessions: backend, authorized: backend, bodyLimit: bodyLimit, origin: u.Scheme + "://" + u.Host, startedAt: time.Now().UTC()}
+	if len(login) > 1 || (len(login) == 1 && (login[0].Store == nil || login[0].Provider == nil)) {
+		return nil, errors.New("login requires one complete provider and flow store")
+	}
 	mux := http.NewServeMux()
+	if len(login) == 1 {
+		a.oauth = &login[0]
+		mux.HandleFunc("GET /api/v1/auth/github/start", a.startLogin)
+		mux.HandleFunc("GET /api/v1/auth/github/callback", a.finishLogin)
+		mux.HandleFunc("POST /api/v1/auth/github/link", a.browserAuth(a.linkIdentity))
+	}
 	mux.HandleFunc("GET /healthz", a.health)
 	mux.HandleFunc("GET /readyz", a.ready)
 	mux.HandleFunc("GET /api/v1/system/info", a.browserAuth(a.systemInfo))

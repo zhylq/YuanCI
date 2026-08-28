@@ -12,6 +12,7 @@ import (
 
 	"github.com/yuanci/yuanci/internal/config"
 	"github.com/yuanci/yuanci/internal/httpapi"
+	"github.com/yuanci/yuanci/internal/identity"
 	runmodel "github.com/yuanci/yuanci/internal/run"
 	"github.com/yuanci/yuanci/internal/store/postgres"
 )
@@ -38,9 +39,31 @@ func main() {
 		}
 	}
 	defer store.Close()
+	var handler http.Handler
+	if cfg.AuthenticatedPreview {
+		database := store.(*postgres.Store) // Config forbids memory storage in preview.
+		if err := database.ConfigureGitHubBootstrap(ctx, cfg.BootstrapGitHubUserID); err != nil {
+			logger.Error("administrator bootstrap initialization failed; check persisted configuration")
+			os.Exit(2)
+		}
+		provider, err := identity.NewGitHub(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.PublicOrigin+"/api/v1/auth/github/callback")
+		if err != nil {
+			logger.Error("invalid GitHub login configuration")
+			os.Exit(2)
+		}
+		handler, err = httpapi.NewAuthenticated(logger, store, database, cfg.RequestBodyLimit, cfg.PublicOrigin,
+			httpapi.GitHubLogin{Store: database, Provider: provider})
+		if err != nil {
+			logger.Error("authenticated API initialization failed")
+			os.Exit(2)
+		}
+		logger.Warn("authenticated preview enabled; legacy Runner API disabled; not production ready")
+	} else {
+		handler = httpapi.NewEvaluation(logger, store, cfg.RequestBodyLimit, cfg.RunnerSharedToken)
+	}
 
 	server := &http.Server{
-		Addr: cfg.Address, Handler: httpapi.NewEvaluation(logger, store, cfg.RequestBodyLimit, cfg.RunnerSharedToken),
+		Addr: cfg.Address, Handler: handler,
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second,
 	}

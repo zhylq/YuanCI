@@ -182,3 +182,23 @@ the batch outcome and remaining work.
   state consumers, ten concurrent bootstrap logins, account conflict, session
   mismatch, suspension and injected audit failure. Existing store/upgrade tests
   also passed. No production data or real provider credentials were used.
+
+## 2026-08-28 — GitHub callback and authenticated preview runtime
+
+- Added a fixed-endpoint GitHub user OAuth client with S256 PKCE, ten-second
+  request timeout, bounded JSON responses, no redirect following and generic
+  errors. User access tokens are used only for identity lookup, not persisted.
+- Added login start/callback and CSRF-protected explicit identity linking.
+  Callbacks reject ambiguous query/cookies, consume state before exchange, clear
+  flow cookies and issue a new Secure/HttpOnly session only after DB commit.
+  Landing redirects are fixed; callback logs never include query strings.
+- Added an opt-in authenticated-preview runtime, requiring PostgreSQL, HTTPS
+  origin, file-supplied GitHub client secret and explicit numeric bootstrap ID.
+  Evaluation/memory/legacy Runner credentials cannot be mixed into this mode.
+  Production is still blocked. The preview has no legacy Runner routes.
+- Five consecutive PostgreSQL/identity/HTTP/config runs passed. Further HTTP
+  tests cover cancellation, successful linking/session rotation and verification
+  of the exact PKCE verifier; the full host Go suite (including real PostgreSQL)
+  and vet passed afterward. Ten simultaneous callbacks exchange a code once.
+- Provider tests use mocked HTTP responses, not a real GitHub sandbox. The
+  console login UI and project selection are not delivered in this increment.
