@@ -103,3 +103,22 @@ Local commits (not pushed): `7c88654` workflow plan; `120e124` transactional
 regressions/fixes; `bb47706` CI and Docker exclusions; `a69c77f` authorization
 policy; `163137b` malformed envelope fix. The final documentation commit records
 the batch outcome and remaining work.
+
+## 2026-08-28 — session and membership persistence
+
+- Added migration 000002: stable instance scope, protected environments,
+  FK-backed memberships, hash-only browser sessions and optional Run ownership.
+  Existing migrations were not rewritten; the live Quickstart DB was not used.
+- Sessions use 256-bit opaque tokens, explicit expiry, revocation and active-user
+  checks. Cookie helpers set Secure/HttpOnly/SameSite=Lax with a __Host prefix.
+  Session-bound CSRF tokens are distinct from credentials; no public login bypass
+  or token issuance endpoint was added.
+- Membership changes enforce the existing scope policy, reject self-grants and
+  inherited protected-environment administration, and persist the subject/scope/
+  role in their audit event. Session and membership mutations roll back on audit
+  failure. Membership edits are serialized to avoid reciprocal-revocation locks.
+- Identity unit tests and the PostgreSQL suite passed against the independent
+  `yuanci-identity-tests` database. Tested malformed/unknown tokens, expiry,
+  suspension, revocation, FK constraints, permission escalation and audit failure.
+- OAuth, account linking and administrator bootstrap remain separate gates. The
+  internal IssueSession method assumes an already verified external identity.
