@@ -78,3 +78,28 @@ Further entries record completed checks and known limitations per batch.
 - Windows `go test -count=1 -timeout=120s ./...` and `go vet ./...` passed.
   PostgreSQL tests in this host-only command were skipped (no DB URL); the
   independent Docker integration run is the evidence for database behavior.
+
+## 2026-08-28 — final batch verification
+
+- Rebuilt the latest verification image including authorization and crypto
+  changes. All backend tests with Linux `-race` and PostgreSQL integration tests
+  passed, followed by `go vet ./...` (verification container exit code 0).
+- Built final Server and Runner images as local `foundation-verify` tags; no
+  registry publication or replacement of the running application was performed.
+- Started a temporary Server with no network, no volumes, read-only filesystem,
+  all capabilities dropped and UID 10001. Readiness and embedded HTML checks
+  passed. The temporary container was stopped/auto-removed afterwards.
+- Confirmed a database-mode Server without the explicit insecure evaluation
+  opt-in exits with configuration error code 2. Production remains fail-closed.
+- Removed only the `yuanci-foundation-tests` containers/network; disposable
+  tmpfs test data was discarded. Local verification images remain for reuse.
+  Quickstart Server/PostgreSQL were still healthy and Runner running afterwards.
+  Its existing Server still publishes `0.0.0.0:8080`; the loopback-only source
+  change is not applied until that application container is recreated.
+- This batch does not redesign the UI, deliver OAuth/mTLS or qualify v1. The
+  roadmap records the next integration gates instead of a fabricated percentage.
+
+Local commits (not pushed): `7c88654` workflow plan; `120e124` transactional
+regressions/fixes; `bb47706` CI and Docker exclusions; `a69c77f` authorization
+policy; `163137b` malformed envelope fix. The final documentation commit records
+the batch outcome and remaining work.

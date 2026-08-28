@@ -1,5 +1,26 @@
 # Development roadmap
 
+## Current delivery status — 2026-08-28
+
+This is still pre-alpha, not a finished CI/CD product. See the
+[development log](development-log.md) for executed tests and known limitations.
+
+| Area | Implemented and locally checked | Remaining exit gate |
+| --- | --- | --- |
+| Engineering workflow | Incremental commits, CI definition, isolated DB/race tests | Publish workflow, hosted checks and branch protection |
+| Transaction queue | Unique claims, serialized DAG completion, cancellation result, migration/reopen tests | Heartbeats, lease recovery, fault injection and 72-hour soak |
+| Authorization | Default-deny policy over four scopes and explicit role matrix | Identity/session, persisted grants, HTTP enforcement and audit |
+| Secrets | Envelope encryption, AAD binding, corrupt-input regression and fuzz test | Storage API, file-supplied master key, rotation, scoped release and redaction |
+| Docker | Source-context exclusions, loopback Quickstart, separate verification profile | Release digest locks, signed multi-architecture images and recovery drills |
+| Console | Existing dashboard and YAML validation/plan preview | Login, repositories, run detail/logs, full visual editor and administration |
+| SCM | Existing GitHub REST adapter and signed event normalization tests | End-to-end GitHub App flow plus GitLab, Gitea and Gitee |
+| CD | Design only | Environments, approvals, SSH/Compose execution, health checks and rollback |
+
+Next implementation order: identity/session and membership/audit persistence;
+API authorization; Runner identity/lease recovery; GitHub end-to-end CI; complete
+console; remaining SCM/CI capabilities; protected CD; release qualification.
+Do not remove the insecure-evaluation gate merely because the policy tests pass.
+
 ## Milestone 0 — architecture baseline
 
 - ADRs, threat model, RBAC matrix, state machines, OpenAPI and Pipeline v1 schema

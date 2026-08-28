@@ -51,6 +51,9 @@ YuanCI reads `.yuanci.yml` from the repository root. See [the example](examples/
 - [Architecture decision record](docs/adr/0001-control-plane-and-runner.md)
 - [Threat model](docs/security/threat-model.md)
 - [Development roadmap](docs/roadmap.md)
+- [Development workflow and test commands](CONTRIBUTING.md)
+- [Completed batch evidence and limitations](docs/development-log.md)
+- [Authorization policy matrix (not yet API enforcement)](docs/security/authorization.md)
 
 ## License
 
