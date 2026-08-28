@@ -1,9 +1,11 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { cn } from './lib/cn'
+import { AuthBoundary } from './components/auth-boundary'
 
 const navItems = [
   { to: '/', label: '概览', end: true },
   { to: '/pipelines/new', label: 'Pipeline 编辑器', end: false },
+  { to: '/settings/auth', label: 'Git 平台设置', end: false },
 ]
 
 export function Layout() {
@@ -29,7 +31,7 @@ export function Layout() {
           </nav>
         </div>
       </header>
-      <main id="main-content" className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8"><Outlet /></main>
+      <main id="main-content" className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8"><AuthBoundary><Outlet /></AuthBoundary></main>
     </div>
   )
 }

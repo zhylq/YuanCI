@@ -1,12 +1,16 @@
 import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import { Layout } from './layout'
-import { DashboardPage } from './pages/dashboard'
-import { PipelineEditorPage } from './pages/pipeline-editor'
+import { HomePage, PipelinePage } from './pages/account'
+import { AuthSettingsPage } from './pages/auth-settings'
+import { LoginPage } from './components/auth-boundary'
 
 const router = createBrowserRouter([
   { path: '/', element: <Layout />, children: [
-    { index: true, element: <DashboardPage /> },
-    { path: 'pipelines/new', element: <PipelineEditorPage /> },
+    { index: true, element: <HomePage /> },
+    { path: 'pipelines/new', element: <PipelinePage /> },
+    { path: 'setup', element: <AuthSettingsPage setup /> },
+    { path: 'settings/auth', element: <AuthSettingsPage /> },
+    { path: 'login', element: <LoginPage /> },
   ] },
 ])
 

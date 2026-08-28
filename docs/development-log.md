@@ -249,3 +249,23 @@ the batch outcome and remaining work.
   exercise a complete mock-provider wizard and provider failure without activation.
 - Full Go regression passed before the HTTP increment; targeted DB/config tests
   passed afterward. Final full/race/UI/container verification follows separately.
+
+## 2026-08-28 — self-service login console
+
+- Added the setup-code screen, GitHub App tutorial, exact callback copy action,
+  write-only credential form, candidate verification and administrator settings.
+  Added login/account/logout screens and a fail-closed authentication boundary.
+  Evaluation and file-managed modes cannot write managed settings; unsupported
+  Gitee/GitLab/Gitea cards provide official links without accepting credentials.
+- Secrets are excluded from query/mutation caches and browser storage; the
+  credential input clears before submission. Forms have associated labels,
+  pending states, field errors, visible keyboard focus and clipboard fallback.
+  Responsive review changed the mobile reading order to show the form first.
+- Frontend: 8 tests in 3 files, ESLint, TypeScript and production build passed.
+  Browser inspection of the actual smoke image covered the locked setup page,
+  malformed-code error and narrow/tablet/desktop layout (360/753/1265 CSS px),
+  with no horizontal overflow. Browser viewport override was reset afterward.
+- Browser testing used loopback HTTP for public page/validation only. No Secure
+  cookie bypass, real provider login or trusted-HTTPS browser acceptance claimed.
+  Complete setup/activation flows are covered separately by mock-provider HTTP
+  tests against real disposable PostgreSQL.

@@ -32,11 +32,11 @@ stages:
               - docker build .
 `
 
-export function PipelineEditorPage() {
+export function PipelineEditorPage({ csrfToken }: { csrfToken?: string } = {}) {
   const [content, setContent] = useState(starterPipeline)
   const [result, setResult] = useState<ValidationResult | null>(null)
   const validation = useMutation({
-    mutationFn: validatePipeline,
+    mutationFn: (value: string) => validatePipeline(value, csrfToken),
     onSuccess: setResult,
   })
   const fieldInvalid = result?.valid === false

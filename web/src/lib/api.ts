@@ -40,16 +40,21 @@ export type PipelinePlan = {
 export type ValidationError = { path?: string; message: string }
 export type ValidationResult = { valid: boolean; plan?: PipelinePlan; errors: ValidationError[] }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) { super(message); this.status = status }
+}
+
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     credentials: 'same-origin',
-    headers: { Accept: 'application/json', ...options?.headers },
     ...options,
+    headers: { Accept: 'application/json', ...options?.headers },
   })
   const body = await response.json().catch(() => null)
   if (!response.ok) {
     const detail = body && typeof body.detail === 'string' ? body.detail : `请求失败（HTTP ${response.status}）`
-    throw new Error(detail)
+    throw new ApiError(detail, response.status)
   }
   return body as T
 }
@@ -62,11 +67,11 @@ export function getRuns() {
   return request<{ items: Run[] }>('/api/v1/runs?limit=20')
 }
 
-export async function validatePipeline(content: string): Promise<ValidationResult> {
+export async function validatePipeline(content: string, csrfToken?: string): Promise<ValidationResult> {
   const response = await fetch('/api/v1/pipelines/validate', {
     method: 'POST',
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}) },
     body: JSON.stringify({ content }),
   })
   const body = (await response.json()) as ValidationResult & { detail?: string }
