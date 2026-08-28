@@ -301,3 +301,21 @@ the batch outcome and remaining work.
   by this deployment/contract/documentation commit. No push was performed.
   Real GitHub App + trusted HTTPS acceptance, other SCM integrations, protected
   Runner execution and full v1 security/stability gates remain future work.
+
+## 2026-08-28 — authorized project browser backend
+
+- Added read-only project/list/detail/run-summary ports and authenticated HTTP
+  routes. No evaluation route, project import, session bypass or live migration.
+  Active repositories are filtered by live scoped grants before keyset paging;
+  the canonical policy rechecks returned project paths. Environment-only grants
+  never expose parent repositories, and unavailable/missing IDs share one denial.
+- List reads synchronize with membership edits; session validity is checked after
+  resource lock waits. Added bounded literal search and cursor parsing. Payloads
+  exclude clone URLs, external identifiers, compiled plans and global totals.
+  Local active flags never imply verified SCM connectivity.
+- Full host Go suite and vet passed with real disposable PostgreSQL. Tests cover
+  105-item paging, duplicate/inherited grants, cross-org reads, environment-only
+  access, disabled repositories, equal-time run cursors, foreign cursor scoping,
+  minimal DTOs, malformed HTTP parameters and revoked/suspended/expired sessions.
+  All three reads reject sessions expiring during blocked resource access.
+- Frontend and final Linux/browser verification are recorded in the next batch.

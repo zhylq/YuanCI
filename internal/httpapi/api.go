@@ -20,6 +20,7 @@ import (
 	"github.com/yuanci/yuanci/internal/buildinfo"
 	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/pipeline"
+	"github.com/yuanci/yuanci/internal/project"
 	runmodel "github.com/yuanci/yuanci/internal/run"
 	"github.com/yuanci/yuanci/internal/webui"
 )
@@ -32,6 +33,7 @@ type API struct {
 	startedAt   time.Time
 	sessions    identity.Sessions
 	authorized  runmodel.AuthorizedStore
+	projects    project.Store
 	origin      string
 	oauth       *GitHubLogin
 }

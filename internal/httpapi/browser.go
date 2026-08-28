@@ -10,6 +10,7 @@ import (
 
 	"github.com/yuanci/yuanci/internal/authorization"
 	"github.com/yuanci/yuanci/internal/identity"
+	"github.com/yuanci/yuanci/internal/project"
 	runmodel "github.com/yuanci/yuanci/internal/run"
 	"github.com/yuanci/yuanci/internal/webui"
 )
@@ -17,6 +18,7 @@ import (
 type BrowserBackend interface {
 	identity.Sessions
 	runmodel.AuthorizedStore
+	project.Store
 }
 
 // NewAuthenticated is the protected browser surface. It intentionally has no
@@ -30,7 +32,7 @@ func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend Browser
 	if backend == nil || store == nil || logger == nil || bodyLimit < 1024 {
 		return nil, errors.New("authenticated API requires all dependencies and a request limit")
 	}
-	a := &API{logger: logger, store: store, sessions: backend, authorized: backend, bodyLimit: bodyLimit, origin: u.Scheme + "://" + u.Host, startedAt: time.Now().UTC()}
+	a := &API{logger: logger, store: store, sessions: backend, authorized: backend, projects: backend, bodyLimit: bodyLimit, origin: u.Scheme + "://" + u.Host, startedAt: time.Now().UTC()}
 	if len(login) > 1 || (len(login) == 1 && (login[0].Store == nil || (login[0].Provider == nil && login[0].Managed == nil) || (login[0].Provider != nil && login[0].Managed != nil))) {
 		return nil, errors.New("login requires one complete provider and flow store")
 	}
@@ -55,6 +57,9 @@ func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend Browser
 	mux.HandleFunc("GET /readyz", a.ready)
 	mux.HandleFunc("GET /api/v1/system/info", a.browserAuth(a.systemInfo))
 	mux.HandleFunc("GET /api/v1/session", a.browserAuth(a.sessionInfo))
+	mux.HandleFunc("GET /api/v1/projects", a.browserAuth(a.listProjects))
+	mux.HandleFunc("GET /api/v1/projects/{projectID}", a.browserAuth(a.projectDetail))
+	mux.HandleFunc("GET /api/v1/projects/{projectID}/runs", a.browserAuth(a.projectRuns))
 	mux.HandleFunc("DELETE /api/v1/session", a.browserAuth(a.logout))
 	mux.HandleFunc("POST /api/v1/pipelines/validate", a.browserAuth(a.validatePipeline))
 	mux.HandleFunc("GET /api/v1/runs", a.browserAuth(a.listRuns))

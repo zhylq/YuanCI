@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/yuanci/yuanci/internal/identity"
+	"github.com/yuanci/yuanci/internal/project"
 	runmodel "github.com/yuanci/yuanci/internal/run"
 )
 
@@ -77,4 +78,13 @@ func (closedBrowserBackend) CreateAuthorizedRun(context.Context, string, uuid.UU
 }
 func (closedBrowserBackend) ListAuthorizedRuns(context.Context, string, uuid.UUID, int) ([]runmodel.Record, error) {
 	return nil, identity.ErrUnauthenticated
+}
+func (closedBrowserBackend) ListProjects(context.Context, string, project.Query) (project.Page[project.Record], error) {
+	return project.Page[project.Record]{}, identity.ErrUnauthenticated
+}
+func (closedBrowserBackend) GetProject(context.Context, string, uuid.UUID) (project.Record, error) {
+	return project.Record{}, identity.ErrUnauthenticated
+}
+func (closedBrowserBackend) ListProjectRuns(context.Context, string, uuid.UUID, project.Query) (project.Page[project.Run], error) {
+	return project.Page[project.Run]{}, identity.ErrUnauthenticated
 }
