@@ -1,8 +1,11 @@
 # Browser identity integration status
 
 The protected `httpapi.NewAuthenticated` handler and PostgreSQL backend are
-implemented and integration-tested. **The executable still uses the explicit
-evaluation handler; OAuth, bootstrap and production activation are not shipped.**
+implemented and integration-tested. **The executable can opt into the isolated
+GitHub authenticated preview; production activation is still blocked.** See the
+[preview deployment guide](../auth-preview.zh-CN.md). GitHub App user login,
+browser-bound state/PKCE, explicit bootstrap and account linking are implemented;
+provider HTTP is mocked in tests, not yet verified with a real GitHub sandbox.
 Do not manually issue sessions through SQL, expose a token-minting API, or remove
 the production configuration gate. Tests create identities only in isolated DBs.
 
@@ -12,7 +15,7 @@ the production configuration gate. Tests create identities only in isolated DBs.
   Tokens have 256 random bits. Only their SHA-256 digest is stored. Sessions have
   an absolute lifetime (default eight hours, maximum 24 hours) and can be revoked.
 - Cookies use `__Host-yuanci_session`, Secure, HttpOnly, SameSite=Lax, Path=/ and
-  no Domain attribute. The Lax setting accommodates a future top-level OAuth
+  no Domain attribute. The Lax setting accommodates the top-level OAuth
   callback; it is not the sole CSRF defense.
 - `GET /api/v1/session` returns user details, expiry and a session-bound CSRF
   token, never the session credential. API responses use `Cache-Control: no-store`.
@@ -34,10 +37,24 @@ the production configuration gate. Tests create identities only in isolated DBs.
   roll back when their audit insert fails. Audit records contain identifiers and
   grant metadata, not session credentials, pipeline YAML or secret material.
 
-## Still required before runtime activation
+## OAuth transaction and bootstrap
 
-OAuth state/PKCE and callback verification, external identity linking, explicit
-administrator bootstrap, session renewal/idle timeout, session management UI,
+Login flows have a five-minute TTL, browser-bound HttpOnly nonce and one-time
+state consumption before code exchange. Only hashes of state/nonce/completion
+tickets are persisted. S256 PKCE binds code exchange to the initiating browser.
+Identity mapping uses numeric provider subject, never a matching email or name.
+Explicit linking needs CSRF and the same active session created within ten minutes.
+An external identity cannot be transferred from another local account.
+
+The configured numeric GitHub subject is persisted before first login. Only it
+may bootstrap administrator privileges, once. Revoked privileges are not restored
+by subsequent login; new users receive no default membership. Identity, initial
+grant, replacement session, old-session revocation and audit commit atomically.
+The upstream token is not persisted, logged or sent to the browser.
+
+## Still required before production
+
+Real-provider sandbox verification, session renewal/idle timeout, session management UI,
 last-admin protections, public membership APIs, audit querying/export and stronger
 audit storage permissions. Suspension currently invalidates use while suspended;
 permanent all-session revocation on account security events is a separate gate.

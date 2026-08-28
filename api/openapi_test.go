@@ -56,6 +56,20 @@ func TestOpenAPIReferencesAndBrowserSecurity(t *testing.T) {
 		t.Fatal("cookie contract drift")
 	}
 	paths := document["paths"].(map[string]any)
+	for _, path := range []string{"/auth/github/start", "/auth/github/callback"} {
+		entry, ok := paths[path].(map[string]any)
+		if !ok {
+			t.Fatalf("missing login contract %s", path)
+		}
+		operation := entry["get"].(map[string]any)
+		security, ok := operation["security"].([]any)
+		if !ok || len(security) != 0 {
+			t.Fatalf("login must not require an existing session: %s", path)
+		}
+	}
+	if _, ok := paths["/auth/github/link"]; !ok {
+		t.Fatal("missing identity link contract")
+	}
 	for path, raw := range paths {
 		for method, rawOperation := range raw.(map[string]any) {
 			if method != "post" && method != "delete" && method != "put" && method != "patch" {

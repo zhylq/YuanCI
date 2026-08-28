@@ -4,13 +4,68 @@ info:
   version: 0.1.0
   description: >-
     Protected browser API contract. The NewAuthenticated handler is implemented
-    and integration-tested; the current executable still exposes only the explicit
-    evaluation surface until OAuth/runtime activation. There is no public session
-    issuer. Mutation requests require an exact configured HTTPS Origin and a
+    and integration-tested; the executable can opt into authenticated preview
+    with GitHub login, separate from insecure evaluation. There is no arbitrary
+    session issuer. Mutation requests require an exact configured HTTPS Origin and a
     session-bound X-CSRF-Token. Evaluation compatibility is not production auth.
 servers:
   - url: /api/v1
 paths:
+  /auth/github/start:
+    get:
+      operationId: startGitHubLogin
+      security: []
+      description: Top-level browser navigation. Creates a five-minute browser-bound flow with S256 PKCE. HEAD is rejected.
+      responses:
+        '303':
+          description: Redirect to GitHub; sets Secure HttpOnly SameSite=Lax __Host-yuanci_oauth cookie
+          headers:
+            Location: { schema: { type: string, format: uri }, description: Fixed GitHub authorization endpoint }
+        '429': { description: Pending login flow capacity reached; retry later }
+        '503': { description: Login flow store unavailable }
+  /auth/github/callback:
+    get:
+      operationId: finishGitHubLogin
+      security: []
+      description: >-
+        Requires the browser-bound flow cookie and state. Each state is consumed once
+        before code exchange. Exactly one code or provider error is expected.
+        Linking also requires the same recent browser session used to initiate it.
+        All responses are no-store and no-referrer; HEAD is rejected.
+      parameters:
+        - { name: state, in: query, required: true, schema: { type: string, minLength: 43, maxLength: 43 } }
+        - { name: code, in: query, schema: { type: string, minLength: 1, maxLength: 1024 } }
+        - { name: error, in: query, schema: { type: string } }
+        - { name: __Host-yuanci_oauth, in: cookie, required: true, schema: { type: string } }
+      responses:
+        '303': { description: Identity and session committed; sets session cookie, expires flow cookie and redirects to / }
+        '400': { description: Invalid, ambiguous, denied, expired or already consumed flow; restart login }
+        '401': { description: Suspended user or invalid linking session }
+        '403': { description: Account is not the explicitly configured bootstrap administrator }
+        '409': { description: External identity belongs to another account }
+        '502': { description: Could not verify GitHub identity; restart login }
+        '503': { description: Login transaction unavailable }
+  /auth/github/link:
+    post:
+      operationId: linkGitHubIdentity
+      description: Begin explicit binding to the current account; requires a session created within ten minutes. Navigate to the returned URL in the same browser.
+      parameters:
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+        - { $ref: '#/components/parameters/CSRFToken' }
+      responses:
+        '200':
+          description: Browser-bound flow created, HttpOnly flow cookie set
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authorization_url]
+                properties:
+                  authorization_url: { type: string, format: uri }
+        '401': { description: Invalid or insufficiently recent session }
+        '403': { description: Origin or CSRF validation failed }
+        '429': { description: Pending flow capacity reached }
+        '503': { description: Login store unavailable }
   /session:
     get:
       operationId: getSession

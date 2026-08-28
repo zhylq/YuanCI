@@ -3,8 +3,8 @@
 Status: **policy, persisted memberships and the protected browser handler are
 tested; production runtime activation is still blocked**. Authenticated Run
 queries/writes now resolve resource ownership and recheck grants transactionally.
-The executable still uses the explicit evaluation API until OAuth/bootstrap are
-ready. See [session integration status](sessions.md). Do not enable production.
+The executable now supports an opt-in GitHub authenticated preview, separate from
+the evaluation API. See [session integration status](sessions.md). Do not enable production.
 
 ## Resource and identity inputs
 
@@ -59,8 +59,8 @@ and recheck revocation rather than trust stale session claims.
 
 Completed in the protected handler: persisted memberships/ownership, scoped Run
 queries, CSRF checks, grant/revocation auditing and self-grant rejection. Before
-production: implement OAuth/bootstrap and activate the protected runtime, finish
-deployment approval transactions, test provider identity linking and review
+production: verify real-provider OAuth/bootstrap and identity linking, finish
+deployment approval transactions and review
 membership administration/last-admin protection end to end.
 
 Validation: 1,440 role/action/target/grant combinations plus explicit protected

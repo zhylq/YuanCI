@@ -202,3 +202,30 @@ the batch outcome and remaining work.
   and vet passed afterward. Ten simultaneous callbacks exchange a code once.
 - Provider tests use mocked HTTP responses, not a real GitHub sandbox. The
   console login UI and project selection are not delivered in this increment.
+
+## 2026-08-28 — OAuth increment final verification and deployment guide
+
+- Published the separate authenticated-preview Compose template, empty credential
+  example and Chinese instructions for users without a host Go installation.
+  Documented HTTPS/proxy requirements, file-secret permissions, explicit numeric
+  administrator ID, one-time bootstrap behavior and current UI/Runner limitations.
+- Updated OpenAPI with login start/callback/link and regression checks for public
+  login entry points versus session/Origin/CSRF-protected identity linking.
+- Final Docker verification rebuilt all Go executables and the embedded console;
+  full Linux `go test -race -count=1 -timeout=120s ./...` plus `go vet ./...`
+  passed against the isolated PostgreSQL database, including the new contract
+  tests and additive migration regression. Verification exited 0 twice this batch.
+- Frontend's existing one-test suite, lint and production build passed. These are
+  regression checks, not browser acceptance of a login UI (none added yet).
+- Preview Compose validated with public fixture values. The local Server image
+  ran as UID 10001 with a read-only root and file-mounted fixture secret against
+  disposable PostgreSQL: readiness/home 200, session 401, legacy Runner 404,
+  login start 303 with GitHub destination, S256 PKCE and secure flow cookie.
+  Redirects were not followed. DB had three migrations and one configured
+  bootstrap record. A networkless default-mode test still exited with code 2.
+- Removed only the verified OAuth smoke/test containers, network, tmpfs test data
+  and public fixture secret file. Local verification images remain. Quickstart
+  Server/PostgreSQL were healthy and Runner running; no live migration/restart.
+- Local commits in this increment: `cdab6f1` design, `0e455ed` OAuth persistence,
+  `66db6a4` callback/runtime; this documentation/contract commit closes the batch.
+  No push, real GitHub App login, production activation or v1 completion claimed.
