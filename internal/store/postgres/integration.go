@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -53,12 +54,12 @@ func integrationSnapshot(ctx context.Context, tx pgx.Tx, actor settingsActor) (i
 	if json.Unmarshal(secret, &snap.Secret) != nil {
 		return snap, integration.ErrConfig
 	}
-	err = tx.QueryRow(ctx, `SELECT external_id FROM external_identities WHERE user_id=$1 AND provider='github' AND provider_instance=$2`, actor.session.UserID, identity.GitHubInstance).Scan(&snap.Subject)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return snap, integration.ErrAccess
-	}
+	err = tx.QueryRow(ctx, `SELECT COALESCE(array_agg(external_id ORDER BY external_id),'{}') FROM external_identities WHERE user_id=$1 AND provider='github' AND provider_instance=$2`, actor.session.UserID, identity.GitHubInstance).Scan(&snap.Subjects)
 	if err != nil {
 		return snap, err
+	}
+	if len(snap.Subjects) == 0 {
+		return snap, integration.ErrAccess
 	}
 	var app integration.App
 	var key []byte
@@ -75,8 +76,8 @@ func integrationSnapshot(ctx context.Context, tx pgx.Tx, actor settingsActor) (i
 	snap.App = &app
 	var proof integration.Proof
 	var encrypted []byte
-	err = tx.QueryRow(ctx, `SELECT id,encrypted_token,expires_at FROM github_import_proofs
- WHERE session_id=$1 AND login_id=$2 AND app_revision=$3 AND expires_at>clock_timestamp()`, actor.session.ID, snap.LoginID, app.ID).Scan(&proof.ID, &encrypted, &proof.ExpiresAt)
+	err = tx.QueryRow(ctx, `SELECT id,encrypted_token,expires_at,github_subject FROM github_import_proofs
+ WHERE session_id=$1 AND login_id=$2 AND app_revision=$3 AND expires_at>clock_timestamp() AND github_subject=ANY($4::text[])`, actor.session.ID, snap.LoginID, app.ID, snap.Subjects).Scan(&proof.ID, &encrypted, &proof.ExpiresAt, &proof.Subject)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return snap, nil
 	}
@@ -95,7 +96,7 @@ func (s *Store) IntegrationContext(ctx context.Context, token string, recent boo
 	return result, err
 }
 func sameIntegration(a, b integration.Snapshot, proof bool) error {
-	if a.LoginID != b.LoginID || a.Subject != b.Subject || (a.App == nil) != (b.App == nil) {
+	if a.LoginID != b.LoginID || !slices.Equal(a.Subjects, b.Subjects) || (a.App == nil) != (b.App == nil) {
 		return integration.ErrStale
 	}
 	if a.App != nil && a.App.ID != b.App.ID {
@@ -196,14 +197,14 @@ func (s *Store) ConsumeIntegrationFlow(ctx context.Context, token, state, nonce 
 	return result, err
 }
 func (s *Store) SaveIntegrationProof(ctx context.Context, token string, expected integration.Snapshot, proof integration.Proof) error {
-	if proof.ID == uuid.Nil || proof.ExpiresAt.After(time.Now().Add(10*time.Minute)) {
+	if proof.ID == uuid.Nil || !identity.ValidGitHubSubject(proof.Subject) || proof.ExpiresAt.After(time.Now().Add(10*time.Minute)) {
 		return integration.ErrConfig
 	}
 	return s.integrationTx(ctx, token, false, func(tx pgx.Tx, actor settingsActor, current integration.Snapshot) error {
 		if err := sameIntegration(current, expected, false); err != nil {
 			return err
 		}
-		if current.App == nil {
+		if current.App == nil || !slices.Contains(current.Subjects, proof.Subject) {
 			return integration.ErrStale
 		}
 		result, err := tx.Exec(ctx, `DELETE FROM github_import_flows WHERE id=$1 AND session_id=$2 AND consumed AND expires_at>clock_timestamp()`, expected.FlowID, actor.session.ID)
@@ -220,8 +221,8 @@ func (s *Store) SaveIntegrationProof(ctx context.Context, token string, expected
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO github_import_proofs(id,session_id,login_id,app_revision,encrypted_token,expires_at) VALUES($1,$2,$3,$4,$5,$6)
-  ON CONFLICT(session_id) DO UPDATE SET id=EXCLUDED.id,login_id=EXCLUDED.login_id,app_revision=EXCLUDED.app_revision,encrypted_token=EXCLUDED.encrypted_token,expires_at=EXCLUDED.expires_at`, proof.ID, actor.session.ID, current.LoginID, current.App.ID, encrypted, proof.ExpiresAt)
+		_, err = tx.Exec(ctx, `INSERT INTO github_import_proofs(id,session_id,login_id,app_revision,encrypted_token,expires_at,github_subject) VALUES($1,$2,$3,$4,$5,$6,$7)
+  ON CONFLICT(session_id) DO UPDATE SET id=EXCLUDED.id,login_id=EXCLUDED.login_id,app_revision=EXCLUDED.app_revision,encrypted_token=EXCLUDED.encrypted_token,expires_at=EXCLUDED.expires_at,github_subject=EXCLUDED.github_subject`, proof.ID, actor.session.ID, current.LoginID, current.App.ID, encrypted, proof.ExpiresAt, proof.Subject)
 		if err != nil {
 			return err
 		}
@@ -310,3 +311,28 @@ func (s *Store) ImportRepositories(ctx context.Context, token string, expected i
 }
 
 var _ integration.RepositoryStore = (*Store)(nil)
+
+// PruneIntegrationCredentials removes unusable authorization material even if
+// no administrator returns to the page. Deadline checks do not depend on this
+// best-effort cleanup. Backups/WAL still need the deployment retention policy.
+func (s *Store) PruneIntegrationCredentials(ctx context.Context) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := oauthLock(ctx, tx); err != nil {
+		return err
+	}
+	for _, table := range []string{"github_import_flows", "github_import_proofs"} {
+		_, err := tx.Exec(ctx, `DELETE FROM `+table+` p WHERE p.expires_at<=clock_timestamp()
+		OR NOT EXISTS(SELECT 1 FROM browser_sessions s JOIN users u ON u.id=s.user_id
+		WHERE s.id=p.session_id AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND u.status='active')
+		OR NOT EXISTS(SELECT 1 FROM login_configs l JOIN github_app_configs a ON a.login_config_id=l.id
+		WHERE l.id=p.login_id AND l.status='active' AND a.id=p.app_revision)`)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}

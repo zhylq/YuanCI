@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -111,13 +112,13 @@ func (s *Service) Finish(ctx context.Context, token, state, nonce, code string) 
 	if err != nil {
 		return err
 	}
-	if subject != snap.Subject || access == "" || !expiry.After(time.Now()) {
+	if !slices.Contains(snap.Subjects, subject) || access == "" || !expiry.After(time.Now()) {
 		return ErrAccess
 	}
 	if max := time.Now().Add(10 * time.Minute); expiry.After(max) {
 		expiry = max
 	}
-	proof := Proof{ID: uuid.New(), ExpiresAt: expiry}
+	proof := Proof{ID: uuid.New(), Subject: subject, ExpiresAt: expiry}
 	plain := []byte(access)
 	defer clear(plain)
 	proof.Token, err = s.cipher.Seal(plain, proofAAD(proof.ID))

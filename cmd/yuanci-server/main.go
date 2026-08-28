@@ -58,6 +58,8 @@ func main() {
 				os.Exit(2)
 			}
 			login = httpapi.GitHubLogin{Store: database, Managed: provisioning.New(database, cipher, cfg.PublicOrigin), Integrations: integration.New(database, cipher, cfg.PublicOrigin)}
+			stopCleanup := startIntegrationCleanup(logger, database)
+			defer stopCleanup()
 		} else {
 			if err := database.ConfigureGitHubBootstrap(ctx, cfg.BootstrapGitHubUserID); err != nil {
 				logger.Error("administrator bootstrap initialization failed; check persisted configuration")
@@ -101,4 +103,28 @@ func main() {
 	if err := server.Shutdown(shutdown); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
 	}
+}
+
+func startIntegrationCleanup(logger *slog.Logger, database *postgres.Store) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			check, finish := context.WithTimeout(ctx, 10*time.Second)
+			err := database.PruneIntegrationCredentials(check)
+			finish()
+			if err != nil && ctx.Err() == nil {
+				logger.Warn("expired integration credential cleanup failed; authorization deadlines remain enforced")
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return func() { cancel(); <-done }
 }

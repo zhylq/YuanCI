@@ -4,9 +4,10 @@ package integration
 import (
 	"context"
 	"errors"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/yuanci/yuanci/internal/secrets"
-	"time"
 )
 
 var ErrConfig = errors.New("invalid App configuration")
@@ -25,6 +26,7 @@ type App struct {
 }
 type Proof struct {
 	ID        uuid.UUID
+	Subject   string
 	Token     secrets.Envelope
 	ExpiresAt time.Time
 }
@@ -33,7 +35,7 @@ type Snapshot struct {
 	LoginID  uuid.UUID
 	ClientID string
 	Secret   secrets.Envelope
-	Subject  string
+	Subjects []string
 	App      *App
 	Proof    *Proof
 }

@@ -192,7 +192,7 @@ func TestGitHubImportSupersededFlowAndRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = service.Start(t.Context(), session.Token, identity.NewToken(), identity.NewToken())
-	if err := s.SaveIntegrationProof(t.Context(), session.Token, snap, integration.Proof{ID: uuid.New(), ExpiresAt: time.Now().Add(time.Minute)}); !errors.Is(err, integration.ErrStale) {
+	if err := s.SaveIntegrationProof(t.Context(), session.Token, snap, integration.Proof{ID: uuid.New(), Subject: "100", ExpiresAt: time.Now().Add(time.Minute)}); !errors.Is(err, integration.ErrStale) {
 		t.Fatal("superseded authorization accepted")
 	}
 	authorizeImport(t, service, session.Token)
@@ -294,5 +294,109 @@ func TestGitHubImportDoesNotAdoptExistingOrganization(t *testing.T) {
 	page, err := s.ListProjects(t.Context(), session.Token, project.Query{Limit: 20})
 	if err != nil || len(page.Items) != 0 {
 		t.Fatal("partial project import")
+	}
+}
+
+func TestGitHubImportCredentialCleanup(t *testing.T) {
+	s, service, session, _ := importFixture(t)
+	authorizeImport(t, service, session.Token)
+	if err := s.PruneIntegrationCredentials(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	_ = s.pool.QueryRow(t.Context(), `SELECT count(*) FROM github_import_proofs`).Scan(&count)
+	if count != 1 {
+		t.Fatal("live proof deleted")
+	}
+	_, _ = s.pool.Exec(t.Context(), `UPDATE github_import_proofs SET expires_at=clock_timestamp()-interval '1 second'`)
+	if err := s.PruneIntegrationCredentials(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.pool.QueryRow(t.Context(), `SELECT count(*) FROM github_import_proofs`).Scan(&count)
+	if count != 0 {
+		t.Fatal("expired token retained")
+	}
+	authorizeImport(t, service, session.Token)
+	if err := s.RevokeSession(t.Context(), session.Token); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PruneIntegrationCredentials(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.pool.QueryRow(t.Context(), `SELECT count(*) FROM github_import_proofs`).Scan(&count)
+	if count != 0 {
+		t.Fatal("revoked session token retained")
+	}
+}
+
+func TestGitHubImportMultipleLinkedIdentities(t *testing.T) {
+	s, service, session, p := importFixture(t)
+	_, err := s.pool.Exec(t.Context(), `INSERT INTO external_identities(user_id,provider,provider_instance,external_id,login) VALUES($1,'github',$2,'101','second-identity')`, session.Session.UserID, identity.GitHubInstance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.subject = "101"
+	authorizeImport(t, service, session.Token)
+	if _, err := service.Import(t.Context(), session.Token, "34", []string{"70"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.pool.Exec(t.Context(), `DELETE FROM external_identities WHERE external_id='101'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Import(t.Context(), session.Token, "34", []string{"70"}); !errors.Is(err, integration.ErrStale) {
+		t.Fatal("unlinked identity's proof accepted")
+	}
+}
+
+func TestGitHubImportProofExpiresDuringRepositoryLock(t *testing.T) {
+	s, service, session, p := importFixture(t)
+	authorizeImport(t, service, session.Token)
+	items, err := service.Import(t.Context(), session.Token, "34", []string{"70"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	_, err = s.pool.Exec(ctx, `UPDATE github_import_proofs SET expires_at=clock_timestamp()+interval '1 second'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT id FROM repositories WHERE id=$1 FOR UPDATE`, items[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	p.repos = append(p.repos, integration.Repository{ID: "71", Owner: "team", Name: "new", DefaultBranch: "main"})
+	result := make(chan error, 1)
+	go func() { _, err := service.Import(ctx, session.Token, "34", []string{"71", "70"}); result <- err }()
+	waitForLock(t, ctx, s)
+	for {
+		var expired bool
+		if err := tx.QueryRow(ctx, `SELECT expires_at<=clock_timestamp() FROM github_import_proofs`).Scan(&expired); err != nil {
+			t.Fatal(err)
+		}
+		if expired {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; !errors.Is(err, integration.ErrStale) {
+		t.Fatal("expired proof committed", err)
+	}
+	var count int
+	_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM repositories`).Scan(&count)
+	if count != 1 {
+		t.Fatal("partial new repository after expiry")
 	}
 }
