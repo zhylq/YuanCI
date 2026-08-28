@@ -13,6 +13,7 @@ import (
 	"github.com/yuanci/yuanci/internal/config"
 	"github.com/yuanci/yuanci/internal/httpapi"
 	"github.com/yuanci/yuanci/internal/identity"
+	"github.com/yuanci/yuanci/internal/integration"
 	"github.com/yuanci/yuanci/internal/provisioning"
 	runmodel "github.com/yuanci/yuanci/internal/run"
 	"github.com/yuanci/yuanci/internal/secrets"
@@ -56,7 +57,7 @@ func main() {
 				logger.Error("invalid master key")
 				os.Exit(2)
 			}
-			login = httpapi.GitHubLogin{Store: database, Managed: provisioning.New(database, cipher, cfg.PublicOrigin)}
+			login = httpapi.GitHubLogin{Store: database, Managed: provisioning.New(database, cipher, cfg.PublicOrigin), Integrations: integration.New(database, cipher, cfg.PublicOrigin)}
 		} else {
 			if err := database.ConfigureGitHubBootstrap(ctx, cfg.BootstrapGitHubUserID); err != nil {
 				logger.Error("administrator bootstrap initialization failed; check persisted configuration")

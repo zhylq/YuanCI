@@ -50,6 +50,15 @@ func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend Browser
 			mux.HandleFunc("GET /api/v1/settings/auth", a.browserAuth(a.loginSettings))
 			mux.HandleFunc("POST /api/v1/settings/auth/github", a.browserAuth(a.saveLoginSettings))
 			mux.HandleFunc("POST /api/v1/settings/auth/github/verify", a.browserAuth(a.verifyLoginSettings))
+			if a.oauth.Integrations != nil {
+				mux.HandleFunc("GET /api/v1/integrations/github", a.browserAuth(a.integrationSettings))
+				mux.HandleFunc("POST /api/v1/integrations/github", a.browserAuth(a.saveIntegration))
+				mux.HandleFunc("POST /api/v1/integrations/github/authorize", a.browserAuth(a.authorizeIntegration))
+				mux.HandleFunc("GET /api/v1/integrations/github/callback", a.finishIntegration)
+				mux.HandleFunc("GET /api/v1/integrations/github/installations", a.browserAuth(a.integrationInstallations))
+				mux.HandleFunc("GET /api/v1/integrations/github/installations/{installationID}/repositories", a.browserAuth(a.integrationRepositories))
+				mux.HandleFunc("POST /api/v1/integrations/github/import", a.browserAuth(a.importRepositories))
+			}
 		}
 	}
 	mux.HandleFunc("GET /api/v1/auth/status", a.authStatus)

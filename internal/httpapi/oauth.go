@@ -8,14 +8,16 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/yuanci/yuanci/internal/identity"
+	"github.com/yuanci/yuanci/internal/integration"
 	"github.com/yuanci/yuanci/internal/provisioning"
 )
 
 // GitHubLogin is installed only on the authenticated surface, never evaluation.
 type GitHubLogin struct {
-	Store    identity.OAuthStore
-	Provider identity.OAuthProvider
-	Managed  *provisioning.Service
+	Store        identity.OAuthStore
+	Provider     identity.OAuthProvider
+	Managed      *provisioning.Service
+	Integrations *integration.Service
 }
 
 func (a *API) startLogin(w http.ResponseWriter, r *http.Request) {

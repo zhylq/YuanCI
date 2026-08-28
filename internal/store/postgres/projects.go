@@ -10,13 +10,12 @@ import (
 	"github.com/yuanci/yuanci/internal/project"
 )
 
-const projectColumns = `r.id,o.id,o.display_name,r.provider,r.owner,r.name,r.default_branch`
+const projectColumns = `r.id,o.id,o.display_name,r.provider,r.owner,r.name,r.default_branch,
+ CASE WHEN r.github_installation_id IS NOT NULL THEN 'metadata_verified' ELSE 'not_connected' END`
 
 func scanProject(row pgx.Row) (project.Record, error) {
 	var item project.Record
-	err := row.Scan(&item.ID, &item.Organization.ID, &item.Organization.Name, &item.Provider, &item.Owner, &item.Name, &item.DefaultBranch)
-	// Active means locally enabled, not verified SCM connectivity.
-	item.ConnectionStatus = "not_connected"
+	err := row.Scan(&item.ID, &item.Organization.ID, &item.Organization.Name, &item.Provider, &item.Owner, &item.Name, &item.DefaultBranch, &item.ConnectionStatus)
 	return item, err
 }
 
