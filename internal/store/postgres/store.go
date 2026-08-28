@@ -138,9 +138,21 @@ func (s *Store) ClaimJob(ctx context.Context, request runmodel.ClaimRequest) (*r
 	defer func() { _ = tx.Rollback(ctx) }()
 	var assignment runmodel.Assignment
 	var spec []byte
+	// Always lock the parent before children, as completion also updates the
+	// Run and may unblock/skip sibling jobs. Other Runs remain claimable.
+	err = tx.QueryRow(ctx, `SELECT r.id FROM runs r
+        WHERE r.status IN ('queued','running')
+        AND EXISTS (SELECT 1 FROM jobs j WHERE j.run_id=r.id AND j.status='queued')
+        ORDER BY r.created_at, r.id FOR UPDATE OF r SKIP LOCKED LIMIT 1`).Scan(&assignment.RunID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lock queued run: %w", err)
+	}
 	err = tx.QueryRow(ctx, `SELECT id, run_id, stage_name, job_name, attempt, spec
-        FROM jobs WHERE status='queued' ORDER BY created_at
-        FOR UPDATE SKIP LOCKED LIMIT 1`).Scan(&assignment.JobID, &assignment.RunID,
+        FROM jobs WHERE run_id=$1 AND status='queued' ORDER BY created_at, id
+        FOR UPDATE SKIP LOCKED LIMIT 1`, assignment.RunID).Scan(&assignment.JobID, &assignment.RunID,
 		&assignment.StageName, &assignment.JobName, &assignment.Attempt, &spec)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -180,7 +192,7 @@ func (s *Store) ClaimJob(ctx context.Context, request runmodel.ClaimRequest) (*r
 func (s *Store) StartJob(ctx context.Context, id uuid.UUID, token string) error {
 	digest := sha256.Sum256([]byte(token))
 	result, err := s.pool.Exec(ctx, `UPDATE jobs SET status='running', started_at=COALESCE(started_at, now())
-        WHERE id=$1 AND status='assigned' AND lease_token_hash=$2 AND lease_expires_at > now()`, id, digest[:])
+        WHERE id=$1 AND status='assigned' AND lease_token_hash=$2 AND lease_expires_at > clock_timestamp()`, id, digest[:])
 	if err != nil {
 		return fmt.Errorf("start job: %w", err)
 	}
@@ -201,9 +213,21 @@ func (s *Store) CompleteJob(ctx context.Context, id uuid.UUID, token string, sta
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var runID uuid.UUID
+	// Serialize graph updates for one Run. Without this lock, two successful
+	// siblings can both observe an unfinished peer and leave their join blocked.
+	err = tx.QueryRow(ctx, `SELECT run_id FROM jobs WHERE id=$1`, id).Scan(&runID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return runmodel.ErrLeaseInvalid
+	}
+	if err != nil {
+		return fmt.Errorf("find job run: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT id FROM runs WHERE id=$1 FOR UPDATE`, runID); err != nil {
+		return fmt.Errorf("lock completing run: %w", err)
+	}
 	err = tx.QueryRow(ctx, `UPDATE jobs SET status=$3, finished_at=now(), lease_token_hash=NULL,
         lease_expires_at=NULL WHERE id=$1 AND status IN ('assigned','running')
-        AND lease_token_hash=$2 AND lease_expires_at > now() RETURNING run_id`, id, digest[:], status).Scan(&runID)
+        AND lease_token_hash=$2 AND lease_expires_at > clock_timestamp() RETURNING run_id`, id, digest[:], status).Scan(&runID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return runmodel.ErrLeaseInvalid
 	}
@@ -238,12 +262,15 @@ func (s *Store) CompleteJob(ctx context.Context, id uuid.UUID, token string, sta
 	}
 	if remaining == 0 {
 		finalStatus := runmodel.StatusSucceeded
-		var failed int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE run_id=$1 AND status IN ('failed','canceled')`, runID).Scan(&failed); err != nil {
+		var failed, canceled int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FILTER (WHERE status='failed'),
+            count(*) FILTER (WHERE status='canceled') FROM jobs WHERE run_id=$1`, runID).Scan(&failed, &canceled); err != nil {
 			return err
 		}
 		if failed > 0 {
 			finalStatus = runmodel.StatusFailed
+		} else if canceled > 0 {
+			finalStatus = runmodel.StatusCanceled
 		}
 		if _, err := tx.Exec(ctx, `UPDATE runs SET status=$2, finished_at=now() WHERE id=$1`, runID, finalStatus); err != nil {
 			return err

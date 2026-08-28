@@ -79,11 +79,16 @@ func (m *MemoryStore) Close()                     {}
 func (m *MemoryStore) Create(_ context.Context, record Record) (Record, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.records = append([]Record{record}, m.records...)
 	var plan pipeline.Plan
 	if err := json.Unmarshal(record.Plan, &plan); err != nil {
 		return Record{}, fmt.Errorf("decode plan: %w", err)
 	}
+	for _, existing := range m.records {
+		if existing.ID == record.ID {
+			return Record{}, errors.New("run already exists")
+		}
+	}
+	m.records = append([]Record{cloneRecord(record)}, m.records...)
 	stageJobs := make(map[string][]string, len(plan.Stages))
 	for _, stage := range plan.Stages {
 		for _, job := range stage.Jobs {
@@ -119,7 +124,9 @@ func (m *MemoryStore) List(_ context.Context, limit int) ([]Record, error) {
 		limit = len(m.records)
 	}
 	result := make([]Record, limit)
-	copy(result, m.records[:limit])
+	for index := range result {
+		result[index] = cloneRecord(m.records[index])
+	}
 	return result, nil
 }
 
@@ -237,6 +244,7 @@ func (m *MemoryStore) setRunStarted(runID uuid.UUID) {
 
 func (m *MemoryStore) finalizeRun(runID uuid.UUID) {
 	failed := false
+	canceled := false
 	for _, job := range m.jobs {
 		if job.assignment.RunID != runID {
 			continue
@@ -244,12 +252,17 @@ func (m *MemoryStore) finalizeRun(runID uuid.UUID) {
 		if job.status == JobBlocked || job.status == JobQueued || job.status == JobAssigned || job.status == JobRunning {
 			return
 		}
-		if job.status == JobFailed || job.status == JobCanceled {
+		if job.status == JobFailed {
 			failed = true
+		}
+		if job.status == JobCanceled {
+			canceled = true
 		}
 	}
 	if failed {
 		m.setRunStatus(runID, StatusFailed)
+	} else if canceled {
+		m.setRunStatus(runID, StatusCanceled)
 	} else {
 		m.setRunStatus(runID, StatusSucceeded)
 	}
@@ -260,6 +273,19 @@ func (m *MemoryStore) finalizeRun(runID uuid.UUID) {
 			return
 		}
 	}
+}
+
+func cloneRecord(record Record) Record {
+	record.Plan = append(json.RawMessage(nil), record.Plan...)
+	if record.StartedAt != nil {
+		value := *record.StartedAt
+		record.StartedAt = &value
+	}
+	if record.FinishedAt != nil {
+		value := *record.FinishedAt
+		record.FinishedAt = &value
+	}
+	return record
 }
 
 func validLease(job *memoryJob, token string) bool {
