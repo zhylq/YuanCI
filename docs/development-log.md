@@ -165,3 +165,20 @@ the batch outcome and remaining work.
 - Local commits: `bfce8dd` design, `dbdb570` session/member persistence,
   `821fe5f` scoped authenticated handler. Final contract/documentation commit
   closes this increment. No commits were pushed; hosted CI remains unverified.
+
+## 2026-08-28 — OAuth state and identity transaction
+
+- Added migration 000003 for five-minute, browser-bound OAuth flows and a
+  persistent one-time bootstrap subject. State, browser nonce and completion
+  tickets are stored as digests; PKCE verifier is not persisted.
+- State consumption and final completion each reject replay. New accounts use
+  provider/instance/numeric-subject keys, not email/login names. Explicit linking
+  checks the same active session, authenticated within ten minutes, and refuses
+  identities owned by another user.
+- First bootstrap requires the configured GitHub subject. Later accounts receive
+  no default roles; subsequent login does not restore revoked admin privileges.
+  Identity, bootstrap, session rotation and audit commit together or roll back.
+- Real PostgreSQL and identity tests passed: wrong browser/expiry, ten concurrent
+  state consumers, ten concurrent bootstrap logins, account conflict, session
+  mismatch, suspension and injected audit failure. Existing store/upgrade tests
+  also passed. No production data or real provider credentials were used.

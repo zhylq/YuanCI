@@ -22,6 +22,17 @@ func (s *Store) IssueSession(ctx context.Context, userID uuid.UUID, ttl time.Dur
 		return identity.Credentials{}, err
 	}
 	defer tx.Rollback(ctx)
+	credentials, err := issueSession(ctx, tx, userID, ttl)
+	if err != nil {
+		return identity.Credentials{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return identity.Credentials{}, err
+	}
+	return credentials, nil
+}
+
+func issueSession(ctx context.Context, tx pgx.Tx, userID uuid.UUID, ttl time.Duration) (identity.Credentials, error) {
 	var name string
 	if err := tx.QueryRow(ctx, `SELECT display_name FROM users WHERE id=$1 AND status='active' FOR SHARE`, userID).Scan(&name); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -31,16 +42,13 @@ func (s *Store) IssueSession(ctx context.Context, userID uuid.UUID, ttl time.Dur
 	}
 	credentials := identity.Credentials{Token: identity.NewToken(), Session: identity.Session{ID: uuid.New(), UserID: userID, DisplayName: name}}
 	digest, _ := identity.TokenDigest(credentials.Token)
-	err = tx.QueryRow(ctx, `INSERT INTO browser_sessions(id,user_id,token_hash,expires_at)
+	err := tx.QueryRow(ctx, `INSERT INTO browser_sessions(id,user_id,token_hash,expires_at)
         VALUES ($1,$2,$3,clock_timestamp()+make_interval(secs => $4)) RETURNING expires_at`,
 		credentials.Session.ID, userID, digest[:], ttl.Seconds()).Scan(&credentials.Session.ExpiresAt)
 	if err != nil {
 		return identity.Credentials{}, err
 	}
 	if err := appendAudit(ctx, tx, userID, "session.created", "session", credentials.Session.ID); err != nil {
-		return identity.Credentials{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return identity.Credentials{}, err
 	}
 	return credentials, nil
