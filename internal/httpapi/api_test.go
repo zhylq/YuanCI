@@ -13,7 +13,7 @@ import (
 )
 
 func TestValidatePipelineEndpoint(t *testing.T) {
-	handler := New(slog.New(slog.NewTextHandler(io.Discard, nil)), runmodel.NewMemoryStore(), 1<<20, "test-runner-token")
+	handler := NewEvaluation(slog.New(slog.NewTextHandler(io.Discard, nil)), runmodel.NewMemoryStore(), 1<<20, "test-runner-token")
 	body, _ := json.Marshal(map[string]string{"content": `version: v1
 name: test
 stages:
@@ -35,7 +35,7 @@ stages:
 }
 
 func TestRejectsUnknownJSONField(t *testing.T) {
-	handler := New(slog.New(slog.NewTextHandler(io.Discard, nil)), runmodel.NewMemoryStore(), 1<<20, "test-runner-token")
+	handler := NewEvaluation(slog.New(slog.NewTextHandler(io.Discard, nil)), runmodel.NewMemoryStore(), 1<<20, "test-runner-token")
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/pipelines/validate", bytes.NewBufferString(`{"content":"x","extra":true}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -47,7 +47,7 @@ func TestRejectsUnknownJSONField(t *testing.T) {
 
 func TestRunAndRunnerLeaseWorkflow(t *testing.T) {
 	store := runmodel.NewMemoryStore()
-	handler := New(slog.New(slog.NewTextHandler(io.Discard, nil)), store, 1<<20, "test-runner-token")
+	handler := NewEvaluation(slog.New(slog.NewTextHandler(io.Discard, nil)), store, 1<<20, "test-runner-token")
 	pipelineSource := `version: v1
 name: workflow
 stages:

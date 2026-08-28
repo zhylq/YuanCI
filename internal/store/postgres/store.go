@@ -55,17 +55,27 @@ func (s *Store) Create(ctx context.Context, record runmodel.Record) (runmodel.Re
 		return runmodel.Record{}, fmt.Errorf("begin create run: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := insertRun(ctx, tx, record); err != nil {
+		return runmodel.Record{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return runmodel.Record{}, fmt.Errorf("commit run: %w", err)
+	}
+	return record, nil
+}
+
+func insertRun(ctx context.Context, tx pgx.Tx, record runmodel.Record) error {
 	const query = `INSERT INTO runs
-        (id, pipeline_name, event, ref, commit_sha, status, config_sha256, compiled_plan, created_at)
-        VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,$7,$8,$9)`
-	_, err = tx.Exec(ctx, query, record.ID, record.PipelineName, record.Event, record.Ref,
-		record.CommitSHA, record.Status, record.ConfigSHA256, record.Plan, record.CreatedAt)
+        (id, pipeline_name, event, ref, commit_sha, status, config_sha256, compiled_plan, created_at, repository_id, created_by)
+        VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,$7,$8,$9,$10,$11)`
+	_, err := tx.Exec(ctx, query, record.ID, record.PipelineName, record.Event, record.Ref,
+		record.CommitSHA, record.Status, record.ConfigSHA256, record.Plan, record.CreatedAt, record.ProjectID, record.CreatedBy)
 	if err != nil {
-		return runmodel.Record{}, fmt.Errorf("create run: %w", err)
+		return fmt.Errorf("create run: %w", err)
 	}
 	var plan pipeline.Plan
 	if err := json.Unmarshal(record.Plan, &plan); err != nil {
-		return runmodel.Record{}, fmt.Errorf("decode compiled plan: %w", err)
+		return fmt.Errorf("decode compiled plan: %w", err)
 	}
 	stageJobs := make(map[string][]string, len(plan.Stages))
 	for _, stage := range plan.Stages {
@@ -88,41 +98,43 @@ func (s *Store) Create(ctx context.Context, record runmodel.Record) (runmodel.Re
 			}
 			spec, err := json.Marshal(job)
 			if err != nil {
-				return runmodel.Record{}, fmt.Errorf("encode job spec: %w", err)
+				return fmt.Errorf("encode job spec: %w", err)
 			}
 			_, err = tx.Exec(ctx, `INSERT INTO jobs
                     (id, run_id, stage_name, job_name, job_key, dependencies, spec, status, attempt)
                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1)`,
 				uuid.New(), record.ID, stage.Name, job.Name, stage.Name+"/"+job.Name, dependencies, spec, status)
 			if err != nil {
-				return runmodel.Record{}, fmt.Errorf("create job %s/%s: %w", stage.Name, job.Name, err)
+				return fmt.Errorf("create job %s/%s: %w", stage.Name, job.Name, err)
 			}
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return runmodel.Record{}, fmt.Errorf("commit run: %w", err)
-	}
-	return record, nil
+	return nil
 }
+
+const runColumns = `id, pipeline_name, event, COALESCE(ref,''),
+    COALESCE(commit_sha,''), status, config_sha256, compiled_plan, created_at,
+    started_at, finished_at, repository_id, created_by`
 
 func (s *Store) List(ctx context.Context, limit int) ([]runmodel.Record, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, pipeline_name, event, COALESCE(ref,''),
-		COALESCE(commit_sha,''), status, config_sha256, compiled_plan, created_at,
-		started_at, finished_at
-		FROM runs ORDER BY created_at DESC LIMIT $1`, limit)
+	rows, err := s.pool.Query(ctx, `SELECT `+runColumns+` FROM runs ORDER BY created_at DESC,id DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
 	}
+	return scanRuns(rows, limit)
+}
+
+func scanRuns(rows pgx.Rows, limit int) ([]runmodel.Record, error) {
 	defer rows.Close()
 	result := make([]runmodel.Record, 0, limit)
 	for rows.Next() {
 		var record runmodel.Record
 		if err := rows.Scan(&record.ID, &record.PipelineName, &record.Event, &record.Ref,
 			&record.CommitSHA, &record.Status, &record.ConfigSHA256, &record.Plan, &record.CreatedAt,
-			&record.StartedAt, &record.FinishedAt); err != nil {
+			&record.StartedAt, &record.FinishedAt, &record.ProjectID, &record.CreatedBy); err != nil {
 			return nil, fmt.Errorf("scan run: %w", err)
 		}
 		result = append(result, record)

@@ -81,14 +81,21 @@ func authenticateSession(ctx context.Context, tx pgx.Tx, token string) (identity
 		return identity.Session{}, err
 	}
 	// Evaluate wall-clock expiry after any lock wait, not at transaction start.
-	var live bool
-	if err := tx.QueryRow(ctx, `SELECT $1::timestamptz > clock_timestamp()`, session.ExpiresAt).Scan(&live); err != nil {
+	if err := sessionLive(ctx, tx, session); err != nil {
 		return identity.Session{}, err
 	}
-	if !live {
-		return identity.Session{}, identity.ErrUnauthenticated
-	}
 	return session, nil
+}
+
+func sessionLive(ctx context.Context, tx pgx.Tx, session identity.Session) error {
+	var live bool
+	if err := tx.QueryRow(ctx, `SELECT $1::timestamptz > clock_timestamp()`, session.ExpiresAt).Scan(&live); err != nil {
+		return err
+	}
+	if !live {
+		return identity.ErrUnauthenticated
+	}
+	return nil
 }
 
 func (s *Store) RevokeSession(ctx context.Context, token string) error {
@@ -249,6 +256,9 @@ func (s *Store) ChangeMembership(ctx context.Context, token string, subjectID uu
 	}
 	var id uuid.UUID
 	action := "membership.revoked"
+	if err := sessionLive(ctx, tx, session); err != nil {
+		return err
+	}
 	if add {
 		action = "membership.granted"
 		err = tx.QueryRow(ctx, `INSERT INTO memberships(user_id,role,`+column+`) VALUES ($1,$2,$3)

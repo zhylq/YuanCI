@@ -1,8 +1,10 @@
 # Authorization policy contract
 
-Status: **policy module tested, not yet enforced by HTTP endpoints**. The
-evaluation API remains intentionally insecure/opt-in until identity, sessions,
-persisted grants and resource resolution are wired in. Do not enable production.
+Status: **policy, persisted memberships and the protected browser handler are
+tested; production runtime activation is still blocked**. Authenticated Run
+queries/writes now resolve resource ownership and recheck grants transactionally.
+The executable still uses the explicit evaluation API until OAuth/bootstrap are
+ready. See [session integration status](sessions.md). Do not enable production.
 
 ## Resource and identity inputs
 
@@ -55,10 +57,11 @@ membership in the approval transaction, validate deployment state and persist
 approval plus audit atomically. It must prevent scope changes/role escalation
 and recheck revocation rather than trust stale session claims.
 
-Before production: persist memberships and resource ownership; implement OAuth,
-CSRF-safe sessions and API enforcement; scope list queries (not merely filter
-the UI); audit grant/revocation and protected actions; prevent administrators from
-silently self-granting approval; test IDOR and membership changes end to end.
+Completed in the protected handler: persisted memberships/ownership, scoped Run
+queries, CSRF checks, grant/revocation auditing and self-grant rejection. Before
+production: implement OAuth/bootstrap and activate the protected runtime, finish
+deployment approval transactions, test provider identity linking and review
+membership administration/last-admin protection end to end.
 
 Validation: 1,440 role/action/target/grant combinations plus explicit protected
 environment, malformed ancestry, cross-scope, suspended-user and self-approval

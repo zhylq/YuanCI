@@ -122,3 +122,25 @@ the batch outcome and remaining work.
   suspension, revocation, FK constraints, permission escalation and audit failure.
 - OAuth, account linking and administrator bootstrap remain separate gates. The
   internal IssueSession method assumes an already verified external identity.
+
+## 2026-08-28 — scoped browser API and transaction regression
+
+- Added the protected browser handler, session info/logout, exact Origin and
+  session-bound CSRF checks, SQL-scoped Run reads/writes and live permission checks
+  inside the Run transaction. Old evaluation routing is explicitly named and
+  remains the only executable path until OAuth/bootstrap activation.
+- Created Runs have server-assigned project/creator. Legacy unowned Runs are
+  excluded from authenticated listings. Read-only, unrelated and revoked grants
+  cannot create Runs; inherited instance admin grants still cannot manage a
+  protected environment without explicit scope authorization.
+- Hardened legacy Runner Authorization framing and JSON parsing: reject missing
+  Bearer scheme, extra JSON values, misleading media types and oversized bodies.
+  Parse errors no longer reflect unknown field names; panic values are not logged.
+- PostgreSQL tests cover actual HTTP 401/403, CSRF mismatch, cross-project access,
+  logout replay, audit-failure rollback, revocation while authorization waits,
+  session expiry during lock waits and additive upgrade preserving existing Runs.
+- Five consecutive host runs of PostgreSQL/HTTP/identity tests passed, followed
+  by vet. Full Linux `go test -race -count=1 -timeout=120s ./...` and vet passed
+  against the disposable database. Frontend's existing test, lint and build passed.
+- No OAuth login or public session issuance was simulated as a real provider
+  success. No production gate, live database or running application was changed.

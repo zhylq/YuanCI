@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"runtime"
 	"strconv"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/yuanci/yuanci/internal/buildinfo"
+	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/pipeline"
 	runmodel "github.com/yuanci/yuanci/internal/run"
 	"github.com/yuanci/yuanci/internal/webui"
@@ -27,9 +30,14 @@ type API struct {
 	bodyLimit   int64
 	runnerToken string
 	startedAt   time.Time
+	sessions    identity.Sessions
+	authorized  runmodel.AuthorizedStore
+	origin      string
 }
 
-func New(logger *slog.Logger, store runmodel.Store, bodyLimit int64, runnerToken string) http.Handler {
+// NewEvaluation exposes the deliberately unauthenticated milestone API.
+// The executable may call this only after the explicit evaluation config gate.
+func NewEvaluation(logger *slog.Logger, store runmodel.Store, bodyLimit int64, runnerToken string) http.Handler {
 	api := &API{logger: logger, store: store, bodyLimit: bodyLimit, runnerToken: runnerToken, startedAt: time.Now().UTC()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", api.health)
@@ -123,7 +131,13 @@ func (a *API) runnerAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeProblem(w, http.StatusServiceUnavailable, "runner protocol disabled", "runner authentication is not configured")
 			return
 		}
-		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		fields := strings.Fields(r.Header.Get("Authorization"))
+		if len(r.Header.Values("Authorization")) != 1 || len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeProblem(w, http.StatusUnauthorized, "unauthorized", "runner token is invalid")
+			return
+		}
+		provided := fields[1]
 		expectedDigest := sha256.Sum256([]byte(a.runnerToken))
 		providedDigest := sha256.Sum256([]byte(provided))
 		if subtle.ConstantTimeCompare(expectedDigest[:], providedDigest[:]) != 1 {
@@ -189,10 +203,11 @@ func (a *API) validatePipeline(w http.ResponseWriter, r *http.Request) {
 }
 
 type createRunRequest struct {
-	Pipeline string `json:"pipeline"`
-	Event    string `json:"event"`
-	Ref      string `json:"ref"`
-	Commit   string `json:"commit_sha"`
+	ProjectID string `json:"project_id"`
+	Pipeline  string `json:"pipeline"`
+	Event     string `json:"event"`
+	Ref       string `json:"ref"`
+	Commit    string `json:"commit_sha"`
 }
 
 func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
@@ -202,6 +217,15 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if request.Event == "" {
 		request.Event = "manual"
+	}
+	var projectID uuid.UUID
+	if a.authorized != nil {
+		var err error
+		projectID, err = uuid.Parse(request.ProjectID)
+		if err != nil || projectID == uuid.Nil || request.Event != "manual" {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid run", "project_id is required and browser runs must use the manual event")
+			return
+		}
 	}
 	plan, err := pipeline.Compile([]byte(request.Pipeline), time.Now())
 	if err != nil {
@@ -218,8 +242,15 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		CommitSHA: request.Commit, Status: runmodel.StatusQueued, ConfigSHA256: plan.ConfigSHA256,
 		Plan: encodedPlan, CreatedAt: time.Now().UTC(),
 	}
-	record, err = a.store.Create(r.Context(), record)
+	if a.authorized != nil {
+		record, err = a.authorized.CreateAuthorizedRun(r.Context(), browserFrom(r).token, projectID, record)
+	} else {
+		record, err = a.store.Create(r.Context(), record)
+	}
 	if err != nil {
+		if accessError(w, err) {
+			return
+		}
 		a.logger.Error("create run", "error", err)
 		writeProblem(w, http.StatusInternalServerError, "internal error", "could not create run")
 		return
@@ -229,8 +260,22 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) listRuns(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	records, err := a.store.List(r.Context(), limit)
+	var records []runmodel.Record
+	var err error
+	if a.authorized != nil {
+		projectID, parseErr := uuid.Parse(r.URL.Query().Get("project_id"))
+		if parseErr != nil || projectID == uuid.Nil || len(r.URL.Query()["project_id"]) != 1 {
+			writeProblem(w, http.StatusBadRequest, "invalid project", "one project_id is required")
+			return
+		}
+		records, err = a.authorized.ListAuthorizedRuns(r.Context(), browserFrom(r).token, projectID, limit)
+	} else {
+		records, err = a.store.List(r.Context(), limit)
+	}
 	if err != nil {
+		if accessError(w, err) {
+			return
+		}
 		a.logger.Error("list runs", "error", err)
 		writeProblem(w, http.StatusInternalServerError, "internal error", "could not list runs")
 		return
@@ -254,9 +299,12 @@ func (a *API) middleware(next http.Handler) http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.Body != nil {
 			r.Body = http.MaxBytesReader(w, r.Body, a.bodyLimit)
 		}
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				a.logger.Error("request panic", "request_id", requestID, "panic", recovered)
+				a.logger.Error("request panic", "request_id", requestID)
 				writeProblem(w, http.StatusInternalServerError, "internal error", "the request could not be completed")
 			}
 			a.logger.Info("request", "request_id", requestID, "method", r.Method, "path", r.URL.Path, "duration_ms", time.Since(started).Milliseconds())
@@ -266,17 +314,34 @@ func (a *API) middleware(next http.Handler) http.Handler {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) error {
-	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" || len(r.Header.Values("Content-Type")) != 1 {
 		writeProblem(w, http.StatusUnsupportedMediaType, "unsupported media type", "Content-Type must be application/json")
 		return errors.New("unsupported content type")
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
-		writeProblem(w, http.StatusBadRequest, "invalid request", err.Error())
+		writeDecodeError(w, err)
+		return err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		if err == nil {
+			err = errors.New("multiple JSON values")
+		}
+		writeDecodeError(w, err)
 		return err
 	}
 	return nil
+}
+
+func writeDecodeError(w http.ResponseWriter, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeProblem(w, http.StatusRequestEntityTooLarge, "request too large", "request body exceeds the limit")
+		return
+	}
+	writeProblem(w, http.StatusBadRequest, "invalid request", "body must contain one valid JSON object with known fields")
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

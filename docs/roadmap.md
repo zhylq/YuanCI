@@ -9,15 +9,15 @@ This is still pre-alpha, not a finished CI/CD product. See the
 | --- | --- | --- |
 | Engineering workflow | Incremental commits, CI definition, isolated DB/race tests | Publish workflow, hosted checks and branch protection |
 | Transaction queue | Unique claims, serialized DAG completion, cancellation result, migration/reopen tests | Heartbeats, lease recovery, fault injection and 72-hour soak |
-| Authorization | Default-deny policy over four scopes and explicit role matrix | Identity/session, persisted grants, HTTP enforcement and audit |
+| Authorization | Four-scope policy, FK-backed memberships, revocable sessions, transactional audit and protected Run HTTP handler tests | OAuth/bootstrap, runtime activation, full membership/audit UI and deployment enforcement |
 | Secrets | Envelope encryption, AAD binding, corrupt-input regression and fuzz test | Storage API, file-supplied master key, rotation, scoped release and redaction |
 | Docker | Source-context exclusions, loopback Quickstart, separate verification profile | Release digest locks, signed multi-architecture images and recovery drills |
 | Console | Existing dashboard and YAML validation/plan preview | Login, repositories, run detail/logs, full visual editor and administration |
 | SCM | Existing GitHub REST adapter and signed event normalization tests | End-to-end GitHub App flow plus GitLab, Gitea and Gitee |
 | CD | Design only | Environments, approvals, SSH/Compose execution, health checks and rollback |
 
-Next implementation order: identity/session and membership/audit persistence;
-API authorization; Runner identity/lease recovery; GitHub end-to-end CI; complete
+Next implementation order: OAuth/identity linking, safe bootstrap and protected
+runtime activation; Runner identity/lease recovery; GitHub end-to-end CI; complete
 console; remaining SCM/CI capabilities; protected CD; release qualification.
 Do not remove the insecure-evaluation gate merely because the policy tests pass.
 

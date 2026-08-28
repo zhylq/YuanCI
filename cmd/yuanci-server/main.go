@@ -40,7 +40,7 @@ func main() {
 	defer store.Close()
 
 	server := &http.Server{
-		Addr: cfg.Address, Handler: httpapi.New(logger, store, cfg.RequestBodyLimit, cfg.RunnerSharedToken),
+		Addr: cfg.Address, Handler: httpapi.NewEvaluation(logger, store, cfg.RequestBodyLimit, cfg.RunnerSharedToken),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second,
 	}

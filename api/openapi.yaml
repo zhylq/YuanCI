@@ -2,10 +2,43 @@ openapi: 3.1.0
 info:
   title: YuanCI API
   version: 0.1.0
-  description: Versioned public control-plane API for YuanCI.
+  description: >-
+    Protected browser API contract. The NewAuthenticated handler is implemented
+    and integration-tested; the current executable still exposes only the explicit
+    evaluation surface until OAuth/runtime activation. There is no public session
+    issuer. Mutation requests require an exact configured HTTPS Origin and a
+    session-bound X-CSRF-Token. Evaluation compatibility is not production auth.
 servers:
   - url: /api/v1
 paths:
+  /session:
+    get:
+      operationId: getSession
+      responses:
+        '200':
+          description: Active user and session-bound CSRF token; Cache-Control no-store; no session credential
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user_id, display_name, expires_at, csrf_token]
+                properties:
+                  user_id: { type: string, format: uuid }
+                  display_name: { type: string }
+                  expires_at: { type: string, format: date-time }
+                  csrf_token: { type: string }
+        '401': { description: Missing, invalid, revoked or expired session }
+        '503': { description: Session store unavailable }
+    delete:
+      operationId: logout
+      parameters:
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+        - { $ref: '#/components/parameters/CSRFToken' }
+      responses:
+        '204': { description: Session revoked with audit event and cookie expired }
+        '401': { description: Invalid session }
+        '403': { description: Origin or CSRF validation failed }
+        '503': { description: Session could not be revoked }
   /system/info:
     get:
       operationId: getSystemInfo
@@ -16,6 +49,9 @@ paths:
   /pipelines/validate:
     post:
       operationId: validatePipeline
+      parameters:
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+        - { $ref: '#/components/parameters/CSRFToken' }
       requestBody:
         required: true
         content:
@@ -33,9 +69,10 @@ paths:
       operationId: listRuns
       parameters:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: project_id, in: query, required: true, schema: { type: string, format: uuid } }
       responses:
         '200':
-          description: Recent runs
+          description: Runs in the authorized project only; unowned evaluation runs are excluded
           content:
             application/json:
               schema:
@@ -45,8 +82,14 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/Run' }
+        '400': { description: Missing or invalid project ID }
+        '401': { description: Invalid session }
+        '403': { description: Project unavailable or permission denied }
     post:
       operationId: createRun
+      parameters:
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+        - { $ref: '#/components/parameters/CSRFToken' }
       requestBody:
         required: true
         content:
@@ -54,22 +97,40 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [pipeline]
+              required: [pipeline, project_id]
               properties:
+                project_id: { type: string, format: uuid }
                 pipeline: { type: string }
-                event: { type: string, default: manual }
+                event: { type: string, enum: [manual], default: manual }
                 ref: { type: string }
                 commit_sha: { type: string }
       responses:
         '201': { description: Run accepted and transactionally queued }
+        '401': { description: Invalid session }
+        '403': { description: Origin, CSRF or scoped permission denied }
         '422': { description: Pipeline validation errors }
 components:
+  parameters:
+    BrowserOrigin:
+      name: Origin
+      in: header
+      required: true
+      schema: { type: string }
+      description: Exact configured HTTPS public origin; forwarded Host headers are not authority
+    CSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema: { type: string }
+      description: Session-bound value returned by GET /session
   schemas:
     Run:
       type: object
       required: [id, pipeline_name, event, status, config_sha256, created_at]
       properties:
         id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        created_by: { type: string, format: uuid }
         pipeline_name: { type: string }
         event: { type: string }
         ref: { type: string }
@@ -83,6 +144,6 @@ components:
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time }
   securitySchemes:
-    cookieSession: { type: apiKey, in: cookie, name: yuanci_session }
+    cookieSession: { type: apiKey, in: cookie, name: __Host-yuanci_session }
 security:
   - cookieSession: []

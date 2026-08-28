@@ -16,6 +16,8 @@ import (
 
 type Record struct {
 	ID           uuid.UUID       `json:"id"`
+	ProjectID    *uuid.UUID      `json:"project_id,omitempty"`
+	CreatedBy    *uuid.UUID      `json:"created_by,omitempty"`
 	PipelineName string          `json:"pipeline_name"`
 	Event        string          `json:"event"`
 	Ref          string          `json:"ref,omitempty"`
@@ -276,6 +278,14 @@ func (m *MemoryStore) finalizeRun(runID uuid.UUID) {
 }
 
 func cloneRecord(record Record) Record {
+	if record.ProjectID != nil {
+		value := *record.ProjectID
+		record.ProjectID = &value
+	}
+	if record.CreatedBy != nil {
+		value := *record.CreatedBy
+		record.CreatedBy = &value
+	}
 	record.Plan = append(json.RawMessage(nil), record.Plan...)
 	if record.StartedAt != nil {
 		value := *record.StartedAt
