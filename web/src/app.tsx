@@ -3,6 +3,7 @@ import { Layout } from './layout'
 import { HomePage, PipelinePage } from './pages/account'
 import { AuthSettingsPage } from './pages/auth-settings'
 import { LoginPage } from './components/auth-boundary'
+import { ProjectDetailPage, ProjectsPage } from './pages/projects'
 
 const router = createBrowserRouter([
   { path: '/', element: <Layout />, children: [
@@ -11,6 +12,8 @@ const router = createBrowserRouter([
     { path: 'setup', element: <AuthSettingsPage setup /> },
     { path: 'settings/auth', element: <AuthSettingsPage /> },
     { path: 'login', element: <LoginPage /> },
+    { path: 'projects', element: <ProjectsPage /> },
+    { path: 'projects/:projectID', element: <ProjectDetailPage /> },
   ] },
 ])
 

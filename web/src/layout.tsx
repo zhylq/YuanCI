@@ -4,6 +4,7 @@ import { AuthBoundary } from './components/auth-boundary'
 
 const navItems = [
   { to: '/', label: '概览', end: true },
+  { to: '/projects', label: '项目', end: false },
   { to: '/pipelines/new', label: 'Pipeline 编辑器', end: false },
   { to: '/settings/auth', label: 'Git 平台设置', end: false },
 ]
@@ -19,10 +20,10 @@ export function Layout() {
             <span><strong className="block text-base">YuanCI</strong><small className="block text-xs text-slate-400">轻量 CI/CD 控制台</small></span>
           </NavLink>
           <nav aria-label="主要导航">
-            <ul className="flex items-center gap-1">
+            <ul className="flex flex-wrap items-center gap-1">
               {navItems.map((item) => (
                 <li key={item.to}>
-                  <NavLink end={item.end} to={item.to} className={({ isActive }) => cn('block rounded-md px-3 py-2 text-sm font-medium text-slate-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400', isActive && 'bg-slate-800 text-white')}>
+                  <NavLink end={item.end} to={item.to} className={({ isActive }) => cn('inline-flex min-h-11 items-center rounded-md px-3 py-2 text-sm font-medium text-slate-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400', isActive && 'bg-slate-800 text-white')}>
                     {item.label}
                   </NavLink>
                 </li>

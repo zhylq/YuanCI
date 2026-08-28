@@ -319,3 +319,29 @@ the batch outcome and remaining work.
   minimal DTOs, malformed HTTP parameters and revoked/suspended/expired sessions.
   All three reads reject sessions expiring during blocked resource access.
 - Frontend and final Linux/browser verification are recorded in the next batch.
+
+## 2026-08-28 — project console and regression verification
+
+- Added Projects navigation, account entry, permission-scoped search/keyset paging,
+  repository detail and run-summary pages. Query keys include user/project/page;
+  previous results are hidden on navigation, permission errors and failed refresh.
+  Requests are cancellable, refresh on focus/every 30 seconds, and do not run in
+  evaluation mode. No fake connected state, import form or build action was added.
+- UI guidance retained native controls and existing theme, wrapped mobile
+  navigation, increased nav targets to 44px, and provided accessible search,
+  pending/error/empty states. No animations or new runtime dependencies.
+- Frontend now has 17 passing tests across 4 files, including 9 new project tests.
+  Tests/lint/TypeScript/build passed again after the final navigation adjustment.
+  Tests distinguish empty results from failures, reset paging on search, isolate
+  project changes and hide cached records after authorization failures.
+- Added an explicit loopback-only visual fixture, with fictional data and a
+  visible warning. Browser checks covered search, detail, run pagination, long
+  branch/SHA wrapping and 375/768/1024/1440 viewport overrides (content widths
+  360/753/1009/1425px), without horizontal overflow. Real auth is not bypassed:
+  this fixture has no database or OAuth and is excluded from the Server image.
+- Linux `go test -race -count=1 -timeout=120s ./...` and `go vet ./...` passed
+  against disposable PostgreSQL, including the new API contracts. Verification
+  exited 0. This precedes only the final 44px navigation-class adjustment.
+- Actual Server image smoke: UID 10001/read-only root, ready and SPA routes 200;
+  all three project APIs return 401 without a browser session. No GitHub request
+  was made. Quickstart Server/PostgreSQL were healthy and Runner running.
