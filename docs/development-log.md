@@ -66,3 +66,15 @@ Further entries record completed checks and known limitations per batch.
   statement coverage was 100%. This is policy coverage, not proof of security.
 - Not delivered: persisted roles/memberships, OAuth, sessions, HTTP enforcement,
   transactional approval/audit. Existing API security gates remain unchanged.
+
+## 2026-08-28 — malformed secret envelope regression
+
+- RED: opening an envelope with an absent nonce panicked in AES-GCM.
+- Added nonce/wrapped-key size validation before decryption, returning errors
+  without plaintext for corrupt envelopes. Ciphertext format is unchanged.
+- Tests cover missing/short/long nonces and missing/tampered wrapped keys or
+  ciphertext. All passed. A 15-second, two-worker fuzz run completed 2,045,273
+  executions without a failure. This bounded run is not a formal crypto audit.
+- Windows `go test -count=1 -timeout=120s ./...` and `go vet ./...` passed.
+  PostgreSQL tests in this host-only command were skipped (no DB URL); the
+  independent Docker integration run is the evidence for database behavior.

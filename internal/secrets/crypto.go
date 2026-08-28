@@ -84,6 +84,11 @@ func (c *Cipher) Seal(plaintext, associatedData []byte) (Envelope, error) {
 }
 
 func (c *Cipher) Open(envelope Envelope, associatedData []byte) ([]byte, error) {
+	// AEAD.Open panics on a wrong nonce length. Persisted envelopes can be
+	// truncated/corrupt and must produce an error, not crash the caller.
+	if len(envelope.KeyNonce) != c.master.NonceSize() || len(envelope.EncryptedDataKey) != keySize+c.master.Overhead() {
+		return nil, errors.New("decrypt data key: invalid envelope")
+	}
 	dataKey, err := c.master.Open(nil, envelope.KeyNonce, envelope.EncryptedDataKey, append([]byte("yuanci:dek:"), associatedData...))
 	if err != nil {
 		return nil, errors.New("decrypt data key: authentication failed")
@@ -96,6 +101,9 @@ func (c *Cipher) Open(envelope Envelope, associatedData []byte) ([]byte, error) 
 	dataCipher, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, errors.New("decrypt secret: invalid cipher")
+	}
+	if len(envelope.DataNonce) != dataCipher.NonceSize() {
+		return nil, errors.New("decrypt secret: invalid envelope")
 	}
 	plaintext, err := dataCipher.Open(nil, envelope.DataNonce, envelope.Ciphertext, associatedData)
 	if err != nil {
