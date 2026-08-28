@@ -11,6 +11,140 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /integrations/github:
+    get:
+      operationId: getGitHubIntegration
+      description: Managed mode and live instance administrator only. No private key, token or encrypted envelopes in the response.
+      responses:
+        '200':
+          description: App metadata and current-session authorization deadline
+          content: { application/json: { schema: { $ref: '#/components/schemas/GitHubIntegration' } } }
+        '401': { description: Invalid session }
+        '403': { description: Instance administrator required }
+        '409': { description: Active managed login configuration required }
+        '503': { description: Settings unavailable }
+    post:
+      operationId: configureGitHubApp
+      description: Verify RSA key against GET /app and active login Client ID before encrypted persistence. Requires login within ten minutes. CAS replacement invalidates all discovery flows/proofs but does not delete projects.
+      parameters:
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+        - { $ref: '#/components/parameters/CSRFToken' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [app_id, private_key]
+              properties:
+                app_id: { $ref: '#/components/schemas/GitHubNumericID' }
+                private_key: { type: string, maxLength: 16384, writeOnly: true, description: Single PKCS1 or PKCS8 PEM RSA private key; 2048-4096 bits; byte limit enforced }
+                expected_revision: { type: [string, 'null'], format: uuid, description: Current App revision; null/absent for first configuration }
+      responses:
+        '204': { description: Verified and encrypted; no secret response }
+        '400': { description: Invalid JSON or unknown fields }
+        '401': { description: Invalid or old session }
+        '403': { description: Permission, Origin/CSRF or GitHub access denied }
+        '409': { description: Configuration changed }
+        '422': { description: Invalid key or App mismatch }
+        '429': { description: GitHub throttling; Retry-After 60 }
+        '502': { description: GitHub unavailable; no credential change }
+        '503': { description: Persistence unavailable }
+  /integrations/github/authorize:
+    post:
+      operationId: authorizeGitHubDiscovery
+      description: Recent instance admin only. One active flow per session; five-minute state/nonce binding with S256 PKCE. Replaces prior proof. Separate from login; never grants permissions.
+      parameters:
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+        - { $ref: '#/components/parameters/CSRFToken' }
+      responses:
+        '200':
+          description: Sets Secure HttpOnly SameSite=Lax __Host-yuanci_import cookie
+          content: { application/json: { schema: { type: object, required: [authorization_url], properties: { authorization_url: { type: string, format: uri } } } } }
+        '401': { description: Invalid or old session }
+        '403': { description: Admin or Origin/CSRF denied }
+        '409': { description: App configuration must be verified }
+        '503': { description: Authorization unavailable }
+  /integrations/github/callback:
+    get:
+      operationId: finishGitHubDiscovery
+      description: Requires original browser session and __Host-yuanci_import cookie. Consumes state once before token exchange and verifies a GitHub identity already bound to the same user. Saves only encrypted user token usable for at most ten minutes. No refresh token, login session or permission grant. HEAD rejected. installation_id is ignored.
+      parameters:
+        - { name: state, in: query, required: true, schema: { type: string, minLength: 43, maxLength: 43 } }
+        - { name: code, in: query, schema: { type: string, maxLength: 1024 } }
+        - { name: error, in: query, schema: { type: string } }
+      responses:
+        '303': { description: Fixed redirect to /settings/repositories }
+        '400': { description: Expired, ambiguous or replayed flow }
+        '401': { description: Invalid session }
+        '403': { description: Wrong account, denied authorization or revoked administrator }
+        '409': { description: Flow superseded or configuration changed }
+        '429': { description: GitHub throttled; restart authorization later }
+        '502': { description: GitHub unavailable; restart authorization }
+        '503': { description: Persistence unavailable }
+  /integrations/github/installations:
+    get:
+      operationId: listGitHubInstallations
+      description: Current-session proof required. User/App permission intersection; verifies App ID, stable account ID and suspension with App JWT. At most ten 100-item pages within a bounded request; fails rather than truncating.
+      responses:
+        '200':
+          description: Verified installations
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/GitHubInstallation' } } } } } }
+        '401': { description: Session expired }
+        '403': { description: Local or GitHub access denied }
+        '409': { description: Discovery authorization expired or changed }
+        '429': { description: GitHub throttled }
+        '502': { description: Upstream timeout, limits or invalid response }
+        '503': { description: Store unavailable }
+  /integrations/github/installations/{installationID}/repositories:
+    get:
+      operationId: discoverGitHubRepositories
+      description: Verifies installation ownership before reading repositories; returns only repository-admin permission intersection. Local grants and proof are rechecked after remote I/O.
+      parameters:
+        - { name: installationID, in: path, required: true, schema: { $ref: '#/components/schemas/GitHubNumericID' } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 1 } }
+      responses:
+        '200':
+          description: At most 100 repositories; no user/admin secrets
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/GitHubRepository' } }, next_page: { type: integer, minimum: 2, maximum: 100 } } } } }
+        '401': { description: Session expired }
+        '403': { description: Local or GitHub access denied }
+        '409': { description: Discovery authorization expired or changed }
+        '422': { description: Invalid installation ID or page }
+        '429': { description: GitHub throttled }
+        '502': { description: Upstream unavailable }
+        '503': { description: Store unavailable }
+  /integrations/github/import:
+    post:
+      operationId: importGitHubRepositories
+      description: Re-fetches installation and repository-admin intersection; network is outside transaction. Atomic project/audit write rechecks local session, grants, revisions, linked identity and proof expiry. Stable GitHub account maps to a dedicated organization. No membership grants, project moves or reactivation. Duplicate imports return existing project without duplicate creation audit. No CI activation.
+      parameters:
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+        - { $ref: '#/components/parameters/CSRFToken' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [installation_id, repository_ids]
+              properties:
+                installation_id: { $ref: '#/components/schemas/GitHubNumericID' }
+                repository_ids: { type: array, minItems: 1, maxItems: 20, uniqueItems: true, items: { $ref: '#/components/schemas/GitHubNumericID' } }
+      responses:
+        '200':
+          description: Created or existing projects
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, maxItems: 20, items: { type: object, additionalProperties: false, required: [id, name, created], properties: { id: { type: string, format: uuid }, name: { type: string }, created: { type: boolean } } } } } } } }
+        '400': { description: Malformed JSON or unknown fields }
+        '401': { description: Session expired }
+        '403': { description: Local/remote rights or Origin/CSRF denied }
+        '409': { description: Proof or configuration changed, or existing project/installation conflict }
+        '422': { description: Invalid or duplicate selection }
+        '429': { description: GitHub throttled }
+        '502': { description: GitHub unavailable; nothing imported }
+        '503': { description: Store or audit failure; entire transaction rolled back }
   /projects:
     get:
       operationId: listProjects
@@ -377,6 +511,48 @@ components:
       schema: { type: string }
       description: Session-bound value returned by GET /session
   schemas:
+    GitHubNumericID:
+      type: string
+      pattern: '^[1-9][0-9]{0,18}$'
+      description: Canonical positive signed-int64 GitHub ID encoded as string to avoid JavaScript precision loss
+    GitHubIntegration:
+      type: object
+      additionalProperties: false
+      required: [app, needs_verification, callback_url, setup_url]
+      properties:
+        app:
+          oneOf:
+            - type: 'null'
+            - type: object
+              additionalProperties: false
+              required: [id, app_id, client_id, slug]
+              properties:
+                id: { type: string, format: uuid }
+                app_id: { $ref: '#/components/schemas/GitHubNumericID' }
+                client_id: { type: string }
+                slug: { type: string }
+        needs_verification: { type: boolean }
+        callback_url: { type: string, format: uri }
+        setup_url: { type: string, format: uri }
+        install_url: { type: string, format: uri }
+        authorized_until: { type: string, format: date-time }
+    GitHubInstallation:
+      type: object
+      additionalProperties: false
+      required: [id, account_id, account]
+      properties:
+        id: { $ref: '#/components/schemas/GitHubNumericID' }
+        account_id: { $ref: '#/components/schemas/GitHubNumericID' }
+        account: { type: string }
+    GitHubRepository:
+      type: object
+      additionalProperties: false
+      required: [id, owner, name, default_branch]
+      properties:
+        id: { $ref: '#/components/schemas/GitHubNumericID' }
+        owner: { type: string }
+        name: { type: string }
+        default_branch: { type: string }
     Project:
       type: object
       additionalProperties: false
@@ -394,7 +570,7 @@ components:
         owner: { type: string }
         name: { type: string }
         default_branch: { type: string }
-        connection_status: { type: string, enum: [not_connected], description: Local registration is not verified SCM connectivity }
+        connection_status: { type: string, enum: [not_connected, metadata_verified], description: Metadata verification at import only; not continuous authorization or webhook/CI readiness }
     ProjectPage:
       type: object
       additionalProperties: false

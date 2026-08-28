@@ -10,8 +10,10 @@ Database-backed startup requires an explicit mode: isolated insecure evaluation,
 or the new [GitHub authenticated preview](docs/auth-preview.zh-CN.md). The latter
 implements login/bootstrap and protected browser APIs but has no legacy Runner
 routes. The [project browser](docs/project-browser.zh-CN.md) now provides scoped
-project selection, repository metadata and paginated run summaries; SCM import
-is still pending. The new [managed setup wizard](docs/managed-setup.zh-CN.md)
+project selection, repository metadata and paginated run summaries. Managed mode
+also provides [GitHub App installation discovery and repository import](docs/github-import.zh-CN.md),
+with encrypted credentials and transactionally checked authorization. Webhooks,
+private checkout and automatic builds are still pending. The [managed setup wizard](docs/managed-setup.zh-CN.md)
 provides one-time setup codes, encrypted app settings, login/logout and verified
 configuration activation. Full identity administration and Runner
 mTLS remain production release blockers.
@@ -65,6 +67,7 @@ YuanCI reads `.yuanci.yml` from the repository root. See [the example](examples/
 - [Browser session integration and remaining activation gates](docs/security/sessions.md)
 - [GitHub login preview deployment (Chinese, no host Go installation needed)](docs/auth-preview.zh-CN.md)
 - [Managed Git-platform settings wizard and Docker deployment](docs/managed-setup.zh-CN.md)
+- [GitHub App configuration, installation and repository import](docs/github-import.zh-CN.md)
 
 ## License
 

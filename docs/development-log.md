@@ -359,3 +359,61 @@ the batch outcome and remaining work.
 - Commits: `5ec9a3f` approved design, `8422a62` backend, `e4ad94f` console, then
   this contract/documentation handoff. No push. No actual provider integration,
   trusted-HTTPS browser login or v1 production qualification is claimed.
+
+## 2026-08-28 — GitHub App installation discovery and repository import
+
+- Approved design `07efcf6`; backend/API `ab81081`; linked-identity and cleanup
+  hardening `6ddd5a3`; guided console `4dba3cc`. All local on main; no push.
+- Managed preview only: verify RSA App key via GET /app against active login
+  Client ID, then envelope-encrypt it. Installation page uses verified App slug.
+  Setup URL parameters never authorize or write projects. Separate OAuth/PKCE
+  callback requires original browser session and single-use state/nonce; it
+  neither logs in nor grants privileges. Supports multiple already-linked GitHub
+  identities; proof records the actual verified identity and rejects later unlink.
+- User authorization is encrypted and usable at most ten minutes; no refresh
+  token persisted. Revision/session/identity/admin checks run again after remote
+  I/O and transaction lock waits. Background cleanup runs at startup/every minute;
+  expired credentials are unusable even if deletion fails. Backups/WAL may retain
+  encrypted material and require their own retention/revocation procedures.
+- Discovery uses user/App intersection, App/account/suspension verification and
+  repository-admin permission. Requests use fixed GitHub endpoints, no redirects,
+  bounded response sizes/pages/timeouts and sanitized errors. No remote writes or
+  installation access-token automation. Import refetches permissions and creates
+  a dedicated organization by stable GitHub account ID. No implicit memberships,
+  project adoption/move, metadata replacement or reactivation on repeat import.
+  Project creation and audit are atomic; concurrent repeats create one record.
+- New 000005/000006 forward migrations preserve existing project/user data;
+  000006 invalidates prior short-lived proofs to require explicit subject binding.
+  Existing deployed Quickstart was not migrated or restarted by this batch.
+- Host full Go tests and vet passed against disposable PostgreSQL. Added tests
+  cover JWT/key validation, endpoint/redirect/size/transport errors, App/account
+  mismatch, PKCE, admin filtering, token encryption/no echo, forged/replayed/
+  superseded flows, multiple identity/unlink, stale App revision, duplicate import,
+  local/remote revocation, audit rollback, name collision and proof expiry while
+  waiting on a repository lock (including rollback of a new preceding project).
+- Linux verification ran twice: `go test -race -count=1 -timeout=120s ./...` and
+  `go vet ./...`, exit 0. Final run includes linked identities, cleanup, lock-wait
+  expiry and expanded OpenAPI contracts. Real PostgreSQL tests were not skipped.
+- Console has 23 passing tests across five files; lint and production build pass.
+  UI skills kept existing theme/native controls, accessible labels and local
+  errors, no added dependencies/animations, and no credential query/mutation cache.
+  Private key input clears on submission; wrong mode/non-admin shows no form.
+  Repository selection is explicit, capped at 20 and reset on paging/refresh.
+- Loopback-only UI fixture checks in the browser covered instructions, installation
+  selection, checkbox import/result links, permission denial, GitHub throttling and
+  evaluation-mode gating. Desktop screenshot inspected. This batch did not repeat
+  the earlier multi-width viewport checks or a real trusted-HTTPS OAuth journey.
+  Fixture is visibly synthetic, has no database/OAuth and refuses credential saves.
+- Fresh actual managed Docker image smoke completed key initialization and
+  `up --wait`; ready/SPA routes 200, all new protected reads/writes 401 without a
+  session, malformed callback 400. Six migrations present; Server UID 10001 and
+  read-only root confirmed. No real GitHub credentials or requests were used.
+- Chinese guide includes exact Docker upgrade command, App/private-key/callback
+  instructions, minimal permissions, installation/repo selection, expiry/retry
+  advice, backup/forward-migration warning and sandbox acceptance checklist.
+  Real GitHub E2E, private checkout/webhook orchestration, Runner mTLS/recovery,
+  other providers, member UI and complete v1 release gates remain unfinished.
+- Cleanup verified ownership first, then removed only import-tests/import-smoke
+  containers/networks and the temporary DB/key volumes (disposable, rebuildable).
+  Browser tab and fixture process stopped; build images retained. Existing
+  Quickstart Server/PostgreSQL remained healthy and Runner running.

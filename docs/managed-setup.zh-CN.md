@@ -4,11 +4,11 @@
 创建，再按网页提示填写配置。团队其他成员只需授权登录，不需要各自创建应用。
 
 当前 GitHub.com 登录配置流程已经实现；Gitee、GitLab、Gitea 提供官方教程入口，
-明确显示“待接入”，不能保存凭据。仓库安装授权、Webhook、构建执行、CD 不等于
-登录配置，仍按开发路线推进。本模式仍为开发预览，不用于生产发布。
+明确显示“待接入”，不能保存凭据。GitHub 仓库安装授权与导入已有独立设置页；
+Webhook、构建执行、CD 仍按开发路线推进。本模式仍为开发预览，不用于生产发布。
 
-登录后可使用[项目浏览与仓库详情](project-browser.zh-CN.md)。仓库导入尚未接入，
-因此新实例可能没有可见项目；本轮不会自动创建演示仓库或开放构建执行。
+登录后可使用[项目浏览与仓库详情](project-browser.zh-CN.md)，实例管理员按
+[GitHub 仓库接入教程](github-import.zh-CN.md) 导入仓库。不自动创建演示数据或开放构建执行。
 
 ## 1. 准备独立实例与 HTTPS
 
@@ -78,7 +78,7 @@ docker compose --env-file .secrets/managed.env -p yuanci-managed -f deploy/compo
 2. Homepage URL 填写本实例 HTTPS 地址。复制页面中的 Callback URL：
    `https://ci.example.com/api/v1/auth/github/callback`，必须完全匹配。
 3. 这里只配置用户登录，不申请仓库写入、组织管理等无关权限；不用 Webhook 时
-   关闭 Active。保留用户 Token 过期选项。仓库安装与 Checks 会单独实现。
+   关闭 Active。保留用户 Token 过期选项。仓库安装在“仓库接入”中单独配置，Checks 待实现。
 4. 将 **Client ID** 和生成的 **Client secret** 填入 YuanCI，不能填写 App ID 或私钥。
 5. 通过 `https://api.github.com/users/你的用户名` 查看 `id`，填写首位管理员的
    **数字用户 ID**，不是用户名。确认该账号由你或指定管理员实际控制。

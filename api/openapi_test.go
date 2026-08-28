@@ -66,6 +66,22 @@ func TestOpenAPIReferencesAndBrowserSecurity(t *testing.T) {
 		t.Fatal("login secret must be write-only")
 	}
 	paths := document["paths"].(map[string]any)
+	for _, path := range []string{"/integrations/github", "/integrations/github/authorize", "/integrations/github/callback", "/integrations/github/installations", "/integrations/github/installations/{installationID}/repositories", "/integrations/github/import"} {
+		entry, ok := paths[path].(map[string]any)
+		if !ok {
+			t.Fatalf("missing integration contract %s", path)
+		}
+		for _, raw := range entry {
+			operation := raw.(map[string]any)
+			if _, override := operation["security"]; override {
+				t.Fatal("integration must require existing browser session")
+			}
+		}
+	}
+	appInput := paths["/integrations/github"].(map[string]any)["post"].(map[string]any)["requestBody"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
+	if appInput["properties"].(map[string]any)["private_key"].(map[string]any)["writeOnly"] != true {
+		t.Fatal("private key must be write-only")
+	}
 	for _, path := range []string{"/projects", "/projects/{projectID}", "/projects/{projectID}/runs"} {
 		entry, ok := paths[path].(map[string]any)
 		if !ok {
