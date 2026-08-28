@@ -12,11 +12,11 @@ This is still pre-alpha, not a finished CI/CD product. See the
 | Authorization | Scoped policy/sessions/audit, GitHub OAuth/PKCE, explicit bootstrap/linking, one-use setup code, encrypted candidate settings and verified activation | Real GitHub sandbox login, membership/audit lifecycle, last-admin/recovery and deployment enforcement |
 | Secrets | Envelope encryption, AAD binding, corrupt-input/fuzz tests, file-supplied master key and encrypted login credentials | Job-secret storage API, key rotation, scoped release and streaming redaction |
 | Docker | Source-context exclusions, loopback Quickstart, separate verification and authenticated-preview profiles | Release digest locks, signed multi-architecture images and recovery drills |
-| Console | Evaluation dashboard, YAML validation/plan preview, login/logout, account landing, setup/settings wizard and provider guides | Project selection, repositories, run detail/logs, full visual editor and administration |
+| Console | Evaluation dashboard, YAML validation/plan preview, login/logout, setup/settings, scoped project search/selection, repository detail and paginated run summaries | Repository import, run step detail/logs, full visual editor and administration |
 | SCM | Existing GitHub REST adapter and signed event normalization tests | End-to-end GitHub App flow plus GitLab, Gitea and Gitee |
 | CD | Design only | Environments, approvals, SSH/Compose execution, health checks and rollback |
 
-Next implementation order: project discovery/selection and scoped repository UI;
+Next implementation order: GitHub App installation authorization, repository discovery/import;
 Runner identity/lease recovery; GitHub end-to-end CI; complete
 console; remaining SCM/CI capabilities; protected CD; release qualification.
 Do not remove the insecure-evaluation gate merely because the policy tests pass.

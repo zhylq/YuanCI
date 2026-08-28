@@ -11,6 +11,50 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /projects:
+    get:
+      operationId: listProjects
+      description: Active repositories filtered by live project-read grants before UUID-ascending keyset pagination. No global totals. Authenticated mode only.
+      parameters:
+        - { $ref: '#/components/parameters/ProjectPageLimit' }
+        - { name: after, in: query, schema: { type: string, format: uuid }, description: Last visible project ID; position only, never authorization }
+        - { name: q, in: query, schema: { type: string, maxLength: 100 }, description: Case-insensitive literal owner/name substring; maximum 100 UTF-8 bytes }
+      responses:
+        '200':
+          description: Authorized project page; an empty list is not an error
+          content: { application/json: { schema: { $ref: '#/components/schemas/ProjectPage' } } }
+        '400': { description: Malformed, duplicate, unknown or out-of-range query parameters }
+        '401': { description: Session invalid or expired }
+        '503': { description: Query unavailable; never return cached or unscoped data }
+  /projects/{projectID}:
+    get:
+      operationId: getProject
+      description: Repository metadata only; no credential-bearing clone URL or connection claim
+      parameters:
+        - { $ref: '#/components/parameters/ProjectID' }
+      responses:
+        '200':
+          description: Authorized active repository
+          content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } }
+        '401': { description: Session invalid or expired }
+        '404': { description: Same response for missing, inactive, malformed or unauthorized project }
+        '503': { description: Query unavailable }
+  /projects/{projectID}/runs:
+    get:
+      operationId: listProjectRunSummaries
+      description: Run summaries only, ordered by created_at DESC and id DESC. Every page rechecks run.read; cursors never permit cross-project access. Unowned evaluation runs are excluded.
+      parameters:
+        - { $ref: '#/components/parameters/ProjectID' }
+        - { $ref: '#/components/parameters/ProjectPageLimit' }
+        - { name: after, in: query, schema: { type: string, maxLength: 160 }, description: Cursor returned by this endpoint; position only, not a snapshot or capability }
+      responses:
+        '200':
+          description: Authorized summaries without compiled plans or global totals
+          content: { application/json: { schema: { $ref: '#/components/schemas/ProjectRunPage' } } }
+        '400': { description: Invalid or duplicate query parameters or cursor }
+        '401': { description: Session invalid or expired }
+        '404': { description: Project unavailable or access denied }
+        '503': { description: Query unavailable }
   /auth/status:
     get:
       operationId: getAuthenticationStatus
@@ -311,6 +355,15 @@ components:
               csrf_token: { type: string }
               callback_url: { type: string }
   parameters:
+    ProjectID:
+      name: projectID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ProjectPageLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
     BrowserOrigin:
       name: Origin
       in: header
@@ -324,6 +377,52 @@ components:
       schema: { type: string }
       description: Session-bound value returned by GET /session
   schemas:
+    Project:
+      type: object
+      additionalProperties: false
+      required: [id, organization, provider, owner, name, default_branch, connection_status]
+      properties:
+        id: { type: string, format: uuid }
+        organization:
+          type: object
+          additionalProperties: false
+          required: [id, name]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+        provider: { type: string, enum: [github, gitlab, gitea, gitee] }
+        owner: { type: string }
+        name: { type: string }
+        default_branch: { type: string }
+        connection_status: { type: string, enum: [not_connected], description: Local registration is not verified SCM connectivity }
+    ProjectPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/Project' } }
+        next_cursor: { type: string, format: uuid }
+    ProjectRunSummary:
+      type: object
+      additionalProperties: false
+      required: [id, pipeline_name, event, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        pipeline_name: { type: string }
+        event: { type: string }
+        ref: { type: string }
+        commit_sha: { type: string }
+        status: { type: string, enum: [queued, running, waiting_approval, succeeded, failed, canceled] }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+    ProjectRunPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/ProjectRunSummary' } }
+        next_cursor: { type: string, maxLength: 160 }
     LoginConfig:
       type: object
       properties:

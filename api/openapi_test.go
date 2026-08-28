@@ -66,6 +66,31 @@ func TestOpenAPIReferencesAndBrowserSecurity(t *testing.T) {
 		t.Fatal("login secret must be write-only")
 	}
 	paths := document["paths"].(map[string]any)
+	for _, path := range []string{"/projects", "/projects/{projectID}", "/projects/{projectID}/runs"} {
+		entry, ok := paths[path].(map[string]any)
+		if !ok {
+			t.Fatalf("missing project contract %s", path)
+		}
+		operation := entry["get"].(map[string]any)
+		if _, override := operation["security"]; override {
+			t.Fatal("project reads must inherit browser session security")
+		}
+		if len(entry) != 1 {
+			t.Fatal("project browser must remain read-only")
+		}
+	}
+	for _, name := range []string{"Project", "ProjectRunSummary"} {
+		schema := components["schemas"].(map[string]any)[name].(map[string]any)
+		if schema["additionalProperties"] != false {
+			t.Fatal("project DTO must be explicit")
+		}
+		properties := schema["properties"].(map[string]any)
+		for _, forbidden := range []string{"clone_url", "plan", "encrypted_secret", "token", "total"} {
+			if _, exists := properties[forbidden]; exists {
+				t.Fatal("project read contract exposes sensitive field")
+			}
+		}
+	}
 	for _, path := range []string{"/auth/github/start", "/auth/github/callback"} {
 		entry, ok := paths[path].(map[string]any)
 		if !ok {

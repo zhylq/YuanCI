@@ -345,3 +345,17 @@ the batch outcome and remaining work.
 - Actual Server image smoke: UID 10001/read-only root, ready and SPA routes 200;
   all three project APIs return 401 without a browser session. No GitHub request
   was made. Quickstart Server/PostgreSQL were healthy and Runner running.
+
+## 2026-08-28 — project browser handoff
+
+- Published explicit read-only OpenAPI schemas and tests for inherited session
+  protection and minimal fields. Added Chinese usage/upgrade instructions and
+  updated status pages to distinguish project browsing from pending SCM import.
+- Browser also confirmed generic denial, expired-session and empty-installation
+  states. Viewport override was reset and the temporary tab closed. The fixture
+  server was stopped; only verified project-smoke/project-tests containers and
+  their network/tmpfs database plus the public fixture-secret file were removed.
+  Local build images remain. No real credentials or Quickstart data were changed.
+- Commits: `5ec9a3f` approved design, `8422a62` backend, `e4ad94f` console, then
+  this contract/documentation handoff. No push. No actual provider integration,
+  trusted-HTTPS browser login or v1 production qualification is claimed.
