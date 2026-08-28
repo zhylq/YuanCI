@@ -229,3 +229,23 @@ the batch outcome and remaining work.
 - Local commits in this increment: `cdab6f1` design, `0e455ed` OAuth persistence,
   `66db6a4` callback/runtime; this documentation/contract commit closes the batch.
   No push, real GitHub App login, production activation or v1 completion claimed.
+
+## 2026-08-28 — managed settings backend and CLI
+
+- Added migration 000004, one-use 15-minute setup codes and 30-minute setup
+  sessions. Host CLI issuance, rotation and redemption are audited; initialization
+  closes setup. Only hashes are stored. Master-key generation refuses overwrite
+  and never prints the key; persisted key binding rejects accidental replacement.
+- Added revision-bound envelope-encrypted candidate settings and live instance
+  admin checks. Candidates expire, preserve the active configuration until real
+  OAuth verification, and pin flows to immutable revisions. Candidate replacement,
+  stale verification, wrong identity/session and revoked administrator are rejected.
+- Bootstrap/config activation/session rotation/audit are one transaction. Added
+  managed HTTP setup/settings/status routes with exact Origin and CSRF checks;
+  evaluation and file-configured modes remain separate.
+- Real disposable PostgreSQL tests passed for code replay/races/expiry, encrypted
+  storage/no metadata leaks, bootstrap closure, replacement ownership/revocation,
+  revision pinning, expired setup sessions and audit-failure rollback. HTTP tests
+  exercise a complete mock-provider wizard and provider failure without activation.
+- Full Go regression passed before the HTTP increment; targeted DB/config tests
+  passed afterward. Final full/race/UI/container verification follows separately.

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yuanci/yuanci/internal/identity"
+	"github.com/yuanci/yuanci/internal/secrets"
 )
 
 type Server struct {
@@ -26,6 +27,8 @@ type Server struct {
 	GitHubClientID        string
 	GitHubClientSecret    string `json:"-"`
 	BootstrapGitHubUserID string
+	ManagedSetup          bool
+	MasterKey             []byte `json:"-"`
 }
 
 func LoadServer() (Server, error) {
@@ -46,6 +49,16 @@ func LoadServer() (Server, error) {
 		}
 		cfg.AuthenticatedPreview = value
 	}
+	if raw := os.Getenv("YUANCI_AUTH_MANAGED_SETUP"); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Server{}, errors.New("YUANCI_AUTH_MANAGED_SETUP must be a boolean")
+		}
+		cfg.ManagedSetup = value
+	}
+	if cfg.ManagedSetup && !cfg.AuthenticatedPreview {
+		return Server{}, errors.New("managed setup requires authenticated preview; evaluation is forbidden")
+	}
 	if cfg.DatabaseURL == "" && !cfg.DevInMemory {
 		return Server{}, errors.New("YUANCI_DATABASE_URL is required unless YUANCI_DEV_IN_MEMORY=true")
 	}
@@ -53,7 +66,11 @@ func LoadServer() (Server, error) {
 		if cfg.DevInMemory || cfg.Milestone0InsecureAPI || cfg.RunnerSharedToken != "" {
 			return Server{}, errors.New("authenticated preview cannot enable evaluation mode, memory storage or legacy Runner credentials")
 		}
-		if err := loadGitHub(&cfg); err != nil {
+		loader := loadGitHub
+		if cfg.ManagedSetup {
+			loader = loadManaged
+		}
+		if err := loader(&cfg); err != nil {
 			return Server{}, err
 		}
 	} else if !cfg.DevInMemory && !cfg.Milestone0InsecureAPI {
@@ -69,12 +86,47 @@ func LoadServer() (Server, error) {
 	return cfg, nil
 }
 
-func loadGitHub(cfg *Server) error {
+func loadOrigin(cfg *Server) error {
 	origin, err := url.Parse(os.Getenv("YUANCI_PUBLIC_ORIGIN"))
 	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil || origin.RawQuery != "" || origin.ForceQuery || origin.Fragment != "" || (origin.Path != "" && origin.Path != "/") {
 		return errors.New("YUANCI_PUBLIC_ORIGIN must be a canonical HTTPS origin")
 	}
 	cfg.PublicOrigin = origin.Scheme + "://" + origin.Host
+	return nil
+}
+func loadManaged(cfg *Server) error {
+	if err := loadOrigin(cfg); err != nil {
+		return err
+	}
+	for _, key := range []string{"YUANCI_GITHUB_CLIENT_ID", "YUANCI_GITHUB_CLIENT_SECRET_FILE", "YUANCI_BOOTSTRAP_GITHUB_USER_ID"} {
+		if os.Getenv(key) != "" {
+			return errors.New("managed setup cannot mix file-configured GitHub settings")
+		}
+	}
+	file, err := os.Open(os.Getenv("YUANCI_MASTER_KEY_FILE"))
+	if err != nil {
+		return errors.New("cannot open master key file")
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 128 {
+		return errors.New("invalid master key file")
+	}
+	value, err := io.ReadAll(io.LimitReader(file, 129))
+	if err != nil || len(value) > 128 {
+		return errors.New("cannot read master key file")
+	}
+	defer clear(value)
+	cfg.MasterKey, err = secrets.ParseMasterKey(strings.TrimRight(string(value), "\r\n"))
+	if err != nil {
+		return errors.New("master key file must contain a base64-encoded 32-byte key")
+	}
+	return nil
+}
+func loadGitHub(cfg *Server) error {
+	if err := loadOrigin(cfg); err != nil {
+		return err
+	}
 	cfg.GitHubClientID = os.Getenv("YUANCI_GITHUB_CLIENT_ID")
 	cfg.BootstrapGitHubUserID = os.Getenv("YUANCI_BOOTSTRAP_GITHUB_USER_ID")
 	if !identity.ValidGitHubSubject(cfg.BootstrapGitHubUserID) {

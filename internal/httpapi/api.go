@@ -43,6 +43,7 @@ func NewEvaluation(logger *slog.Logger, store runmodel.Store, bodyLimit int64, r
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", api.health)
 	mux.HandleFunc("GET /readyz", api.ready)
+	mux.HandleFunc("GET /api/v1/auth/status", api.authStatus)
 	mux.HandleFunc("GET /api/v1/system/info", api.systemInfo)
 	mux.HandleFunc("POST /api/v1/pipelines/validate", api.validatePipeline)
 	mux.HandleFunc("GET /api/v1/runs", api.listRuns)

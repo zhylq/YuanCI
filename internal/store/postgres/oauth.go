@@ -155,6 +155,14 @@ func recentSession(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 }
 
 func (s *Store) FinishOAuth(ctx context.Context, ticket string, user identity.ExternalUser, currentToken string) (identity.Credentials, error) {
+	return s.finishOAuth(ctx, ticket, user, currentToken, "")
+}
+
+func (s *Store) FinishManagedOAuth(ctx context.Context, ticket string, user identity.ExternalUser, currentToken, setupToken string) (identity.Credentials, error) {
+	return s.finishOAuth(ctx, ticket, user, currentToken, setupToken)
+}
+
+func (s *Store) finishOAuth(ctx context.Context, ticket string, user identity.ExternalUser, currentToken, setupToken string) (identity.Credentials, error) {
 	if !user.Valid() {
 		return identity.Credentials{}, identity.ErrUnauthenticated
 	}
@@ -172,14 +180,20 @@ func (s *Store) FinishOAuth(ctx context.Context, ticket string, user identity.Ex
 	}
 	var linkID *uuid.UUID
 	var expiry time.Time
-	err = tx.QueryRow(ctx, `DELETE FROM oauth_flows WHERE completion_hash=$1 AND expires_at>clock_timestamp() RETURNING link_session_id,expires_at`, ticketHash[:]).Scan(&linkID, &expiry)
+	var configID, verifySession *uuid.UUID
+	var setupHash []byte
+	err = tx.QueryRow(ctx, `DELETE FROM oauth_flows WHERE completion_hash=$1 AND expires_at>clock_timestamp()
+        RETURNING link_session_id,expires_at,config_id,verify_session_id,verify_setup_hash`, ticketHash[:]).Scan(&linkID, &expiry, &configID, &verifySession, &setupHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return identity.Credentials{}, identity.ErrOAuthFlow
 	}
 	if err != nil {
 		return identity.Credentials{}, err
 	}
-	var owner uuid.UUID
+	activation, owner, err := prepareManagedCompletion(ctx, tx, configID, verifySession, setupHash, user, currentToken, setupToken)
+	if err != nil {
+		return identity.Credentials{}, err
+	}
 	if linkID != nil {
 		session, err := authenticateSession(ctx, tx, currentToken)
 		if err != nil {
@@ -270,6 +284,11 @@ func (s *Store) FinishOAuth(ctx context.Context, ticket string, user identity.Ex
 	credentials, err := issueSession(ctx, tx, owner, identity.DefaultTTL)
 	if err != nil {
 		return identity.Credentials{}, err
+	}
+	if activation != nil {
+		if err := activateLoginConfig(ctx, tx, *activation, owner); err != nil {
+			return identity.Credentials{}, err
+		}
 	}
 	if digest, err := identity.TokenDigest(currentToken); err == nil {
 		var oldID, oldOwner uuid.UUID

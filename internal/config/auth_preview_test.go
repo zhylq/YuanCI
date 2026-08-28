@@ -11,7 +11,8 @@ import (
 func previewEnv(t *testing.T) string {
 	t.Helper()
 	for key, value := range map[string]string{
-		"YUANCI_DATABASE_URL": "postgres://test", "YUANCI_AUTHENTICATED_PREVIEW": "true",
+		"YUANCI_AUTH_MANAGED_SETUP": "false",
+		"YUANCI_DATABASE_URL":       "postgres://test", "YUANCI_AUTHENTICATED_PREVIEW": "true",
 		"YUANCI_DEV_IN_MEMORY": "false", "YUANCI_MILESTONE0_INSECURE_API": "false", "YUANCI_RUNNER_SHARED_TOKEN": "",
 		"YUANCI_PUBLIC_ORIGIN": "https://ci.example.test/", "YUANCI_GITHUB_CLIENT_ID": "Iv1.fixture",
 		"YUANCI_BOOTSTRAP_GITHUB_USER_ID": "100", "YUANCI_REQUEST_BODY_LIMIT": "",

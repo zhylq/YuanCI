@@ -10,6 +10,13 @@ import (
 )
 
 func main() {
+	if handled, err := adminCommand(os.Args[1:], os.Stdout); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		return
+	}
 	usage := func() { fmt.Fprintln(os.Stderr, "usage: yuancictl validate [-file .yuanci.yml]") }
 	if len(os.Args) < 2 || os.Args[1] != "validate" {
 		usage()
