@@ -32,6 +32,7 @@ RUN apk add --no-cache build-base
 FROM alpine:3.21 AS server
 RUN apk add --no-cache ca-certificates tzdata wget && addgroup -S yuanci && adduser -S -G yuanci -u 10001 yuanci
 COPY --from=build /out/yuanci-server /usr/local/bin/yuanci-server
+COPY --from=build /out/yuancictl /usr/local/bin/yuancictl
 USER 10001:10001
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/yuanci-server"]
@@ -43,5 +44,7 @@ COPY --from=build /out/yuanci-runner /usr/local/bin/yuanci-runner
 ENTRYPOINT ["/usr/local/bin/yuanci-runner"]
 
 FROM alpine:3.21 AS cli
+RUN addgroup -S yuanci && adduser -S -G yuanci -u 10001 yuanci && mkdir /keys && chown 10001:10001 /keys
 COPY --from=build /out/yuancictl /usr/local/bin/yuancictl
+USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/yuancictl"]

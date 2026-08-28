@@ -9,7 +9,9 @@ YuanCI is a lightweight, self-hosted CI/CD control plane and runner for small an
 Database-backed startup requires an explicit mode: isolated insecure evaluation,
 or the new [GitHub authenticated preview](docs/auth-preview.zh-CN.md). The latter
 implements login/bootstrap and protected browser APIs but has no legacy Runner
-routes or login/project-selection UI yet. Full identity administration and Runner
+routes or project-selection UI yet. The new [managed setup wizard](docs/managed-setup.zh-CN.md)
+provides one-time setup codes, encrypted app settings, login/logout and verified
+configuration activation. Full identity administration and Runner
 mTLS remain production release blockers.
 
 ## Repository layout
@@ -60,6 +62,7 @@ YuanCI reads `.yuanci.yml` from the repository root. See [the example](examples/
 - [Authorization policy and protected handler status](docs/security/authorization.md)
 - [Browser session integration and remaining activation gates](docs/security/sessions.md)
 - [GitHub login preview deployment (Chinese, no host Go installation needed)](docs/auth-preview.zh-CN.md)
+- [Managed Git-platform settings wizard and Docker deployment](docs/managed-setup.zh-CN.md)
 
 ## License
 

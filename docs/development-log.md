@@ -269,3 +269,35 @@ the batch outcome and remaining work.
   cookie bypass, real provider login or trusted-HTTPS browser acceptance claimed.
   Complete setup/activation flows are covered separately by mock-provider HTTP
   tests against real disposable PostgreSQL.
+
+## 2026-08-28 — managed deployment and final verification
+
+- Added separate managed Compose and empty environment example. A networkless,
+  non-root key-init service creates a non-overwritable 0600 master-key file in a
+  dedicated volume. The non-root/read-only Server mounts it read-only and now
+  includes yuancictl for host-authorized setup-code issuance. No Docker socket.
+- Chinese guide covers independent deployment, trusted HTTPS, App registration,
+  setup-code expiry/rotation, candidate verification, replacement, safe key backup
+  and troubleshooting without requiring Go on the operator's machine. Existing
+  Quickstart/file-preview documentation explicitly links to the separate mode.
+- Added OpenAPI setup/settings/status contracts, separate setup-cookie security
+  and write-only credential schema. Origin/CSRF contract regression checks passed;
+  only the one-time-code exchange is exempt from existing-session CSRF. Final
+  setup-cookie/write-only assertions and optional expected_active alignment were
+  checked again with `go test ./api` after the full Linux run.
+- Full Linux `go test -race -count=1 -timeout=120s ./...` plus `go vet ./...`
+  passed twice this batch against isolated PostgreSQL (verification exit 0).
+  The final run included the new UI build and managed OpenAPI routes. Frontend
+  tests, lint and build were rerun successfully after the responsive adjustment.
+- Fresh managed-smoke key initialization and Compose `up --wait` succeeded. An
+  API smoke test against the actual image verified CLI code issuance, wrong
+  Origin rejection, secure setup cookie, replay rejection, CSRF rejection,
+  candidate save/no secret in metadata, and GitHub authorization URL with S256.
+  It did not contact GitHub; the candidate correctly remained inactive.
+- Removed only verified managed-smoke and setup-tests containers/networks and
+  disposable database/key volumes. Local build images remain. Existing Quickstart
+  Server/PostgreSQL were healthy and Runner running; no live migration/restart.
+- This batch has design commit `27e9f96`, backend `8a09548`, UI `b5633d2`, followed
+  by this deployment/contract/documentation commit. No push was performed.
+  Real GitHub App + trusted HTTPS acceptance, other SCM integrations, protected
+  Runner execution and full v1 security/stability gates remain future work.

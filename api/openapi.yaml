@@ -11,6 +11,115 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /auth/status:
+    get:
+      operationId: getAuthenticationStatus
+      security: []
+      responses:
+        '200':
+          description: Public state, never credentials or account identifiers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode: { type: string, enum: [evaluation, file, managed] }
+                  initialized: { type: boolean }
+                  configured: { type: boolean }
+                  callback_url: { type: string }
+        '503': { description: Status unavailable; never fall back to evaluation }
+  /setup/exchange:
+    post:
+      operationId: redeemSetupCode
+      security: []
+      description: Managed mode only. Consume a 15-minute host-issued code and issue a 30-minute setup cookie, not a user session or admin grant.
+      parameters:
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code: { type: string, minLength: 43, maxLength: 43, writeOnly: true }
+      responses:
+        '200':
+          description: Sets Secure HttpOnly SameSite=Lax __Host-yuanci_setup cookie; CSRF token only in body
+          content: { application/json: { schema: { type: object, properties: { csrf_token: { type: string } } } } }
+        '401': { description: Invalid, expired, consumed or closed setup }
+        '403': { description: Origin rejected }
+        '503': { description: Store unavailable }
+  /setup/settings:
+    get:
+      operationId: getSetupSettings
+      security: [{ setupSession: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/LoginSettings' }
+        '401': { description: Invalid or closed setup session }
+    post:
+      operationId: saveInitialLoginCandidate
+      security: [{ setupSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+        - { $ref: '#/components/parameters/CSRFToken' }
+      requestBody: { $ref: '#/components/requestBodies/LoginCandidate' }
+      responses:
+        '201': { description: Candidate saved, not active; body contains candidate_id UUID }
+        '401': { description: Invalid setup session }
+        '403': { description: Origin/CSRF rejected }
+        '409': { description: Active revision changed }
+        '422': { description: Invalid fields }
+  /setup/verify:
+    post:
+      operationId: verifyInitialLoginCandidate
+      security: [{ setupSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+        - { $ref: '#/components/parameters/CSRFToken' }
+      requestBody: { $ref: '#/components/requestBodies/VerifyLoginCandidate' }
+      responses:
+        '200': { description: Sets flow cookie and returns authorization_url; activation requires designated identity and same setup session at callback }
+        '401': { description: Invalid setup session }
+        '403': { description: Origin/CSRF rejected }
+        '409': { description: Candidate expired or superseded }
+  /settings/auth:
+    get:
+      operationId: getManagedLoginSettings
+      description: Managed mode; active instance administrator required.
+      responses:
+        '200': { $ref: '#/components/responses/LoginSettings' }
+        '401': { description: Invalid session }
+        '403': { description: Instance administrator required }
+  /settings/auth/github:
+    post:
+      operationId: saveGitHubLoginCandidate
+      description: Instance admin authenticated within ten minutes; preserves active login until verification. No disable/delete operation.
+      parameters:
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+        - { $ref: '#/components/parameters/CSRFToken' }
+      requestBody: { $ref: '#/components/requestBodies/LoginCandidate' }
+      responses:
+        '201': { description: Candidate saved; body contains candidate_id UUID }
+        '401': { description: Invalid or old session }
+        '403': { description: Permission or Origin/CSRF denied }
+        '409': { description: expected_active does not match active revision }
+        '422': { description: Invalid fields or changed bootstrap subject }
+  /settings/auth/github/verify:
+    post:
+      operationId: verifyGitHubLoginCandidate
+      description: OAuth must verify an identity bound to the same admin; callback rechecks same session, live grants and candidate revision before activation.
+      parameters:
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+        - { $ref: '#/components/parameters/CSRFToken' }
+      requestBody: { $ref: '#/components/requestBodies/VerifyLoginCandidate' }
+      responses:
+        '200': { description: Sets flow cookie and returns authorization_url }
+        '401': { description: Invalid or old session }
+        '403': { description: Permission or CSRF denied }
+        '409': { description: Expired or superseded candidate }
   /auth/github/start:
     get:
       operationId: startGitHubLogin
@@ -165,6 +274,42 @@ paths:
         '403': { description: Origin, CSRF or scoped permission denied }
         '422': { description: Pipeline validation errors }
 components:
+  requestBodies:
+    LoginCandidate:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [client_id, client_secret, bootstrap_subject]
+            properties:
+              client_id: { type: string }
+              client_secret: { type: string, minLength: 16, maxLength: 4096, writeOnly: true }
+              bootstrap_subject: { type: string, pattern: '^[1-9][0-9]*$' }
+              expected_active: { type: [string, 'null'], format: uuid }
+    VerifyLoginCandidate:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [candidate_id]
+            properties:
+              candidate_id: { type: string, format: uuid }
+  responses:
+    LoginSettings:
+      description: Active and current actor's candidate metadata only; no plaintext or encrypted secret bytes
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              active: { oneOf: [{ $ref: '#/components/schemas/LoginConfig' }, { type: 'null' }] }
+              candidate: { oneOf: [{ $ref: '#/components/schemas/LoginConfig' }, { type: 'null' }] }
+              csrf_token: { type: string }
+              callback_url: { type: string }
   parameters:
     BrowserOrigin:
       name: Origin
@@ -179,6 +324,15 @@ components:
       schema: { type: string }
       description: Session-bound value returned by GET /session
   schemas:
+    LoginConfig:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        client_id: { type: string }
+        bootstrap_subject: { type: string }
+        status: { type: string, enum: [candidate, active, retired] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
     Run:
       type: object
       required: [id, pipeline_name, event, status, config_sha256, created_at]
@@ -199,6 +353,7 @@ components:
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time }
   securitySchemes:
+    setupSession: { type: apiKey, in: cookie, name: __Host-yuanci_setup }
     cookieSession: { type: apiKey, in: cookie, name: __Host-yuanci_session }
 security:
   - cookieSession: []

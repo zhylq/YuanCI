@@ -54,11 +54,20 @@ The upstream token is not persisted, logged or sent to the browser.
 
 ## Still required before production
 
-Real-provider sandbox verification, session renewal/idle timeout, session management UI,
+Real-provider sandbox verification, session renewal/idle timeout, multi-session management UI,
 last-admin protections, public membership APIs, audit querying/export and stronger
 audit storage permissions. Suspension currently invalidates use while suspended;
 permanent all-session revocation on account security events is a separate gate.
 Runner mTLS remains mandatory for production and is not replaced by browser auth.
+
+## Managed settings increment
+
+The [managed wizard](../managed-setup.zh-CN.md) adds login/logout, setup and admin
+settings UI. Initial configuration requires a host-issued one-use setup code,
+not first-visitor trust. Replacement credentials are encrypted candidates and
+become active only in the verified identity/session/audit transaction. Setup is
+permanently closed after bootstrap; later edits require live instance admin
+permission and recent authentication. Original file mode is still read-only.
 
 All tests run against a dedicated ephemeral PostgreSQL instance. No production
 security audit, provider sandbox login or full end-to-end CI certification is

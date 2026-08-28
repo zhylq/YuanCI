@@ -1,0 +1,59 @@
+# Separate managed-login preview. Do not overlay onto Quickstart or production.
+name: yuanci-managed
+
+services:
+  key-init:
+    profiles: [tools]
+    build:
+      context: ..
+      target: cli
+    command: [master-key, -file, /keys/master-key]
+    volumes: ["master-key:/keys"]
+    network_mode: none
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: yuanci_managed
+      POSTGRES_USER: yuanci
+      POSTGRES_PASSWORD: ${YUANCI_POSTGRES_PASSWORD:?set an independent random database password}
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yuanci -d yuanci_managed"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt: ["no-new-privileges:true"]
+
+  server:
+    build:
+      context: ..
+      target: server
+    restart: unless-stopped
+    environment:
+      YUANCI_DATABASE_URL: postgres://yuanci:${YUANCI_POSTGRES_PASSWORD}@postgres:5432/yuanci_managed?sslmode=disable
+      YUANCI_AUTHENTICATED_PREVIEW: "true"
+      YUANCI_AUTH_MANAGED_SETUP: "true"
+      YUANCI_DEV_IN_MEMORY: "false"
+      YUANCI_MILESTONE0_INSECURE_API: "false"
+      YUANCI_PUBLIC_ORIGIN: ${YUANCI_PUBLIC_ORIGIN:?set an HTTPS origin}
+      YUANCI_MASTER_KEY_FILE: /run/yuanci-keys/master-key
+    ports: ["127.0.0.1:${YUANCI_MANAGED_PORT:-8082}:8080"]
+    volumes: ["master-key:/run/yuanci-keys:ro"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    read_only: true
+    tmpfs: ["/tmp:size=64m"]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  master-key:
+  postgres-data:

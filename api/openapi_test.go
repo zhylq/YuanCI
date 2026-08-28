@@ -55,6 +55,16 @@ func TestOpenAPIReferencesAndBrowserSecurity(t *testing.T) {
 	if cookie["name"] != "__Host-yuanci_session" || cookie["in"] != "cookie" {
 		t.Fatal("cookie contract drift")
 	}
+	setupCookie := components["securitySchemes"].(map[string]any)["setupSession"].(map[string]any)
+	if setupCookie["name"] != "__Host-yuanci_setup" || setupCookie["in"] != "cookie" {
+		t.Fatal("setup cookie contract drift")
+	}
+	candidate := components["requestBodies"].(map[string]any)["LoginCandidate"].(map[string]any)
+	schema := candidate["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
+	secret := schema["properties"].(map[string]any)["client_secret"].(map[string]any)
+	if secret["writeOnly"] != true {
+		t.Fatal("login secret must be write-only")
+	}
 	paths := document["paths"].(map[string]any)
 	for _, path := range []string{"/auth/github/start", "/auth/github/callback"} {
 		entry, ok := paths[path].(map[string]any)
@@ -81,6 +91,13 @@ func TestOpenAPIReferencesAndBrowserSecurity(t *testing.T) {
 			for _, parameter := range parameters {
 				ref, _ := parameter.(map[string]any)["$ref"].(string)
 				refs[ref] = true
+			}
+			if path == "/setup/exchange" && method == "post" {
+				security, ok := operation["security"].([]any)
+				if !refs["#/components/parameters/BrowserOrigin"] || !ok || len(security) != 0 {
+					t.Fatal("setup exchange must require Origin and a one-time code, not a session")
+				}
+				continue // Only this code-authenticated operation has no existing CSRF session.
 			}
 			if !refs["#/components/parameters/BrowserOrigin"] || !refs["#/components/parameters/CSRFToken"] {
 				t.Errorf("%s %s missing CSRF/origin contract", method, path)
