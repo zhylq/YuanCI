@@ -144,3 +144,24 @@ the batch outcome and remaining work.
   against the disposable database. Frontend's existing test, lint and build passed.
 - No OAuth login or public session issuance was simulated as a real provider
   success. No production gate, live database or running application was changed.
+
+## 2026-08-28 — identity batch final checks
+
+- Added an OpenAPI YAML/reference regression test and checks for the browser
+  cookie and mutation CSRF/Origin parameters, using the existing Go YAML library.
+  This is targeted contract validation, not a complete OpenAPI validator.
+  The Docker source allowlist now includes `api` so these tests run in Docker too.
+- Final Linux verification included the contract test, full backend race suite,
+  PostgreSQL integration tests and vet; the container exited 0. Windows full unit
+  suite and vet also passed; that host-only run skipped DB tests as expected.
+- Server/Runner local `identity-verify` images built. A temporary networkless,
+  read-only Server passed readiness and embedded page checks. Database mode still
+  exited with configuration code 2 when the evaluation flag was absent.
+- The final verification image excluded `/src/.env` and `.git`. No credentials
+  or images were published. Only the dedicated identity-test containers/network
+  and their disposable tmpfs data were removed; reusable local images remain.
+- Quickstart Server/PostgreSQL were healthy and Runner running at final check.
+  No live database migration or application restart was performed by this batch.
+- Local commits: `bfce8dd` design, `dbdb570` session/member persistence,
+  `821fe5f` scoped authenticated handler. Final contract/documentation commit
+  closes this increment. No commits were pushed; hosted CI remains unverified.

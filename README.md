@@ -53,7 +53,8 @@ YuanCI reads `.yuanci.yml` from the repository root. See [the example](examples/
 - [Development roadmap](docs/roadmap.md)
 - [Development workflow and test commands](CONTRIBUTING.md)
 - [Completed batch evidence and limitations](docs/development-log.md)
-- [Authorization policy matrix (not yet API enforcement)](docs/security/authorization.md)
+- [Authorization policy and protected handler status](docs/security/authorization.md)
+- [Browser session integration and remaining activation gates](docs/security/sessions.md)
 
 ## License
 
