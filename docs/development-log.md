@@ -53,3 +53,16 @@ Further entries record completed checks and known limitations per batch.
   containers were not restarted; operators must recreate them to apply this.
 - Hosted CI and branch protection remain unverified until the commits are
   published and repository checks are configured. Local success is not hosted CI.
+
+## 2026-08-28 — four-level default-deny authorization policy
+
+- Added the pure `internal/authorization` evaluator and an explicit permission
+  matrix in `security/authorization.md`. Tested RED with a deny-all evaluator,
+  then implemented exact role allowlists, scope ancestry and protected mutations.
+- Tests cover 1,440 role/action/target/grant combinations, malformed/unknown
+  inputs, cross-instance/org/project/environment access, suspended identities,
+  independent grants, explicit protected access and approval separation.
+- `go test -count=1 -cover ./internal/authorization` and `go vet` passed;
+  statement coverage was 100%. This is policy coverage, not proof of security.
+- Not delivered: persisted roles/memberships, OAuth, sessions, HTTP enforcement,
+  transactional approval/audit. Existing API security gates remain unchanged.
