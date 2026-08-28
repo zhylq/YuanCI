@@ -4,6 +4,7 @@ import { HomePage, PipelinePage } from './pages/account'
 import { AuthSettingsPage } from './pages/auth-settings'
 import { LoginPage } from './components/auth-boundary'
 import { ProjectDetailPage, ProjectsPage } from './pages/projects'
+import { RepositorySettingsPage } from './pages/repository-settings'
 
 const router = createBrowserRouter([
   { path: '/', element: <Layout />, children: [
@@ -11,6 +12,7 @@ const router = createBrowserRouter([
     { path: 'pipelines/new', element: <PipelinePage /> },
     { path: 'setup', element: <AuthSettingsPage setup /> },
     { path: 'settings/auth', element: <AuthSettingsPage /> },
+    { path: 'settings/repositories', element: <RepositorySettingsPage /> },
     { path: 'login', element: <LoginPage /> },
     { path: 'projects', element: <ProjectsPage /> },
     { path: 'projects/:projectID', element: <ProjectDetailPage /> },

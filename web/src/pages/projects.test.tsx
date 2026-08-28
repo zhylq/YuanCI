@@ -68,7 +68,8 @@ test('empty installation explains import limitations without fake connect contro
   mock(() => reply({ items: [] }))
   mount()
   await screen.findByRole('heading', { name: '还没有可见项目' })
-  expect(screen.getByText(/本轮不提供仓库导入/)).toBeInTheDocument()
+  expect(screen.getByText(/实例管理员可在受保护配置模式中接入 GitHub 仓库/)).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: '查看仓库接入' })).toHaveAttribute('href', '/settings/repositories')
   expect(screen.queryByRole('button', { name: /连接|导入/ })).not.toBeInTheDocument()
 })
 

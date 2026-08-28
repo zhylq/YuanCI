@@ -7,6 +7,7 @@ const navItems = [
   { to: '/projects', label: '项目', end: false },
   { to: '/pipelines/new', label: 'Pipeline 编辑器', end: false },
   { to: '/settings/auth', label: 'Git 平台设置', end: false },
+  { to: '/settings/repositories', label: '仓库接入', end: false },
 ]
 
 export function Layout() {
