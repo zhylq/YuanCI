@@ -1,0 +1,27 @@
+name: yuanci-tests
+
+services:
+  postgres-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: yuanci_ci
+      POSTGRES_USER: yuanci_test
+      # Public, disposable test credential. Never used by Quickstart/production.
+      POSTGRES_PASSWORD: disposable-ci-only
+    ports: ["127.0.0.1::5432"]
+    tmpfs: ["/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yuanci_test -d yuanci_ci"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  verify:
+    build:
+      context: ..
+      target: verification
+    environment:
+      YUANCI_TEST_DATABASE_URL: postgres://yuanci_test:disposable-ci-only@postgres-test:5432/yuanci_ci?sslmode=disable
+    depends_on:
+      postgres-test: { condition: service_healthy }
+    command: ["sh", "-ec", "go test -race -count=1 -timeout=120s ./... && go vet ./..."]

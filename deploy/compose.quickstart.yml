@@ -26,7 +26,7 @@ services:
       YUANCI_DATABASE_URL: postgres://yuanci:${YUANCI_POSTGRES_PASSWORD}@postgres:5432/yuanci?sslmode=disable
       YUANCI_RUNNER_SHARED_TOKEN: ${YUANCI_RUNNER_SHARED_TOKEN:?set YUANCI_RUNNER_SHARED_TOKEN}
       YUANCI_MILESTONE0_INSECURE_API: "true"
-    ports: ["8080:8080"]
+    ports: ["127.0.0.1:8080:8080"]
     depends_on:
       postgres: { condition: service_healthy }
     healthcheck:

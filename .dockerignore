@@ -4,6 +4,10 @@
 .vscode
 .cache
 .tools
+.env
+.env.*
+!.env.example
+.secrets
 bin
 coverage
 web/node_modules

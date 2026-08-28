@@ -14,12 +14,19 @@ WORKDIR /src
 RUN apk add --no-cache ca-certificates git
 COPY go.mod go.sum* ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
-COPY . .
+# Explicit source allowlist keeps local configuration out of intermediate images.
+COPY cmd ./cmd
+COPY internal ./internal
+COPY db ./db
+COPY examples ./examples
 COPY --from=console /src/internal/webui/dist ./internal/webui/dist
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/yuanci/yuanci/internal/buildinfo.Version=${VERSION} -X github.com/yuanci/yuanci/internal/buildinfo.Commit=${COMMIT} -X github.com/yuanci/yuanci/internal/buildinfo.Date=${BUILD_DATE}" -o /out/yuanci-server ./cmd/yuanci-server && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/yuanci-runner ./cmd/yuanci-runner && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/yuancictl ./cmd/yuancictl
+
+FROM build AS verification
+RUN apk add --no-cache build-base
 
 FROM alpine:3.21 AS server
 RUN apk add --no-cache ca-certificates tzdata wget && addgroup -S yuanci && adduser -S -G yuanci -u 10001 yuanci

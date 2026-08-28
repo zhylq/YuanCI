@@ -36,6 +36,18 @@ create fresh `yuanci_test_<uuid>` databases and drop only those databases during
 cleanup. Do not point this variable at production. The unset-variable skip in
 ordinary `go test` is not evidence that integration tests passed.
 
+Docker-only backend verification (no host Go toolchain required):
+
+```sh
+docker compose -p yuanci-tests -f deploy/compose.test.yml up --build --abort-on-container-exit --exit-code-from verify
+docker compose -p yuanci-tests -f deploy/compose.test.yml down
+```
+
+This profile is isolated from Quickstart. Its PostgreSQL data lives in tmpfs;
+stopping it discards test data only. The verification image builds the console
+and Go binaries, then runs all backend tests with `-race` and `go vet` on Linux.
+Console unit tests and lint still run separately as listed above and in CI.
+
 ## Delivery rules
 
 `main` remains the primary branch. Hosted checks run on pull requests and pushes

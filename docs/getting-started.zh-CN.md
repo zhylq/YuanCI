@@ -51,7 +51,7 @@ YUANCI_POSTGRES_PASSWORD=请替换为一个较长且随机的数据库密码
 YUANCI_RUNNER_SHARED_TOKEN=请替换为至少32字节的随机Runner令牌
 ```
 
-`.env` 已被 Git 忽略，不要手动强制提交。当前 Quickstart 尚未使用
+`.env` 已被 Git 和 Docker 构建忽略，不要手动强制提交。当前 Quickstart 尚未使用
 `YUANCI_MASTER_KEY_BASE64`，可以暂时保留示例值。
 
 ## 4. 一键启动
@@ -72,6 +72,10 @@ docker compose --env-file .env -f deploy/compose.quickstart.yml ps
 
 - 控制台：<http://localhost:8080>
 - 健康检查：<http://localhost:8080/readyz>
+
+Quickstart 默认只绑定本机 `127.0.0.1`，不对局域网或公网开放。已有容器需要
+重新执行上面的 `up -d --build` 后才会应用新的端口绑定；只改文件不会改变
+正在运行的容器。当前没有正式身份认证，不要改成 `0.0.0.0` 对外开放。
 
 ## 5. 当前版本可以做什么
 
@@ -155,6 +159,17 @@ npm --prefix web test
 npm --prefix web run lint
 npm --prefix web run build
 ```
+
+不安装 Go，也可以通过 Docker 运行后端测试（包括真实 PostgreSQL 和竞态检测）：
+
+```bash
+docker compose -p yuanci-tests -f deploy/compose.test.yml up --build --abort-on-container-exit --exit-code-from verify
+docker compose -p yuanci-tests -f deploy/compose.test.yml down
+```
+
+这是独立测试环境，不使用 Quickstart 数据库。测试数据库是临时的，停止后
+自动丢弃；不要把 `YUANCI_TEST_DATABASE_URL` 指向日常使用的数据库。
+每批开发记录与实际验证结果见 [开发日志](development-log.md)。
 
 ## 9. 生产部署状态
 

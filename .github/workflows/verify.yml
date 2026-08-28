@@ -1,0 +1,67 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: yuanci_ci
+          POSTGRES_USER: yuanci_test
+          POSTGRES_PASSWORD: disposable-ci-only
+        ports: [5432/tcp]
+        options: >-
+          --health-cmd "pg_isready -U yuanci_test -d yuanci_ci"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Console tests and build
+        run: |
+          npm --prefix web ci
+          npm --prefix web test
+          npm --prefix web run lint
+          npm --prefix web run build
+      - name: Unit, integration and race tests
+        env:
+          YUANCI_TEST_DATABASE_URL: postgres://yuanci_test:disposable-ci-only@127.0.0.1:${{ job.services.postgres.ports[5432] }}/yuanci_ci?sslmode=disable
+        run: |
+          go test -race -count=1 -timeout=120s ./...
+          go vet ./...
+      - name: Validate Compose profiles
+        env:
+          YUANCI_POSTGRES_PASSWORD: disposable-validation-only
+          YUANCI_RUNNER_SHARED_TOKEN: disposable-validation-token-not-a-live-secret
+          YUANCI_SERVER_URL: https://ci.example.test
+        run: |
+          docker compose -f deploy/compose.quickstart.yml config --quiet
+          docker compose -f deploy/compose.production.yml config --quiet
+          docker compose -f deploy/compose.runner.yml config --quiet
+          docker compose -f deploy/compose.test.yml config --quiet
+      - name: Build deployment images (no publishing)
+        run: |
+          docker build --target server -t yuanci/server:ci .
+          docker build --target runner -t yuanci/runner:ci .
