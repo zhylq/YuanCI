@@ -66,15 +66,22 @@ type memoryJob struct {
 	key          string
 	dependencies []string
 	status       JobStatus
+	runnerID     uuid.UUID
+	acceptedAt   *time.Time
+	leaseRenewed *time.Time
 }
 
 type MemoryStore struct {
 	mu      sync.RWMutex
 	records []Record
 	jobs    []*memoryJob
+	runners map[uuid.UUID]RunnerDescriptor
+	now     func() time.Time
 }
 
-func NewMemoryStore() *MemoryStore                { return &MemoryStore{} }
+func NewMemoryStore() *MemoryStore {
+	return &MemoryStore{runners: make(map[uuid.UUID]RunnerDescriptor), now: time.Now}
+}
 func (m *MemoryStore) Ping(context.Context) error { return nil }
 func (m *MemoryStore) Close()                     {}
 
@@ -141,7 +148,7 @@ func (m *MemoryStore) ClaimJob(_ context.Context, request ClaimRequest) (*Assign
 		}
 		job.status = JobAssigned
 		job.assignment.LeaseToken = randomToken()
-		job.assignment.LeaseExpires = time.Now().UTC().Add(leaseDuration(job.assignment.Spec.Timeout))
+		job.assignment.LeaseExpires = m.now().UTC().Add(leaseDuration(job.assignment.Spec.Timeout))
 		m.setRunStarted(job.assignment.RunID)
 		m.setRunStatus(job.assignment.RunID, StatusRunning)
 		copy := job.assignment
@@ -157,7 +164,7 @@ func (m *MemoryStore) StartJob(_ context.Context, id uuid.UUID, token string) er
 	if job == nil {
 		return ErrJobNotFound
 	}
-	if !validLease(job, token) || job.status != JobAssigned {
+	if !m.validLease(job, token) || job.status != JobAssigned {
 		return ErrLeaseInvalid
 	}
 	job.status = JobRunning
@@ -174,7 +181,7 @@ func (m *MemoryStore) CompleteJob(_ context.Context, id uuid.UUID, token string,
 	if job == nil {
 		return ErrJobNotFound
 	}
-	if !validLease(job, token) || (job.status != JobRunning && job.status != JobAssigned) {
+	if !m.validLease(job, token) || (job.status != JobRunning && job.status != JobAssigned) {
 		return ErrLeaseInvalid
 	}
 	job.status = status
@@ -235,7 +242,7 @@ func (m *MemoryStore) setRunStatus(runID uuid.UUID, status Status) {
 }
 
 func (m *MemoryStore) setRunStarted(runID uuid.UUID) {
-	now := time.Now().UTC()
+	now := m.now().UTC()
 	for index := range m.records {
 		if m.records[index].ID == runID && m.records[index].StartedAt == nil {
 			m.records[index].StartedAt = &now
@@ -268,7 +275,7 @@ func (m *MemoryStore) finalizeRun(runID uuid.UUID) {
 	} else {
 		m.setRunStatus(runID, StatusSucceeded)
 	}
-	now := time.Now().UTC()
+	now := m.now().UTC()
 	for index := range m.records {
 		if m.records[index].ID == runID {
 			m.records[index].FinishedAt = &now
@@ -298,8 +305,8 @@ func cloneRecord(record Record) Record {
 	return record
 }
 
-func validLease(job *memoryJob, token string) bool {
-	if time.Now().After(job.assignment.LeaseExpires) {
+func (m *MemoryStore) validLease(job *memoryJob, token string) bool {
+	if !m.now().UTC().Before(job.assignment.LeaseExpires) {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(job.assignment.LeaseToken), []byte(token)) == 1

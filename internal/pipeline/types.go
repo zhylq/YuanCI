@@ -42,6 +42,7 @@ type Job struct {
 	Services    []Service           `yaml:"services,omitempty" json:"services,omitempty"`
 	Matrix      map[string][]string `yaml:"matrix,omitempty" json:"matrix,omitempty"`
 	Resources   Resources           `yaml:"resources,omitempty" json:"resources,omitempty"`
+	RunsOn      RunnerRequirements  `yaml:"runs_on,omitempty" json:"runs_on,omitempty"`
 	Steps       []Step              `yaml:"steps" json:"steps"`
 }
 
@@ -68,6 +69,13 @@ type Resources struct {
 	Privileged bool   `yaml:"privileged,omitempty" json:"privileged,omitempty"`
 }
 
+type RunnerRequirements struct {
+	OS           string            `yaml:"os,omitempty" json:"os,omitempty"`
+	Architecture string            `yaml:"architecture,omitempty" json:"architecture,omitempty"`
+	Executor     string            `yaml:"executor,omitempty" json:"executor,omitempty"`
+	Labels       map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+}
+
 type Plan struct {
 	Version      string      `json:"version"`
 	Name         string      `json:"name"`
@@ -83,15 +91,17 @@ type PlanStage struct {
 }
 
 type PlanJob struct {
-	Name        string              `json:"name"`
-	Image       string              `json:"image,omitempty"`
-	DependsOn   []string            `json:"depends_on,omitempty"`
-	Timeout     time.Duration       `json:"timeout"`
-	Retry       int                 `json:"retry"`
-	Matrix      map[string][]string `json:"matrix,omitempty"`
-	Environment map[string]string   `json:"environment,omitempty"`
-	Services    []Service           `json:"services,omitempty"`
-	Resources   Resources           `json:"resources,omitempty"`
-	Secrets     []string            `json:"secrets,omitempty"`
-	Steps       []Step              `json:"steps"`
+	Name              string              `json:"name"`
+	Image             string              `json:"image,omitempty"`
+	DependsOn         []string            `json:"depends_on,omitempty"`
+	Timeout           time.Duration       `json:"timeout"`
+	Retry             int                 `json:"retry"`
+	Matrix            map[string][]string `json:"matrix,omitempty"`
+	Environment       map[string]string   `json:"environment,omitempty"`
+	Services          []Service           `json:"services,omitempty"`
+	Resources         Resources           `json:"resources,omitempty"`
+	RunsOn            RunnerRequirements  `json:"runs_on"`
+	RequiredDiskBytes int64               `json:"required_disk_bytes,omitempty"`
+	Secrets           []string            `json:"secrets,omitempty"`
+	Steps             []Step              `json:"steps"`
 }

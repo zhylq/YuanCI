@@ -17,10 +17,14 @@ stages:
       - name: unit-tests
         image: golang:1.27-alpine
         timeout: 15m
+        runs_on:
+          os: linux
+          executor: docker
         resources:
           cpu: "2"
           memory: 2Gi
           pids: 256
+          disk: 4GiB
         steps:
           - name: test
             commands:

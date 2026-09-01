@@ -100,10 +100,20 @@ func insertRun(ctx context.Context, tx pgx.Tx, record runmodel.Record) error {
 			if err != nil {
 				return fmt.Errorf("encode job spec: %w", err)
 			}
+			requiredLabels := job.RunsOn.Labels
+			if requiredLabels == nil {
+				requiredLabels = map[string]string{}
+			}
+			encodedLabels, err := json.Marshal(requiredLabels)
+			if err != nil {
+				return fmt.Errorf("encode Runner labels: %w", err)
+			}
 			_, err = tx.Exec(ctx, `INSERT INTO jobs
-                    (id, run_id, stage_name, job_name, job_key, dependencies, spec, status, attempt)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1)`,
-				uuid.New(), record.ID, stage.Name, job.Name, stage.Name+"/"+job.Name, dependencies, spec, status)
+                    (id, run_id, stage_name, job_name, job_key, dependencies, spec, status, attempt,
+                     required_pool_type,required_os,required_architecture,required_executor,required_labels,required_disk_bytes)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,'standard',$9,NULLIF($10,''),$11,$12,$13)`,
+				uuid.New(), record.ID, stage.Name, job.Name, stage.Name+"/"+job.Name, dependencies, spec, status,
+				job.RunsOn.OS, job.RunsOn.Architecture, job.RunsOn.Executor, encodedLabels, job.RequiredDiskBytes)
 			if err != nil {
 				return fmt.Errorf("create job %s/%s: %w", stage.Name, job.Name, err)
 			}

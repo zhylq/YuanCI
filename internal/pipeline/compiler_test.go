@@ -46,6 +46,38 @@ func TestCompileValidPipeline(t *testing.T) {
 	}
 }
 
+func TestCompileNormalizesRunnerRequirementsAndDisk(t *testing.T) {
+	source := strings.Replace(validPipeline, "        timeout: 10m", `        timeout: 10m
+        runs_on:
+          architecture: amd64
+          labels: {region/cn: east}
+        resources:
+          disk: 2GiB`, 1)
+	plan, err := Compile([]byte(source), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := plan.Stages[0].Jobs[0]
+	if job.RunsOn.OS != "linux" || job.RunsOn.Executor != "docker" || job.RunsOn.Architecture != "amd64" ||
+		job.RunsOn.Labels["region/cn"] != "east" || job.RequiredDiskBytes != 2*(1<<30) {
+		t.Fatalf("unexpected Runner requirements: %#v", job)
+	}
+}
+
+func TestCompileRejectsInvalidRunnerRequirements(t *testing.T) {
+	for name, fragment := range map[string]string{
+		"disk":  "resources: {disk: 12XB}",
+		"label": "runs_on: {labels: {'bad label': value}}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := strings.Replace(validPipeline, "        timeout: 10m", "        timeout: 10m\n        "+fragment, 1)
+			if _, err := Compile([]byte(source), time.Now()); err == nil {
+				t.Fatal("invalid Runner requirement accepted")
+			}
+		})
+	}
+}
+
 func TestCompileRejectsUnknownFields(t *testing.T) {
 	_, err := Compile([]byte(validPipeline+"unknown: true\n"), time.Now())
 	if err == nil || !strings.Contains(err.Error(), "field unknown not found") {

@@ -486,3 +486,26 @@ the batch outcome and remaining work.
   The isolated Linux suite then passed `go test -race -count=1 -timeout=120s
   ./...` against PostgreSQL 17 and `go vet ./...` with exit 0. Its containers,
   tmpfs database and network were removed; Quickstart remained untouched.
+
+## 2026-09-01 — certificate-bound scheduling and lease renewal
+
+- Added normalized Pipeline `runs_on` requirements for operating system,
+  architecture, executor and labels, plus parsed disk-byte requirements. The v1
+  JSON Schema and example Pipeline describe the same fields; default Jobs target
+  Linux Docker Runners in the standard Pool.
+- Added a strict Runner Job Store alongside the transitional legacy queue API.
+  Claims require a non-zero authenticated Runner identity and use only persisted
+  Pool/capability data. PostgreSQL serializes claims per Runner, enforces capacity
+  without oversubscription, applies exact capability/label/disk matching, and
+  binds each assignment to a digest-only 30-second lease.
+- Receipt acknowledgement and start are separate, identity/token/deadline-bound
+  and idempotent. Structurally validated heartbeats update capabilities and renew
+  valid active leases to one authoritative deadline; invalid leases receive an
+  explicit cancellation decision. Completion retains the parent-Run-before-Job
+  lock order and cannot be performed by another Runner.
+- Shared Memory/PostgreSQL contract coverage verifies the matching matrix,
+  standard-to-privileged isolation, unscoped claim rejection, concurrent capacity,
+  wrong identity/token handling, duplicate receipt/start/heartbeat behavior and
+  lease deadline boundaries. Host `go test ./...` and `go vet ./...` passed. The
+  isolated Linux race/PostgreSQL 17 suite and vet passed with exit code 0, and its
+  containers, network and temporary database volume were removed.

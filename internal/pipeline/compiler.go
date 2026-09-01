@@ -7,13 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-var namePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
+var (
+	namePattern        = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
+	runnerLabelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$`)
+)
 
 type ValidationError struct {
 	Path    string `json:"path"`
@@ -121,11 +125,25 @@ func Compile(source []byte, now time.Time) (Plan, error) {
 			if err != nil {
 				return Plan{}, ValidationError{fmt.Sprintf("stage.%s.job.%s.timeout", stage.Name, job.Name), err.Error()}
 			}
+			diskBytes, err := parseByteSize(job.Resources.Disk)
+			if err != nil {
+				return Plan{}, ValidationError{fmt.Sprintf("stage.%s.job.%s.resources.disk", stage.Name, job.Name), err.Error()}
+			}
+			runsOn := job.RunsOn
+			if runsOn.OS == "" {
+				runsOn.OS = "linux"
+			}
+			if runsOn.Executor == "" {
+				runsOn.Executor = "docker"
+			}
+			if runsOn.Labels == nil {
+				runsOn.Labels = map[string]string{}
+			}
 			compiledStage.Jobs = append(compiledStage.Jobs, PlanJob{
 				Name: job.Name, Image: job.Image, DependsOn: job.DependsOn,
 				Timeout: timeout, Retry: job.Retry, Matrix: job.Matrix,
 				Environment: job.Environment, Services: job.Services, Resources: job.Resources,
-				Secrets: job.Secrets, Steps: job.Steps,
+				Secrets: job.Secrets, Steps: job.Steps, RunsOn: runsOn, RequiredDiskBytes: diskBytes,
 			})
 		}
 		plan.Stages = append(plan.Stages, compiledStage)
@@ -158,6 +176,23 @@ func validateJobs(path string, jobs []Job) ValidationErrors {
 		if job.Resources.Privileged {
 			problems = append(problems, ValidationError{jobPath + ".resources.privileged", "is forbidden in pipeline v1; use an administrator-approved runner policy"})
 		}
+		if _, err := parseByteSize(job.Resources.Disk); err != nil {
+			problems = append(problems, ValidationError{jobPath + ".resources.disk", err.Error()})
+		}
+		for field, value := range map[string]string{"os": job.RunsOn.OS, "architecture": job.RunsOn.Architecture, "executor": job.RunsOn.Executor} {
+			if len(value) > 64 || (value != "" && !namePattern.MatchString(value)) {
+				problems = append(problems, ValidationError{jobPath + ".runs_on." + field, "is invalid"})
+			}
+		}
+		if len(job.RunsOn.Labels) > 64 {
+			problems = append(problems, ValidationError{jobPath + ".runs_on.labels", "must contain at most 64 labels"})
+		}
+		for key, value := range job.RunsOn.Labels {
+			if len(value) > 256 || !runnerLabelPattern.MatchString(key) {
+				problems = append(problems, ValidationError{jobPath + ".runs_on.labels", "contains an invalid label"})
+				break
+			}
+		}
 		if job.Timeout != "" {
 			if _, err := parseTimeout(job.Timeout); err != nil {
 				problems = append(problems, ValidationError{jobPath + ".timeout", err.Error()})
@@ -177,6 +212,31 @@ func validateJobs(path string, jobs []Job) ValidationErrors {
 		}
 	}
 	return append(problems, validateDependencies(path+".jobs", names, deps)...)
+}
+
+func parseByteSize(raw string) (int64, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	upper := strings.ToUpper(strings.TrimSpace(raw))
+	units := []struct {
+		suffix     string
+		multiplier int64
+	}{{"TIB", 1 << 40}, {"GIB", 1 << 30}, {"MIB", 1 << 20}, {"KIB", 1 << 10}, {"TB", 1_000_000_000_000}, {"GB", 1_000_000_000}, {"MB", 1_000_000}, {"KB", 1_000}}
+	for _, unit := range units {
+		if strings.HasSuffix(upper, unit.suffix) {
+			value, err := strconv.ParseInt(strings.TrimSpace(strings.TrimSuffix(upper, unit.suffix)), 10, 64)
+			if err != nil || value < 0 || value > (1<<50)/unit.multiplier {
+				return 0, errors.New("must be a non-negative size no larger than 1 PiB")
+			}
+			return value * unit.multiplier, nil
+		}
+	}
+	value, err := strconv.ParseInt(upper, 10, 64)
+	if err != nil || value < 0 || value > 1<<50 {
+		return 0, errors.New("must use bytes or KB/MB/GB/TB/KiB/MiB/GiB/TiB")
+	}
+	return value, nil
 }
 
 func validateDependencies(path string, names map[string]struct{}, dependencies map[string][]string) ValidationErrors {

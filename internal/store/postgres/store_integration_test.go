@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/yuanci/yuanci/db/migrations"
+	"github.com/yuanci/yuanci/internal/pipeline"
 	runmodel "github.com/yuanci/yuanci/internal/run"
 	"github.com/yuanci/yuanci/internal/run/storetest"
 )
@@ -72,6 +73,33 @@ func TestPostgresStoreContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(store.Close)
+		return store
+	})
+}
+
+func TestPostgresRunnerStoreContract(t *testing.T) {
+	storetest.ExerciseRunner(t, func(t *testing.T, runner runmodel.RunnerDescriptor) runmodel.RunnerJobStore {
+		store, err := Open(t.Context(), newTestDatabase(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(store.Close)
+		poolID := uuid.New()
+		if _, err := store.pool.Exec(t.Context(), `INSERT INTO runner_pools(id,name,pool_type)
+            VALUES ($1,$2,$3)`, poolID, "contract-"+runner.ID.String(), runner.PoolType); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.pool.Exec(t.Context(), `INSERT INTO runners
+            (id,pool_id,name,status,capacity,labels,certificate_serial,os,architecture,executor,
+             isolation_level,available_disk_bytes,protocol_version,runner_version)
+            VALUES ($1,$2,$3,'offline',$4,'{}'::jsonb,'contract-serial',$5,$6,$7,$8,$9,1,'contract')`,
+			runner.ID, poolID, "contract-"+runner.ID.String(), runner.Capacity, runner.OS,
+			runner.Architecture, runner.Executor, runner.PoolType, runner.AvailableDiskBytes); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.RenewRunnerLeases(t.Context(), runmodel.HeartbeatRequest{Runner: runner}); err != nil {
+			t.Fatal(err)
+		}
 		return store
 	})
 }
@@ -140,6 +168,54 @@ func TestExpiredLeaseCannotChangeJob(t *testing.T) {
 	}
 	if err := store.CompleteJob(t.Context(), a.JobID, a.LeaseToken, runmodel.JobSucceeded); !errors.Is(err, runmodel.ErrLeaseInvalid) {
 		t.Fatalf("expired completion accepted: %v", err)
+	}
+}
+
+func TestExpiredRunnerLeaseCannotBeRenewedOrChanged(t *testing.T) {
+	store, err := Open(t.Context(), newTestDatabase(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	runner := runmodel.RunnerDescriptor{ID: uuid.New(), PoolType: "standard", OS: "linux", Architecture: "amd64",
+		Executor: "docker", Labels: map[string]string{}, Capacity: 1, AvailableDiskBytes: 1 << 30}
+	poolID := uuid.New()
+	if _, err := store.pool.Exec(t.Context(), `INSERT INTO runner_pools(id,name,pool_type) VALUES ($1,$2,'standard')`,
+		poolID, "deadline-pool"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(t.Context(), `INSERT INTO runners
+        (id,pool_id,name,status,capacity,labels,certificate_serial,os,architecture,executor,
+         isolation_level,available_disk_bytes,protocol_version,runner_version)
+        VALUES ($1,$2,'deadline-runner','offline',1,'{}'::jsonb,'deadline-serial','linux','amd64','docker',
+          'standard',$3,1,'contract')`, runner.ID, poolID, runner.AvailableDiskBytes); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RenewRunnerLeases(t.Context(), runmodel.HeartbeatRequest{Runner: runner}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create(t.Context(), storetest.RunnerRecord(t, 1, pipeline.RunnerRequirements{}, "")); err != nil {
+		t.Fatal(err)
+	}
+	assignment, err := store.ClaimRunnerJob(t.Context(), runmodel.RunnerClaim{RunnerID: runner.ID})
+	if err != nil || assignment == nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, err := store.pool.Exec(t.Context(), `UPDATE jobs SET lease_expires_at=clock_timestamp() WHERE id=$1`, assignment.JobID); err != nil {
+		t.Fatal(err)
+	}
+	lease := runmodel.LeaseRequest{RunnerID: runner.ID, JobID: assignment.JobID, LeaseToken: assignment.LeaseToken}
+	if _, err := store.AcknowledgeRunnerJob(t.Context(), lease); !errors.Is(err, runmodel.ErrLeaseInvalid) {
+		t.Fatalf("deadline receipt accepted: %v", err)
+	}
+	result, err := store.RenewRunnerLeases(t.Context(), runmodel.HeartbeatRequest{Runner: runner,
+		ActiveJobs: []runmodel.ActiveLease{{JobID: assignment.JobID, LeaseToken: assignment.LeaseToken, State: "received"}}})
+	if err != nil || len(result.Jobs) != 1 || result.Jobs[0].Renewed || result.Jobs[0].CancelReason != "lease_invalid" {
+		t.Fatalf("deadline renewal: %#v %v", result, err)
+	}
+	if err := store.CompleteRunnerJob(t.Context(), runmodel.RunnerCompletion{RunnerID: runner.ID, JobID: assignment.JobID,
+		LeaseToken: assignment.LeaseToken, Status: runmodel.JobSucceeded}); !errors.Is(err, runmodel.ErrLeaseInvalid) {
+		t.Fatalf("deadline completion accepted: %v", err)
 	}
 }
 
@@ -290,7 +366,7 @@ func TestRunnerIdentityMigrationRecoversLegacyJobs(t *testing.T) {
 	if err := connection.QueryRow(t.Context(), `SELECT status,certificate_serial FROM runners WHERE id=$1`, runnerID).Scan(&runnerStatus, &legacySerial); err != nil {
 		t.Fatal(err)
 	}
-	if leaseCount != 0 || migrationCount != 7 || userCount != 1 || recoveryAuditCount != 2 || runnerStatus != "offline" || legacySerial != nil {
+	if leaseCount != 0 || migrationCount != 8 || userCount != 1 || recoveryAuditCount != 2 || runnerStatus != "offline" || legacySerial != nil {
 		t.Fatalf("upgrade preservation: leases=%d migrations=%d users=%d audits=%d runner=%s serial=%v", leaseCount, migrationCount, userCount, recoveryAuditCount, runnerStatus, legacySerial)
 	}
 
