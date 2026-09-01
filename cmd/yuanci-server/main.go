@@ -46,6 +46,13 @@ func main() {
 		}
 	}
 	defer store.Close()
+	recoveryStore, ok := store.(runmodel.LeaseRecoveryStore)
+	if !ok {
+		logger.Error("Run store does not support Runner lease recovery")
+		os.Exit(1)
+	}
+	stopRecovery := startLeaseRecovery(logger, recoveryStore)
+	defer stopRecovery()
 	var handler http.Handler
 	if cfg.AuthenticatedPreview {
 		database := store.(*postgres.Store) // Config forbids memory storage in preview.
@@ -190,4 +197,21 @@ func startIntegrationCleanup(logger *slog.Logger, database *postgres.Store) func
 		}
 	}()
 	return func() { cancel(); <-done }
+}
+
+func startLeaseRecovery(logger *slog.Logger, store runmodel.LeaseRecoveryStore) func() {
+	reconciler, err := runmodel.NewLeaseReconciler(store, logger)
+	if err != nil {
+		panic("invalid Runner lease reconciler configuration")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		reconciler.Run(ctx)
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }

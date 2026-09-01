@@ -219,6 +219,173 @@ func TestExpiredRunnerLeaseCannotBeRenewedOrChanged(t *testing.T) {
 	}
 }
 
+func TestRunnerLeaseRecoveryOutcomesAndConvergence(t *testing.T) {
+	t.Run("assigned is requeued once", func(t *testing.T) {
+		store, runner := newRecoveryStore(t)
+		if _, err := store.Create(t.Context(), storetest.Record(t, 1, false)); err != nil {
+			t.Fatal(err)
+		}
+		assignment, err := store.ClaimRunnerJob(t.Context(), runmodel.RunnerClaim{RunnerID: runner.ID})
+		if err != nil || assignment == nil {
+			t.Fatalf("claim: %v", err)
+		}
+		if _, err := store.pool.Exec(t.Context(), `UPDATE jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, assignment.JobID); err != nil {
+			t.Fatal(err)
+		}
+		results := make(chan runmodel.RecoveryResult, 2)
+		errorsOut := make(chan error, 2)
+		for range 2 {
+			go func() {
+				result, err := store.RecoverExpiredRunnerLeases(t.Context(), 100)
+				results <- result
+				errorsOut <- err
+			}()
+		}
+		total := 0
+		for range 2 {
+			if err := <-errorsOut; err != nil {
+				t.Fatal(err)
+			}
+			total += (<-results).Requeued
+		}
+		if total != 1 {
+			t.Fatalf("two reconcilers requeued %d jobs", total)
+		}
+		var jobStatus, runStatus string
+		var runnerID *uuid.UUID
+		var leaseHash []byte
+		var startedAt *time.Time
+		if err := store.pool.QueryRow(t.Context(), `SELECT status,runner_id,lease_token_hash FROM jobs WHERE id=$1`, assignment.JobID).
+			Scan(&jobStatus, &runnerID, &leaseHash); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.pool.QueryRow(t.Context(), `SELECT status,started_at FROM runs WHERE id=$1`, assignment.RunID).
+			Scan(&runStatus, &startedAt); err != nil {
+			t.Fatal(err)
+		}
+		if jobStatus != "queued" || runnerID != nil || leaseHash != nil || runStatus != "queued" || startedAt != nil {
+			t.Fatalf("requeue state job=%s runner=%v lease=%x run=%s started=%v", jobStatus, runnerID, leaseHash, runStatus, startedAt)
+		}
+		if _, err := store.StartRunnerJob(t.Context(), runmodel.LeaseRequest{RunnerID: runner.ID, JobID: assignment.JobID,
+			LeaseToken: assignment.LeaseToken}); !errors.Is(err, runmodel.ErrLeaseInvalid) {
+			t.Fatalf("late start accepted: %v", err)
+		}
+	})
+
+	t.Run("running fails run and downstream", func(t *testing.T) {
+		store, runner := newRecoveryStore(t)
+		if _, err := store.Create(t.Context(), storetest.Record(t, 1, true)); err != nil {
+			t.Fatal(err)
+		}
+		assignment, err := store.ClaimRunnerJob(t.Context(), runmodel.RunnerClaim{RunnerID: runner.ID})
+		if err != nil || assignment == nil {
+			t.Fatalf("claim: %v", err)
+		}
+		lease := runmodel.LeaseRequest{RunnerID: runner.ID, JobID: assignment.JobID, LeaseToken: assignment.LeaseToken}
+		if _, err := store.AcknowledgeRunnerJob(t.Context(), lease); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.StartRunnerJob(t.Context(), lease); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.pool.Exec(t.Context(), `UPDATE jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, assignment.JobID); err != nil {
+			t.Fatal(err)
+		}
+		result, err := store.RecoverExpiredRunnerLeases(t.Context(), 100)
+		if err != nil || result.Failed != 1 || result.Requeued != 0 {
+			t.Fatalf("recover: %#v %v", result, err)
+		}
+		var failed, skipped, audits int
+		if err := store.pool.QueryRow(t.Context(), `SELECT count(*) FILTER (WHERE status='failed' AND failure_reason='runner_lost'),
+            count(*) FILTER (WHERE status='skipped') FROM jobs WHERE run_id=$1`, assignment.RunID).Scan(&failed, &skipped); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events
+            WHERE action='runner_lease.recovered' AND resource_id=$1`, assignment.JobID.String()).Scan(&audits); err != nil {
+			t.Fatal(err)
+		}
+		var runStatus string
+		var finishedAt *time.Time
+		if err := store.pool.QueryRow(t.Context(), `SELECT status,finished_at FROM runs WHERE id=$1`, assignment.RunID).
+			Scan(&runStatus, &finishedAt); err != nil {
+			t.Fatal(err)
+		}
+		if failed != 1 || skipped != 1 || audits != 1 || runStatus != "failed" || finishedAt == nil {
+			t.Fatalf("loss state failed=%d skipped=%d audits=%d run=%s finished=%v", failed, skipped, audits, runStatus, finishedAt)
+		}
+		if err := store.CompleteRunnerJob(t.Context(), runmodel.RunnerCompletion{RunnerID: runner.ID, JobID: assignment.JobID,
+			LeaseToken: assignment.LeaseToken, Status: runmodel.JobSucceeded}); !errors.Is(err, runmodel.ErrLeaseInvalid) {
+			t.Fatalf("late completion accepted: %v", err)
+		}
+	})
+}
+
+func TestRunnerLeaseRecoveryAuditFailureRollsBackGraph(t *testing.T) {
+	store, runner := newRecoveryStore(t)
+	if _, err := store.Create(t.Context(), storetest.Record(t, 1, true)); err != nil {
+		t.Fatal(err)
+	}
+	assignment, err := store.ClaimRunnerJob(t.Context(), runmodel.RunnerClaim{RunnerID: runner.ID})
+	if err != nil || assignment == nil {
+		t.Fatalf("claim: %v", err)
+	}
+	lease := runmodel.LeaseRequest{RunnerID: runner.ID, JobID: assignment.JobID, LeaseToken: assignment.LeaseToken}
+	if _, err := store.AcknowledgeRunnerJob(t.Context(), lease); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.StartRunnerJob(t.Context(), lease); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(t.Context(), `UPDATE jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, assignment.JobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(t.Context(), `CREATE FUNCTION reject_recovery_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN IF NEW.action='runner_lease.recovered' THEN RAISE EXCEPTION 'injected recovery audit failure'; END IF; RETURN NEW; END $$;
+        CREATE TRIGGER reject_recovery_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_recovery_audit()`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecoverExpiredRunnerLeases(t.Context(), 100); err == nil {
+		t.Fatal("audit failure did not fail recovery")
+	}
+	var running, blocked int
+	if err := store.pool.QueryRow(t.Context(), `SELECT count(*) FILTER (WHERE status='running' AND lease_token_hash IS NOT NULL),
+        count(*) FILTER (WHERE status='blocked') FROM jobs WHERE run_id=$1`, assignment.RunID).Scan(&running, &blocked); err != nil {
+		t.Fatal(err)
+	}
+	var runStatus string
+	if err := store.pool.QueryRow(t.Context(), `SELECT status FROM runs WHERE id=$1`, assignment.RunID).Scan(&runStatus); err != nil {
+		t.Fatal(err)
+	}
+	if running != 1 || blocked != 1 || runStatus != "running" {
+		t.Fatalf("partial recovery persisted: running=%d blocked=%d run=%s", running, blocked, runStatus)
+	}
+}
+
+func newRecoveryStore(t *testing.T) (*Store, runmodel.RunnerDescriptor) {
+	t.Helper()
+	store, err := Open(t.Context(), newTestDatabase(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	runner := runmodel.RunnerDescriptor{ID: uuid.New(), PoolType: "standard", OS: "linux", Architecture: "amd64",
+		Executor: "docker", Labels: map[string]string{}, Capacity: 4, AvailableDiskBytes: 4 << 30}
+	poolID := uuid.New()
+	if _, err := store.pool.Exec(t.Context(), `INSERT INTO runner_pools(id,name,pool_type) VALUES ($1,$2,'standard')`,
+		poolID, "recovery-"+runner.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(t.Context(), `INSERT INTO runners
+        (id,pool_id,name,status,capacity,labels,certificate_serial,os,architecture,executor,
+         isolation_level,available_disk_bytes,protocol_version,runner_version)
+        VALUES ($1,$2,$3,'online',$4,'{}'::jsonb,'recovery-serial','linux','amd64','docker',
+          'standard',$5,1,'contract')`, runner.ID, poolID, "recovery-"+runner.ID.String(), runner.Capacity,
+		runner.AvailableDiskBytes); err != nil {
+		t.Fatal(err)
+	}
+	return store, runner
+}
+
 func TestRunnerIdentityMigrationRecoversLegacyJobs(t *testing.T) {
 	databaseURL := newTestDatabase(t)
 	connection, err := pgx.Connect(t.Context(), databaseURL)

@@ -509,3 +509,25 @@ the batch outcome and remaining work.
   lease deadline boundaries. Host `go test ./...` and `go vet ./...` passed. The
   isolated Linux race/PostgreSQL 17 suite and vet passed with exit code 0, and its
   containers, network and temporary database volume were removed.
+
+## 2026-09-01 — deterministic expired Runner lease recovery
+
+- The Server now starts a bounded lease reconciler immediately and repeats every
+  five seconds. Each transaction considers at most 100 expired Jobs and logs only
+  aggregate outcome counts or a stable `store_error` reason; lease material never
+  enters logs.
+- Recovery locks each parent Run before its Jobs and rechecks the database clock
+  after lock acquisition. Expired assigned Jobs return to `queued` with all lease
+  ownership cleared. Expired running Jobs become `failed` with `runner_lost`,
+  downstream queued/blocked Jobs become `skipped`, and the Run is finalized as
+  failed atomically.
+- Every actual recovery writes a bounded audit event in the same transaction.
+  Audit failure rolls back the complete graph mutation. `SKIP LOCKED`, state and
+  deadline predicates make simultaneous reconcilers and late Runner messages
+  converge without duplicate effects.
+- Tests cover exact assigned/running outcomes, downstream preservation, batch
+  bounds, clean reconciler shutdown, two concurrent reconcilers, audit-injection
+  rollback, and rejected late start/completion. Host `go test ./...` and
+  `go vet ./...` passed; the isolated Linux race/PostgreSQL 17 suite and vet
+  passed with exit code 0. Its containers, network and temporary database volume
+  were removed.
