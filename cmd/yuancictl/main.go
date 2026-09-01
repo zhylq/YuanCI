@@ -10,6 +10,13 @@ import (
 )
 
 func main() {
+	if handled, err := runnerTokenCommand(os.Args[1:], os.Stdout); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		return
+	}
 	if handled, err := runnerPKICommand(os.Args[1:], os.Stdout); handled {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
