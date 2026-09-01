@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/yuanci/yuanci/db/migrations"
 	runmodel "github.com/yuanci/yuanci/internal/run"
 	"github.com/yuanci/yuanci/internal/run/storetest"
 )
@@ -140,4 +141,206 @@ func TestExpiredLeaseCannotChangeJob(t *testing.T) {
 	if err := store.CompleteJob(t.Context(), a.JobID, a.LeaseToken, runmodel.JobSucceeded); !errors.Is(err, runmodel.ErrLeaseInvalid) {
 		t.Fatalf("expired completion accepted: %v", err)
 	}
+}
+
+func TestRunnerIdentityMigrationRecoversLegacyJobs(t *testing.T) {
+	databaseURL := newTestDatabase(t)
+	connection, err := pgx.Connect(t.Context(), databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close(t.Context())
+
+	for _, name := range []string{
+		"000001_initial.up.sql",
+		"000002_identity_access.up.sql",
+		"000003_oauth_bootstrap.up.sql",
+		"000004_managed_auth.up.sql",
+		"000005_github_import.up.sql",
+		"000006_github_proof_subject.up.sql",
+	} {
+		body, readErr := migrations.Files.ReadFile(name)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if _, err := connection.Exec(t.Context(), string(body)); err != nil {
+			t.Fatalf("apply fixture migration %s: %v", name, err)
+		}
+		if _, err := connection.Exec(t.Context(), `INSERT INTO schema_migrations(version) VALUES ($1)`, name); err != nil {
+			t.Fatalf("record fixture migration %s: %v", name, err)
+		}
+	}
+
+	poolID, runnerID := uuid.New(), uuid.New()
+	if _, err := connection.Exec(t.Context(), `INSERT INTO runner_pools(id,name,pool_type) VALUES ($1,'legacy','standard')`, poolID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(t.Context(), `INSERT INTO runners
+		(id,pool_id,name,status,capacity,certificate_serial,last_seen_at)
+		VALUES ($1,$2,'legacy-runner','online',1,'legacy-serial',clock_timestamp())`, runnerID, poolID); err != nil {
+		t.Fatal(err)
+	}
+	userID := uuid.New()
+	if _, err := connection.Exec(t.Context(), `INSERT INTO users(id,display_name) VALUES ($1,'preserved user')`, userID); err != nil {
+		t.Fatal(err)
+	}
+
+	assignedRun, runningRun, queuedRun, terminalRun := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	assignedJob, runningJob, downstreamJob, queuedJob, terminalJob := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	for _, fixture := range []struct {
+		id     uuid.UUID
+		status string
+	}{
+		{assignedRun, "running"},
+		{runningRun, "running"},
+		{queuedRun, "queued"},
+		{terminalRun, "succeeded"},
+	} {
+		_, err := connection.Exec(t.Context(), `INSERT INTO runs
+			(id,pipeline_name,event,status,config_sha256,compiled_plan,started_at,finished_at)
+			VALUES ($1,'migration fixture','manual',$2,repeat('a',64),'{}'::jsonb,
+				CASE WHEN $2='running' THEN clock_timestamp() ELSE NULL END,
+				CASE WHEN $2='succeeded' THEN clock_timestamp() ELSE NULL END)`, fixture.id, fixture.status)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertJob := func(id, runID uuid.UUID, key, status string, runner *uuid.UUID, withLease bool) {
+		t.Helper()
+		var leaseHash []byte
+		var leaseExpiry *time.Time
+		if withLease {
+			leaseHash = make([]byte, 32)
+			expires := time.Now().Add(time.Hour)
+			leaseExpiry = &expires
+		}
+		_, err := connection.Exec(t.Context(), `INSERT INTO jobs
+			(id,run_id,runner_id,stage_name,job_name,job_key,spec,status,lease_token_hash,lease_expires_at,started_at,finished_at)
+			VALUES ($1,$2,$3,'test',$4,$4,'{}'::jsonb,$5,$6,$7,
+				CASE WHEN $5='running' THEN clock_timestamp() ELSE NULL END,
+				CASE WHEN $5='succeeded' THEN clock_timestamp() ELSE NULL END)`,
+			id, runID, runner, key, status, leaseHash, leaseExpiry)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertJob(assignedJob, assignedRun, "assigned", "assigned", &runnerID, true)
+	insertJob(runningJob, runningRun, "running", "running", &runnerID, true)
+	insertJob(downstreamJob, runningRun, "downstream", "blocked", nil, false)
+	insertJob(queuedJob, queuedRun, "queued", "queued", nil, false)
+	insertJob(terminalJob, terminalRun, "terminal", "succeeded", &runnerID, true)
+
+	store, err := Open(t.Context(), databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+	reopened, err := Open(t.Context(), databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened.Close()
+
+	assertJob := func(id uuid.UUID, wantStatus, wantReason string, wantRunner bool) {
+		t.Helper()
+		var status string
+		var reason *string
+		var storedRunner *uuid.UUID
+		if err := connection.QueryRow(t.Context(), `SELECT status,failure_reason,runner_id FROM jobs WHERE id=$1`, id).
+			Scan(&status, &reason, &storedRunner); err != nil {
+			t.Fatal(err)
+		}
+		if status != wantStatus || valueOrEmpty(reason) != wantReason || (storedRunner != nil) != wantRunner {
+			t.Fatalf("job %s: status=%s reason=%v runner=%v", id, status, reason, storedRunner)
+		}
+	}
+	assertJob(assignedJob, "queued", "", false)
+	assertJob(runningJob, "failed", "runner_lost", true)
+	assertJob(downstreamJob, "skipped", "", false)
+	assertJob(queuedJob, "queued", "", false)
+	assertJob(terminalJob, "succeeded", "", true)
+
+	var assignedStatus, runningStatus string
+	var assignedStarted, runningFinished *time.Time
+	if err := connection.QueryRow(t.Context(), `SELECT status,started_at FROM runs WHERE id=$1`, assignedRun).Scan(&assignedStatus, &assignedStarted); err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.QueryRow(t.Context(), `SELECT status,finished_at FROM runs WHERE id=$1`, runningRun).Scan(&runningStatus, &runningFinished); err != nil {
+		t.Fatal(err)
+	}
+	if assignedStatus != "queued" || assignedStarted != nil || runningStatus != "failed" || runningFinished == nil {
+		t.Fatalf("run recovery mismatch: assigned=%s/%v running=%s/%v", assignedStatus, assignedStarted, runningStatus, runningFinished)
+	}
+
+	var leaseCount, migrationCount, userCount, recoveryAuditCount int
+	if err := connection.QueryRow(t.Context(), `SELECT count(*) FROM jobs WHERE lease_token_hash IS NOT NULL OR lease_expires_at IS NOT NULL`).Scan(&leaseCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.QueryRow(t.Context(), `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.QueryRow(t.Context(), `SELECT count(*) FROM users WHERE id=$1 AND display_name='preserved user'`, userID).Scan(&userCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='runner_protocol_upgrade_recovery'`).Scan(&recoveryAuditCount); err != nil {
+		t.Fatal(err)
+	}
+	var runnerStatus string
+	var legacySerial *string
+	if err := connection.QueryRow(t.Context(), `SELECT status,certificate_serial FROM runners WHERE id=$1`, runnerID).Scan(&runnerStatus, &legacySerial); err != nil {
+		t.Fatal(err)
+	}
+	if leaseCount != 0 || migrationCount != 7 || userCount != 1 || recoveryAuditCount != 2 || runnerStatus != "offline" || legacySerial != nil {
+		t.Fatalf("upgrade preservation: leases=%d migrations=%d users=%d audits=%d runner=%s serial=%v", leaseCount, migrationCount, userCount, recoveryAuditCount, runnerStatus, legacySerial)
+	}
+
+	invalidStatements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO runner_registration_tokens(pool_id,token_digest,expires_at,max_uses,used_count) VALUES ($1,decode(repeat('aa',32),'hex'),clock_timestamp()+interval '1 hour',1,2)`, []any{poolID}},
+		{`INSERT INTO runner_certificates(runner_id,serial,csr_fingerprint,public_key_fingerprint,state,certificate_chain_pem,not_before,not_after) VALUES ($1,'0011223344556677',decode(repeat('aa',31),'hex'),decode(repeat('bb',32),'hex'),'active',convert_to('cert','UTF8'),clock_timestamp(),clock_timestamp()+interval '1 day')`, []any{runnerID}},
+		{`INSERT INTO runner_certificates(runner_id,serial,csr_fingerprint,public_key_fingerprint,state,certificate_chain_pem,not_before,not_after) VALUES ($1,'1011223344556677',decode(repeat('aa',32),'hex'),decode(repeat('bb',32),'hex'),'unknown',convert_to('cert','UTF8'),clock_timestamp(),clock_timestamp()+interval '1 day')`, []any{runnerID}},
+	}
+	for _, statement := range invalidStatements {
+		if _, err := connection.Exec(t.Context(), statement.query, statement.args...); err == nil {
+			t.Fatal("Runner identity constraint accepted invalid row")
+		}
+	}
+
+	var oldCertificateID uuid.UUID
+	if err := connection.QueryRow(t.Context(), `INSERT INTO runner_certificates
+		(runner_id,serial,csr_fingerprint,public_key_fingerprint,state,certificate_chain_pem,not_before,not_after)
+		VALUES ($1,'2011223344556677',decode(repeat('cc',32),'hex'),decode(repeat('dd',32),'hex'),'active',
+			convert_to('cert','UTF8'),clock_timestamp(),clock_timestamp()+interval '1 day') RETURNING id`, runnerID).Scan(&oldCertificateID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(t.Context(), `INSERT INTO runner_certificates
+		(runner_id,serial,csr_fingerprint,public_key_fingerprint,state,certificate_chain_pem,not_before,not_after)
+		VALUES ($1,'2111223344556677',decode(repeat('13',32),'hex'),decode(repeat('35',32),'hex'),'active',
+			convert_to('cert','UTF8'),clock_timestamp(),clock_timestamp()+interval '1 day')`, runnerID); err == nil {
+		t.Fatal("Runner accepted multiple active certificates")
+	}
+	if _, err := connection.Exec(t.Context(), `UPDATE runner_certificates SET state='retiring',retire_at=clock_timestamp()+interval '15 minutes' WHERE id=$1`, oldCertificateID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(t.Context(), `INSERT INTO runner_certificates
+		(runner_id,serial,csr_fingerprint,public_key_fingerprint,state,certificate_chain_pem,not_before,not_after,replaces_certificate_id)
+		VALUES ($1,'3011223344556677',decode(repeat('ee',32),'hex'),decode(repeat('ff',32),'hex'),'active',
+			convert_to('cert','UTF8'),clock_timestamp(),clock_timestamp()+interval '1 day',$2)`, runnerID, oldCertificateID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(t.Context(), `INSERT INTO runner_certificates
+		(runner_id,serial,csr_fingerprint,public_key_fingerprint,state,certificate_chain_pem,not_before,not_after,replaces_certificate_id)
+		VALUES ($1,'4011223344556677',decode(repeat('12',32),'hex'),decode(repeat('34',32),'hex'),'expired',
+			convert_to('cert','UTF8'),clock_timestamp(),clock_timestamp()+interval '1 day',$2)`, runnerID, oldCertificateID); err == nil {
+		t.Fatal("one certificate accepted multiple pending replacements")
+	}
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

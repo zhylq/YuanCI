@@ -437,3 +437,28 @@ the batch outcome and remaining work.
 - `go test ./api/... ./gen/...`, `go vet ./api/... ./gen/...` and host
   `go test ./...` passed. PostgreSQL integration tests remained opt-in/skipped;
   this protocol-only batch neither migrated nor restarted Quickstart.
+
+## 2026-09-01 — Runner identity and upgrade recovery schema
+
+- Added forward migration 000007 for digest-only, Pool-bound registration
+  tokens; certificate chains/fingerprints/serials and rotation lineage; bounded
+  Runner capabilities; Job acknowledgement/renewal timestamps and stable failure
+  reasons. Database constraints reject invalid usage counts, fingerprints,
+  certificate states, multiple active identities and unrelated second rotation
+  replacements.
+- Upgrade recovery is transactional. Legacy assigned/unstarted Jobs return to
+  `queued`; legacy running Jobs become `failed` with `runner_lost`; downstream
+  work becomes `skipped`; old lease hashes/deadlines and legacy certificate
+  serials are cleared. Affected Runs receive system audit records, while terminal
+  Job history, users and ordinary queued work are preserved.
+- Migration integration coverage starts from migrations 000001–000006 with
+  queued, assigned, running, downstream and terminal fixtures, then opens and
+  reopens the Store. It verifies seven applied migrations, explicit Run/Job
+  outcomes, no surviving lease, data preservation, Runner invalidation and the
+  new schema constraints.
+- Host `go test ./...` and `go vet ./...` passed. The isolated Linux verification
+  image ran `go test -race -count=1 -timeout=120s ./...` against PostgreSQL 17
+  and then `go vet ./...`; final exit code was 0. Its tmpfs database, containers
+  and network were removed. Quickstart was not migrated or restarted.
+- Docker build source allowlisting now includes committed `gen/` bindings
+  (`bb547c6`), a gap exposed by the first Linux container build after Batch 1.
