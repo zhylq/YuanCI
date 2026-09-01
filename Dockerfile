@@ -17,6 +17,7 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 # Explicit source allowlist keeps local configuration out of intermediate images.
 COPY cmd ./cmd
 COPY api ./api
+COPY gen ./gen
 COPY internal ./internal
 COPY db ./db
 COPY examples ./examples
