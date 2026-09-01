@@ -462,3 +462,27 @@ the batch outcome and remaining work.
   and network were removed. Quickstart was not migrated or restarted.
 - Docker build source allowlisting now includes committed `gen/` bindings
   (`bb547c6`), a gap exposed by the first Linux container build after Batch 1.
+
+## 2026-09-01 — offline Runner PKI and strict CSR policy
+
+- Added `yuancictl runner-pki init` and a standard-library PKI implementation.
+  It generates Ed25519 root/intermediate/Server keys, separates the offline root
+  from the Server bundle, applies constrained CA/Server usages and explicit
+  DNS/IP SANs, and writes public-only fingerprint/expiry metadata.
+- Initialization accepts only a brand-new child directory. It uses directory-
+  rooted file operations, exclusive temporary files, exact permissions, file and
+  directory sync, and atomic file renames; validation/write failure removes only
+  the directory created by that invocation. Existing targets are never changed.
+- Runner CSR validation is capped at 16 KiB, checks the CSR signature and permits
+  only Ed25519, P-256 or RSA 2048–4096. It rejects weak/unsupported keys, subjects,
+  requested SANs/extensions/attributes, malformed or multiple PEM blocks and
+  non-whitespace trailing data. Issuance adds exactly one immutable Runner URI
+  SAN and client-auth usage, never private-key material.
+- Tests verify chain building, CA path limits, Server/client EKU separation,
+  correct/wrong DNS and IP names, serial size, key/certificate matching, manifest
+  contents, existing-target preservation, issuer mismatch/expiry and Linux
+  `0600` private-file, `0644` public-file and `0700` directory permissions.
+- A three-second native fuzz run executed 959,126 CSR inputs without a failure.
+  The isolated Linux suite then passed `go test -race -count=1 -timeout=120s
+  ./...` against PostgreSQL 17 and `go vet ./...` with exit 0. Its containers,
+  tmpfs database and network were removed; Quickstart remained untouched.
