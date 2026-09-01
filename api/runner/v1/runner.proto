@@ -2,41 +2,65 @@ syntax = "proto3";
 
 package yuanci.runner.v1;
 
-option go_package = "github.com/yuanci/yuanci/gen/runner/v1;runnerv1";
-
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
+option go_package = "github.com/yuanci/yuanci/gen/runner/v1;runnerv1";
+
+// RunnerService is the certificate-bound control channel between YuanCI and a
+// Runner. Register is the only RPC that accepts a registration token. Work and
+// RotateCertificate require a valid Runner client certificate.
 service RunnerService {
   rpc Register(RegisterRequest) returns (RegisterResponse);
-  rpc Work(stream RunnerMessage) returns (stream ServerMessage);
+  rpc Work(stream WorkRequest) returns (stream WorkResponse);
   rpc RotateCertificate(RotateCertificateRequest) returns (RotateCertificateResponse);
 }
 
 message RegisterRequest {
+  // one_time_token is at most 512 bytes and is consumed transactionally.
   string one_time_token = 1;
+  // name is at most 128 UTF-8 bytes.
   string name = 2;
   RunnerCapabilities capabilities = 3;
+  // csr_pem is at most 16 KiB. The Runner generates and retains the private key.
+  bytes csr_pem = 4;
+  // protocol_version must currently be 1.
+  uint32 protocol_version = 5;
 }
 
 message RegisterResponse {
   string runner_id = 1;
-  bytes certificate_pem = 2;
-  bytes private_key_pem = 3;
+  // certificate_chain_pem contains the leaf followed by the issuing
+  // intermediate. It never contains private-key material and is at most 32 KiB.
+  bytes certificate_chain_pem = 2;
+  reserved 3;
+  reserved "private_key_pem";
   bytes ca_certificate_pem = 4;
   google.protobuf.Timestamp expires_at = 5;
+  google.protobuf.Duration heartbeat_interval = 6;
+  google.protobuf.Duration lease_duration = 7;
 }
 
 message RunnerCapabilities {
   string os = 1;
   string architecture = 2;
+  // At most 64 labels; each key/value is at most 128/512 UTF-8 bytes.
   map<string, string> labels = 3;
+  // capacity must be in [1, 256].
   int32 capacity = 4;
   int64 available_disk_bytes = 5;
   string executor = 6;
+  IsolationLevel isolation_level = 7;
 }
 
-message RunnerMessage {
+enum IsolationLevel {
+  ISOLATION_LEVEL_UNSPECIFIED = 0;
+  ISOLATION_LEVEL_STANDARD = 1;
+  ISOLATION_LEVEL_PRIVILEGED = 2;
+  ISOLATION_LEVEL_DEPLOYMENT = 3;
+}
+
+message WorkRequest {
   oneof body {
     Heartbeat heartbeat = 1;
     JobAccepted job_accepted = 2;
@@ -46,18 +70,38 @@ message RunnerMessage {
   }
 }
 
-message ServerMessage {
+message WorkResponse {
   oneof body {
     JobAssignment assignment = 1;
     CancelJob cancel = 2;
     LeaseRenewed lease_renewed = 3;
+    JobRejected job_rejected = 4;
   }
 }
 
 message Heartbeat {
-  string runner_id = 1;
+  reserved 1;
+  reserved "runner_id";
   RunnerCapabilities capabilities = 2;
-  repeated string active_job_ids = 3;
+  reserved 3;
+  reserved "active_job_ids";
+  // At most 256 active leases. Identity comes from the mTLS certificate, not
+  // from this message body.
+  repeated ActiveLease active_leases = 4;
+  uint32 protocol_version = 5;
+}
+
+message ActiveLease {
+  string job_id = 1;
+  // lease_token is an opaque value of at most 512 bytes.
+  string lease_token = 2;
+  LocalJobState state = 3;
+}
+
+enum LocalJobState {
+  LOCAL_JOB_STATE_UNSPECIFIED = 0;
+  LOCAL_JOB_STATE_RECEIVED = 1;
+  LOCAL_JOB_STATE_RUNNING = 2;
 }
 
 message JobAssignment {
@@ -65,33 +109,93 @@ message JobAssignment {
   string run_id = 2;
   string lease_token = 3;
   google.protobuf.Timestamp lease_expires_at = 4;
+  // execution_plan_json is at most 1 MiB.
   bytes execution_plan_json = 5;
 }
 
-message JobAccepted { string job_id = 1; string lease_token = 2; }
-message JobStarted { string job_id = 1; string lease_token = 2; }
-message LeaseRenewed { string job_id = 1; google.protobuf.Timestamp expires_at = 2; }
-message CancelJob { string job_id = 1; string reason = 2; }
+message JobAccepted {
+  string job_id = 1;
+  string lease_token = 2;
+}
+
+message JobStarted {
+  string job_id = 1;
+  string lease_token = 2;
+}
+
+message LeaseRenewed {
+  string job_id = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message CancelJob {
+  string job_id = 1;
+  CancelReason reason = 2;
+  string detail = 3;
+}
+
+enum CancelReason {
+  CANCEL_REASON_UNSPECIFIED = 0;
+  CANCEL_REASON_USER_REQUESTED = 1;
+  CANCEL_REASON_RUN_SUPERSEDED = 2;
+  CANCEL_REASON_SERVER_SHUTDOWN = 3;
+  CANCEL_REASON_LEASE_REVOKED = 4;
+}
 
 message LogChunk {
   string job_id = 1;
   string step_name = 2;
   uint64 sequence = 3;
+  // data is at most 64 KiB per message.
   bytes data = 4;
   bool stderr = 5;
+  string lease_token = 6;
 }
 
 message JobCompleted {
   string job_id = 1;
   string lease_token = 2;
-  string conclusion = 3;
+  JobConclusion conclusion = 3;
   int32 exit_code = 4;
   google.protobuf.Duration duration = 5;
+  string detail = 6;
 }
 
-message RotateCertificateRequest { string runner_id = 1; }
+enum JobConclusion {
+  JOB_CONCLUSION_UNSPECIFIED = 0;
+  JOB_CONCLUSION_SUCCEEDED = 1;
+  JOB_CONCLUSION_FAILED = 2;
+  JOB_CONCLUSION_CANCELED = 3;
+}
+
+message JobRejected {
+  string job_id = 1;
+  JobRejectReason reason = 2;
+  string detail = 3;
+}
+
+enum JobRejectReason {
+  JOB_REJECT_REASON_UNSPECIFIED = 0;
+  JOB_REJECT_REASON_STALE_LEASE = 1;
+  JOB_REJECT_REASON_WRONG_RUNNER = 2;
+  JOB_REJECT_REASON_INVALID_STATE = 3;
+  JOB_REJECT_REASON_PROTOCOL_ERROR = 4;
+}
+
+message RotateCertificateRequest {
+  reserved 1;
+  reserved "runner_id";
+  // csr_pem is at most 16 KiB. The new key remains local; the request is bound
+  // to the authenticated Runner identity by the service.
+  bytes csr_pem = 2;
+  uint32 protocol_version = 3;
+}
+
 message RotateCertificateResponse {
-  bytes certificate_pem = 1;
-  bytes private_key_pem = 2;
+  bytes certificate_chain_pem = 1;
+  reserved 2;
+  reserved "private_key_pem";
   google.protobuf.Timestamp expires_at = 3;
+  // Existing streams may use the previous certificate until this instant.
+  google.protobuf.Timestamp previous_certificate_valid_until = 4;
 }

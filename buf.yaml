@@ -1,0 +1,13 @@
+version: v2
+modules:
+  - path: api
+lint:
+  use:
+    - STANDARD
+  except:
+    # Public contracts intentionally live under api/<domain>/<version> while
+    # preserving the globally unique yuanci.<domain>.<version> package name.
+    - PACKAGE_DIRECTORY_MATCH
+breaking:
+  use:
+    - FILE

@@ -417,3 +417,23 @@ the batch outcome and remaining work.
   containers/networks and the temporary DB/key volumes (disposable, rebuildable).
   Browser tab and fixture process stopped; build images retained. Existing
   Quickstart Server/PostgreSQL remained healthy and Runner running.
+
+## 2026-09-01 — certificate-bound Runner protocol
+
+- Approved security/recovery design committed as `67321bc`; executable ten-batch
+  implementation plan committed as `8bf554c`. This entry covers only protocol
+  Batch 1 and does not claim that the mTLS service is already deployable.
+- Runner registration and rotation now carry a locally generated CSR. Responses
+  reserve the former private-key field numbers/names and can return only public
+  certificate chains and deadlines. Authenticated heartbeat/rotation messages no
+  longer accept a body Runner ID; the eventual service must bind identity from
+  the verified client certificate.
+- Protocol v1 now defines capability isolation, active lease tokens/local state,
+  typed cancellation/conclusion/rejection reasons, heartbeat/lease timing and
+  explicit message bounds. Enforcement belongs to later service batches.
+- Go and gRPC bindings are committed under `gen/runner/v1`. Buf 1.72.0 is pinned
+  by image digest and both remote generator plugins are version-pinned. Buf lint
+  passed, and two consecutive generations produced identical file hashes.
+- `go test ./api/... ./gen/...`, `go vet ./api/... ./gen/...` and host
+  `go test ./...` passed. PostgreSQL integration tests remained opt-in/skipped;
+  this protocol-only batch neither migrated nor restarted Quickstart.

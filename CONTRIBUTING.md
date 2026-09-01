@@ -48,6 +48,22 @@ stopping it discards test data only. The verification image builds the console
 and Go binaries, then runs all backend tests with `-race` and `go vet` on Linux.
 Console unit tests and lint still run separately as listed above and in CI.
 
+## Runner protocol generation
+
+Runner Protobuf bindings are committed under `gen/runner/v1`, so building and
+deploying YuanCI never requires `protoc`. Regenerate them with the pinned Buf
+container and pinned remote plugins:
+
+```sh
+make proto
+go test ./api/... ./gen/...
+go vet ./api/... ./gen/...
+```
+
+`make proto-check` regenerates the bindings and fails if the committed output is
+stale. A Runner private key must only be generated and stored by that Runner;
+protocol responses must never contain private-key material.
+
 ## Delivery rules
 
 `main` remains the primary branch. Hosted checks run on pull requests and pushes
