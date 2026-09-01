@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -51,4 +52,54 @@ func TestRunnerGRPCConfigurationIsAtomicAndRequiresPostgres(t *testing.T) {
 	if err := loadRunnerGRPC(&insecure); err == nil || !strings.Contains(err.Error(), "PostgreSQL") {
 		t.Fatalf("in-memory Runner PKI configuration accepted: %v", err)
 	}
+}
+
+func TestRunnerGRPCClientConfiguration(t *testing.T) {
+	t.Setenv("YUANCI_RUNNER_GRPC_ADDRESS", "server:9443")
+	t.Setenv("YUANCI_RUNNER_GRPC_SERVER_NAME", "server")
+	t.Setenv("YUANCI_RUNNER_ROOT_CA_FILE", "root.pem")
+	t.Setenv("YUANCI_RUNNER_STATE_DIR", filepath.Join(t.TempDir(), "runner"))
+	t.Setenv("YUANCI_RUNNER_REGISTRATION_TOKEN_FILE", "token")
+	t.Setenv("YUANCI_RUNNER_AVAILABLE_DISK_BYTES", "1073741824")
+
+	cfg, err := LoadRunner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GRPCAddress != "server:9443" || cfg.AvailableDiskBytes != 1<<30 || cfg.Executor != "docker" {
+		t.Fatalf("unexpected Runner configuration: %+v", cfg)
+	}
+}
+
+func TestRunnerGRPCClientRejectsUnsafeConfiguration(t *testing.T) {
+	setBase := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("YUANCI_RUNNER_GRPC_ADDRESS", "server:9443")
+		t.Setenv("YUANCI_RUNNER_GRPC_SERVER_NAME", "server")
+		t.Setenv("YUANCI_RUNNER_ROOT_CA_FILE", "root.pem")
+	}
+	t.Run("relative state", func(t *testing.T) {
+		setBase(t)
+		t.Setenv("YUANCI_RUNNER_STATE_DIR", "relative")
+		if _, err := LoadRunner(); err == nil {
+			t.Fatal("relative credential state directory accepted")
+		}
+	})
+	t.Run("two token sources", func(t *testing.T) {
+		setBase(t)
+		t.Setenv("YUANCI_RUNNER_STATE_DIR", filepath.Join(t.TempDir(), "runner"))
+		t.Setenv("YUANCI_RUNNER_REGISTRATION_TOKEN", "secret")
+		t.Setenv("YUANCI_RUNNER_REGISTRATION_TOKEN_FILE", "token")
+		if _, err := LoadRunner(); err == nil {
+			t.Fatal("multiple registration token sources accepted")
+		}
+	})
+	t.Run("invalid disk", func(t *testing.T) {
+		setBase(t)
+		t.Setenv("YUANCI_RUNNER_STATE_DIR", filepath.Join(t.TempDir(), "runner"))
+		t.Setenv("YUANCI_RUNNER_AVAILABLE_DISK_BYTES", "-1")
+		if _, err := LoadRunner(); err == nil {
+			t.Fatal("negative disk capacity accepted")
+		}
+	})
 }

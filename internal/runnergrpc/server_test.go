@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net"
 	"net/url"
@@ -19,6 +20,8 @@ import (
 
 	"github.com/google/uuid"
 	runnerv1 "github.com/yuanci/yuanci/gen/runner/v1"
+	runmodel "github.com/yuanci/yuanci/internal/run"
+	"github.com/yuanci/yuanci/internal/run/storetest"
 	"github.com/yuanci/yuanci/internal/runnerauth"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -105,12 +108,85 @@ func TestRealTLSRegistrationAuthenticationAndRotation(t *testing.T) {
 	if streamErr == nil {
 		_, streamErr = work.Recv()
 	}
-	if status.Code(streamErr) != codes.Unimplemented {
-		t.Fatalf("authenticated Work did not reach handler: %v", streamErr)
+	if status.Code(streamErr) != codes.InvalidArgument {
+		t.Fatalf("authenticated Work did not validate message: %v", streamErr)
 	}
 	fixture.store.disabled = true
 	if _, err := authenticatedClient.RotateCertificate(t.Context(), &runnerv1.RotateCertificateRequest{ProtocolVersion: 1, CsrPem: replacementCSR}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("disabled Runner returned %v", err)
+	}
+}
+
+func TestWorkStreamAssignsRenewsAndCompletesWithCertificateIdentity(t *testing.T) {
+	fixture := newTLSFixture(t)
+	token := "1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	fixture.store.expectedToken, _ = runnerauth.TokenDigest(token)
+	plain := dialRunner(t, fixture.address, fixture.rootPool, "server", nil)
+	key, csr := newCSR(t)
+	registration, err := runnerv1.NewRunnerServiceClient(plain).Register(t.Context(), &runnerv1.RegisterRequest{
+		OneTimeToken: token, Name: "work-runner", ProtocolVersion: 1, CsrPem: csr, Capabilities: testCapabilities()})
+	plain.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate := tlsCertificate(t, registration.CertificateChainPem, key)
+	connection := dialRunner(t, fixture.address, fixture.rootPool, "server", &certificate)
+	defer connection.Close()
+	client := runnerv1.NewRunnerServiceClient(connection)
+	if _, err := fixture.jobs.Create(t.Context(), storetest.Record(t, 1, false)); err != nil {
+		t.Fatal(err)
+	}
+	work, err := client.Work(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := work.Send(&runnerv1.WorkRequest{Body: &runnerv1.WorkRequest_Heartbeat{Heartbeat: &runnerv1.Heartbeat{
+		Capabilities: testCapabilities(), ProtocolVersion: 1}}}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := work.Recv()
+	if err != nil || response.GetAssignment() == nil {
+		t.Fatalf("assignment: %#v %v", response, err)
+	}
+	assignment := response.GetAssignment()
+	if assignment.LeaseToken == "" || assignment.JobId == "" || len(assignment.ExecutionPlanJson) == 0 {
+		t.Fatal("assignment omitted lease-bound execution plan")
+	}
+	if err := work.Send(&runnerv1.WorkRequest{Body: &runnerv1.WorkRequest_JobAccepted{JobAccepted: &runnerv1.JobAccepted{
+		JobId: assignment.JobId, LeaseToken: assignment.LeaseToken}}}); err != nil {
+		t.Fatal(err)
+	}
+	if response, err = work.Recv(); err != nil || response.GetLeaseRenewed() == nil {
+		t.Fatalf("receipt response: %#v %v", response, err)
+	}
+	if err := work.Send(&runnerv1.WorkRequest{Body: &runnerv1.WorkRequest_JobStarted{JobStarted: &runnerv1.JobStarted{
+		JobId: assignment.JobId, LeaseToken: assignment.LeaseToken}}}); err != nil {
+		t.Fatal(err)
+	}
+	if response, err = work.Recv(); err != nil || response.GetLeaseRenewed() == nil {
+		t.Fatalf("start response: %#v %v", response, err)
+	}
+	if err := work.Send(&runnerv1.WorkRequest{Body: &runnerv1.WorkRequest_Heartbeat{Heartbeat: &runnerv1.Heartbeat{
+		Capabilities: testCapabilities(), ProtocolVersion: 1, ActiveLeases: []*runnerv1.ActiveLease{{
+			JobId: assignment.JobId, LeaseToken: assignment.LeaseToken, State: runnerv1.LocalJobState_LOCAL_JOB_STATE_RUNNING}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if response, err = work.Recv(); err != nil || response.GetLeaseRenewed() == nil {
+		t.Fatalf("heartbeat response: %#v %v", response, err)
+	}
+	if err := work.Send(&runnerv1.WorkRequest{Body: &runnerv1.WorkRequest_JobCompleted{JobCompleted: &runnerv1.JobCompleted{
+		JobId: assignment.JobId, LeaseToken: assignment.LeaseToken, Conclusion: runnerv1.JobConclusion_JOB_CONCLUSION_SUCCEEDED}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := work.CloseSend(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := work.Recv(); err != io.EOF {
+		t.Fatalf("close stream: %v", err)
+	}
+	runs, err := fixture.jobs.List(t.Context(), 1)
+	if err != nil || len(runs) != 1 || runs[0].Status != runmodel.StatusSucceeded {
+		t.Fatalf("completion not persisted: %#v %v", runs, err)
 	}
 }
 
@@ -228,6 +304,7 @@ type tlsFixture struct {
 	rootPool *x509.CertPool
 	pki      PKI
 	store    *runnerStoreStub
+	jobs     *runmodel.MemoryStore
 }
 
 type pkiFileFixture struct{ files PKIFiles }
@@ -244,7 +321,8 @@ func newTLSFixture(t *testing.T) tlsFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewServer(auth, pki.RootPEM, pki.TLSConfig)
+	jobs := runmodel.NewMemoryStore()
+	server, err := NewServer(auth, jobs, pki.RootPEM, pki.TLSConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +336,7 @@ func newTLSFixture(t *testing.T) tlsFixture {
 	if !roots.AppendCertsFromPEM(pki.RootPEM) {
 		t.Fatal("root missing")
 	}
-	return tlsFixture{address: listener.Addr().String(), rootPool: roots, pki: pki, store: store}
+	return tlsFixture{address: listener.Addr().String(), rootPool: roots, pki: pki, store: store, jobs: jobs}
 }
 
 func createPKIFiles(t *testing.T) pkiFileFixture {

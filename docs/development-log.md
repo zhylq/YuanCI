@@ -531,3 +531,31 @@ the batch outcome and remaining work.
   `go vet ./...` passed; the isolated Linux race/PostgreSQL 17 suite and vet
   passed with exit code 0. Its containers, network and temporary database volume
   were removed.
+
+## 2026-09-01 — resilient Runner mTLS Work client
+
+- The Runner now generates its Ed25519 identity key locally, enrolls through a
+  root-pinned TLS 1.3 channel and atomically publishes a permission-checked state
+  directory. Restarts reuse the validated identity without a registration token;
+  writable token files are removed after successful enrollment.
+- The bidirectional Work client uses certificate identity and opaque Job lease
+  tokens for every transition. It accepts an immutable plan, waits for separate
+  Server acknowledgement of receipt and start before execution, sends bounded
+  five-second heartbeats, retains completion across response loss and reconnects
+  with capped jittered backoff. One sender owns the stream and all local queues
+  and capacity are bounded.
+- Certificates rotate with a fresh local key at six hours remaining. The pending
+  key/CSR is durably stored before the RPC and reused after response loss; the
+  complete credential directory is switched atomically after certificate, key,
+  chain, URI identity, validity and client-auth verification.
+- The Server Work stream now performs capability-bound assignment, renewal,
+  receipt, start, completion and cancellation decisions and permits only one
+  active session per certificate Runner identity. Errors exposed to the Runner
+  remain generic and do not include credentials or lease tokens.
+- Tests cover enrollment/restart, corrupt, symlinked and over-permissive state,
+  response-loss rotation, real TLS assignment-to-completion, invalid plans,
+  clean shutdown and reconnect jitter bounds. Host `go test ./...` and
+  `go vet ./...` passed. The isolated Linux/PostgreSQL 17 suite passed
+  `go test -race -count=1 -timeout=120s ./...` and `go vet ./...`; its dedicated
+  containers, network and database volume were removed. Quickstart was not
+  changed; executor lease-deadline cleanup is the next batch.

@@ -4,7 +4,7 @@
 
 YuanCI is a lightweight, self-hosted CI/CD control plane and runner for small and medium engineering teams. The project is being built around a Go modular monolith, isolated Go runners, PostgreSQL, and a React/TypeScript interface.
 
-> **Project status:** early development. The current milestone provides the architecture baseline, pipeline v1 compiler, run state machine, database schema, HTTP API foundation, certificate-bound Runner protocol/schema and PKI initialization, GitHub SCM adapter, web console shell, and Docker Compose packaging. The mTLS Runner service is not wired yet, and the project is not suitable for production workloads.
+> **Project status:** early development. The current milestone provides the architecture baseline, pipeline v1 compiler, run state machine, database schema, HTTP API foundation, certificate-bound Runner service and client, GitHub SCM adapter, web console shell, and Docker Compose packaging. Executor lease-loss cleanup and the Compose mTLS migration are still pending, and the project is not suitable for production workloads.
 
 Database-backed startup requires an explicit mode: isolated insecure evaluation,
 or the new [GitHub authenticated preview](docs/auth-preview.zh-CN.md). The latter
@@ -15,8 +15,8 @@ also provides [GitHub App installation discovery and repository import](docs/git
 with encrypted credentials and transactionally checked authorization. Webhooks,
 private checkout and automatic builds are still pending. The [managed setup wizard](docs/managed-setup.zh-CN.md)
 provides one-time setup codes, encrypted app settings, login/logout and verified
-configuration activation. Full identity administration and Runner
-mTLS remain production release blockers.
+configuration activation. Full identity administration, hardened Runner
+cancellation and production deployment qualification remain release blockers.
 
 ## Repository layout
 

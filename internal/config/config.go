@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -189,12 +191,23 @@ func loadGitHub(cfg *Server) error {
 }
 
 type Runner struct {
-	Name       string
-	ServerURL  string
-	Token      string
-	Capacity   int
-	Labels     map[string]string
-	PollPeriod time.Duration
+	Name                  string
+	ServerURL             string
+	Token                 string
+	Capacity              int
+	Labels                map[string]string
+	PollPeriod            time.Duration
+	GRPCAddress           string
+	GRPCServerName        string
+	RootCAFile            string
+	StateDir              string
+	RegistrationToken     string `json:"-"`
+	RegistrationTokenFile string
+	OS                    string
+	Architecture          string
+	Executor              string
+	IsolationLevel        string
+	AvailableDiskBytes    int64
 }
 
 func LoadRunner() (Runner, error) {
@@ -203,12 +216,36 @@ func LoadRunner() (Runner, error) {
 		return Runner{}, errors.New("YUANCI_RUNNER_CAPACITY must be between 1 and 100")
 	}
 	cfg := Runner{
-		Name:       env("YUANCI_RUNNER_NAME", hostname()),
-		ServerURL:  os.Getenv("YUANCI_SERVER_URL"),
-		Token:      os.Getenv("YUANCI_RUNNER_TOKEN"),
-		Capacity:   capacity,
-		Labels:     map[string]string{"executor": "docker"},
-		PollPeriod: 3 * time.Second,
+		Name:                  env("YUANCI_RUNNER_NAME", hostname()),
+		ServerURL:             os.Getenv("YUANCI_SERVER_URL"),
+		Token:                 os.Getenv("YUANCI_RUNNER_TOKEN"),
+		Capacity:              capacity,
+		Labels:                map[string]string{"executor": "docker"},
+		PollPeriod:            3 * time.Second,
+		GRPCAddress:           os.Getenv("YUANCI_RUNNER_GRPC_ADDRESS"),
+		GRPCServerName:        os.Getenv("YUANCI_RUNNER_GRPC_SERVER_NAME"),
+		RootCAFile:            os.Getenv("YUANCI_RUNNER_ROOT_CA_FILE"),
+		StateDir:              os.Getenv("YUANCI_RUNNER_STATE_DIR"),
+		RegistrationToken:     os.Getenv("YUANCI_RUNNER_REGISTRATION_TOKEN"),
+		RegistrationTokenFile: os.Getenv("YUANCI_RUNNER_REGISTRATION_TOKEN_FILE"),
+		OS:                    runtime.GOOS,
+		Architecture:          runtime.GOARCH,
+		Executor:              "docker",
+		IsolationLevel:        "standard",
+	}
+	if raw := os.Getenv("YUANCI_RUNNER_AVAILABLE_DISK_BYTES"); raw != "" {
+		value, parseErr := strconv.ParseInt(raw, 10, 64)
+		if parseErr != nil || value < 0 {
+			return Runner{}, errors.New("YUANCI_RUNNER_AVAILABLE_DISK_BYTES must be a non-negative integer")
+		}
+		cfg.AvailableDiskBytes = value
+	}
+	if cfg.GRPCAddress != "" {
+		if cfg.GRPCServerName == "" || cfg.RootCAFile == "" || cfg.StateDir == "" || !filepath.IsAbs(cfg.StateDir) ||
+			(cfg.RegistrationToken != "" && cfg.RegistrationTokenFile != "") {
+			return Runner{}, errors.New("Runner gRPC requires server name, root CA, absolute state directory and at most one registration token source")
+		}
+		return cfg, nil
 	}
 	if cfg.ServerURL == "" || cfg.Token == "" {
 		return Runner{}, errors.New("YUANCI_SERVER_URL and YUANCI_RUNNER_TOKEN are required")

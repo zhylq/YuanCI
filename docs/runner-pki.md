@@ -1,8 +1,8 @@
 # Runner PKI initialization (development milestone)
 
-> The Server-side mTLS channel is implemented and tested. The new Runner client
-> is delivered in a later batch, so do not replace a working Quickstart Runner
-> configuration with these files yet.
+> The Server and Runner mTLS channel is implemented and tested. Compose examples
+> have not been migrated yet, so do not replace a working Quickstart Runner
+> configuration with these files until the deployment batch is complete.
 
 Build `yuancictl`, then create a brand-new output directory. Repeat
 `-server-name` for every DNS name or IP address that Runners will use to reach
