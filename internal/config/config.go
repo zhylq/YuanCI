@@ -29,6 +29,12 @@ type Server struct {
 	BootstrapGitHubUserID string
 	ManagedSetup          bool
 	MasterKey             []byte `json:"-"`
+	RunnerGRPCAddress     string
+	RunnerServerCertFile  string
+	RunnerServerKeyFile   string
+	RunnerClientCAFile    string
+	RunnerIssuerCertFile  string
+	RunnerIssuerKeyFile   string
 }
 
 func LoadServer() (Server, error) {
@@ -83,7 +89,37 @@ func LoadServer() (Server, error) {
 		}
 		cfg.RequestBodyLimit = value
 	}
+	if err := loadRunnerGRPC(&cfg); err != nil {
+		return Server{}, err
+	}
 	return cfg, nil
+}
+
+func loadRunnerGRPC(cfg *Server) error {
+	values := []string{
+		os.Getenv("YUANCI_RUNNER_GRPC_ADDR"), os.Getenv("YUANCI_RUNNER_SERVER_CERT_FILE"),
+		os.Getenv("YUANCI_RUNNER_SERVER_KEY_FILE"), os.Getenv("YUANCI_RUNNER_CLIENT_CA_FILE"),
+		os.Getenv("YUANCI_RUNNER_ISSUER_CERT_FILE"), os.Getenv("YUANCI_RUNNER_ISSUER_KEY_FILE"),
+	}
+	configured := 0
+	for _, value := range values {
+		if value != "" {
+			configured++
+		}
+	}
+	if configured == 0 {
+		return nil
+	}
+	if configured != len(values) || cfg.DevInMemory || !cfg.AuthenticatedPreview || cfg.RunnerSharedToken != "" {
+		return errors.New("Runner gRPC requires all TLS file settings, PostgreSQL and the authenticated control plane without legacy Runner credentials")
+	}
+	cfg.RunnerGRPCAddress = values[0]
+	cfg.RunnerServerCertFile = values[1]
+	cfg.RunnerServerKeyFile = values[2]
+	cfg.RunnerClientCAFile = values[3]
+	cfg.RunnerIssuerCertFile = values[4]
+	cfg.RunnerIssuerKeyFile = values[5]
+	return nil
 }
 
 func loadOrigin(cfg *Server) error {

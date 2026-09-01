@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,8 +17,11 @@ import (
 	"github.com/yuanci/yuanci/internal/integration"
 	"github.com/yuanci/yuanci/internal/provisioning"
 	runmodel "github.com/yuanci/yuanci/internal/run"
+	"github.com/yuanci/yuanci/internal/runnerauth"
+	"github.com/yuanci/yuanci/internal/runnergrpc"
 	"github.com/yuanci/yuanci/internal/secrets"
 	"github.com/yuanci/yuanci/internal/store/postgres"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -87,6 +91,34 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second,
 	}
+	var grpcServer *grpc.Server
+	var grpcListener net.Listener
+	if cfg.RunnerGRPCAddress != "" {
+		pki, err := runnergrpc.LoadPKI(runnergrpc.PKIFiles{
+			ServerCertificate: cfg.RunnerServerCertFile, ServerKey: cfg.RunnerServerKeyFile,
+			ClientCA: cfg.RunnerClientCAFile, IssuerCertificate: cfg.RunnerIssuerCertFile,
+			IssuerKey: cfg.RunnerIssuerKeyFile,
+		})
+		if err != nil {
+			logger.Error("Runner PKI initialization failed")
+			os.Exit(2)
+		}
+		auth, err := runnerauth.New(store.(*postgres.Store), pki.Issuer, pki.IssuerKey)
+		if err != nil {
+			logger.Error("Runner identity service initialization failed")
+			os.Exit(2)
+		}
+		grpcServer, err = runnergrpc.NewServer(auth, pki.RootPEM, pki.TLSConfig)
+		if err != nil {
+			logger.Error("Runner gRPC initialization failed")
+			os.Exit(2)
+		}
+		grpcListener, err = net.Listen("tcp", cfg.RunnerGRPCAddress)
+		if err != nil {
+			logger.Error("Runner gRPC listener failed")
+			os.Exit(1)
+		}
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -97,11 +129,42 @@ func main() {
 			stop <- syscall.SIGTERM
 		}
 	}()
+	if grpcServer != nil {
+		go func() {
+			logger.Info("Runner gRPC listening", "address", cfg.RunnerGRPCAddress)
+			if err := grpcServer.Serve(grpcListener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+				logger.Error("Runner gRPC server failed")
+				select {
+				case stop <- syscall.SIGTERM:
+				default:
+				}
+			}
+		}()
+	}
 	<-stop
 	shutdown, done := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer done()
 	if err := server.Shutdown(shutdown); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
+	}
+	if grpcServer != nil {
+		gracefulStopGRPC(grpcServer, cfg.ShutdownTimeout)
+	}
+}
+
+func gracefulStopGRPC(server *grpc.Server, timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		server.GracefulStop()
+		close(done)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		server.Stop()
+		<-done
 	}
 }
 

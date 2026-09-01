@@ -64,6 +64,7 @@ type CertificateRecord struct {
 	ChainPEM             []byte
 	NotBefore            time.Time
 	NotAfter             time.Time
+	PreviousValidUntil   time.Time
 }
 
 type Identity struct {

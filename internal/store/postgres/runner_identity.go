@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -142,11 +141,10 @@ func (s *Store) RotateRunnerCertificate(ctx context.Context, rotation runnerauth
 	defer tx.Rollback(ctx)
 	var oldID uuid.UUID
 	var oldState string
-	var oldRetireAt *time.Time
-	err = tx.QueryRow(ctx, `SELECT certificate.id,certificate.state,certificate.retire_at
+	err = tx.QueryRow(ctx, `SELECT certificate.id,certificate.state
         FROM runner_certificates certificate JOIN runners runner ON runner.id=certificate.runner_id
         WHERE certificate.serial=$1 AND certificate.runner_id=$2 AND runner.status <> 'disabled'
-        FOR UPDATE OF certificate,runner`, rotation.OldSerial, rotation.RunnerID).Scan(&oldID, &oldState, &oldRetireAt)
+		FOR UPDATE OF certificate,runner`, rotation.OldSerial, rotation.RunnerID).Scan(&oldID, &oldState)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return runnerauth.CertificateRecord{}, runnerauth.ErrDenied
 	}
@@ -164,11 +162,14 @@ func (s *Store) RotateRunnerCertificate(ctx context.Context, rotation runnerauth
 	if oldState != "active" {
 		return runnerauth.CertificateRecord{}, runnerauth.ErrDenied
 	}
-	result, err := tx.Exec(ctx, `UPDATE runner_certificates SET state='retiring',
+	err = tx.QueryRow(ctx, `UPDATE runner_certificates SET state='retiring',
         retire_at=LEAST(not_after,clock_timestamp()+make_interval(secs => $2))
-		WHERE id=$1 AND state='active'`, oldID, rotation.GracePeriod.Seconds())
-	if err != nil || result.RowsAffected() != 1 {
+		WHERE id=$1 AND state='active' RETURNING retire_at`, oldID, rotation.GracePeriod.Seconds()).Scan(&rotation.Certificate.PreviousValidUntil)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return runnerauth.CertificateRecord{}, runnerauth.ErrDenied
+	}
+	if err != nil {
+		return runnerauth.CertificateRecord{}, err
 	}
 	newID := uuid.New()
 	if err := insertRunnerCertificate(ctx, tx, newID, rotation.RunnerID, rotation.Certificate, &oldID); err != nil {
@@ -253,9 +254,12 @@ func insertRunnerCertificate(ctx context.Context, tx pgx.Tx, id, runnerID uuid.U
 func replacementCertificate(ctx context.Context, tx pgx.Tx, oldID uuid.UUID) (runnerauth.CertificateRecord, bool, error) {
 	var record runnerauth.CertificateRecord
 	var csr, public []byte
-	err := tx.QueryRow(ctx, `SELECT serial,csr_fingerprint,public_key_fingerprint,certificate_chain_pem,
-        not_before,not_after FROM runner_certificates WHERE replaces_certificate_id=$1`, oldID).Scan(
-		&record.Serial, &csr, &public, &record.ChainPEM, &record.NotBefore, &record.NotAfter)
+	err := tx.QueryRow(ctx, `SELECT replacement.serial,replacement.csr_fingerprint,
+        replacement.public_key_fingerprint,replacement.certificate_chain_pem,replacement.not_before,
+        replacement.not_after,old.retire_at FROM runner_certificates replacement
+        JOIN runner_certificates old ON old.id=replacement.replaces_certificate_id
+        WHERE replacement.replaces_certificate_id=$1`, oldID).Scan(
+		&record.Serial, &csr, &public, &record.ChainPEM, &record.NotBefore, &record.NotAfter, &record.PreviousValidUntil)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return runnerauth.CertificateRecord{}, false, nil
 	}
