@@ -302,8 +302,9 @@ func (c *Client) parsePullRequest(deliveryID string, body []byte) (scm.Event, er
 		} `json:"sender"`
 		PullRequest struct {
 			Head struct {
-				Ref string `json:"ref"`
-				SHA string `json:"sha"`
+				Ref  string              `json:"ref"`
+				SHA  string              `json:"sha"`
+				Repo *repositoryResponse `json:"repo"`
 			} `json:"head"`
 			Base struct {
 				Ref string `json:"ref"`
@@ -313,15 +314,20 @@ func (c *Client) parsePullRequest(deliveryID string, body []byte) (scm.Event, er
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return scm.Event{}, fmt.Errorf("%w: decode github pull request: %v", scm.ErrInvalidHook, err)
 	}
+	metadata := map[string]string{
+		"number": strconv.Itoa(payload.Number), "head_ref": payload.PullRequest.Head.Ref,
+		"base_ref": payload.PullRequest.Base.Ref,
+	}
+	if payload.PullRequest.Head.Repo != nil {
+		metadata["head_repository_id"] = payload.PullRequest.Head.Repo.ID.String()
+		metadata["fork"] = strconv.FormatBool(payload.PullRequest.Head.Repo.ID.String() != payload.Repository.ID.String())
+	}
 	return scm.Event{
 		Provider: scm.GitHub, DeliveryID: deliveryID, Type: scm.EventPullRequest,
 		Action: payload.Action, Repository: payload.Repository.toSCM(),
 		Ref:      "refs/pull/" + strconv.Itoa(payload.Number) + "/head",
 		AfterSHA: payload.PullRequest.Head.SHA, Sender: payload.Sender.Login,
-		ReceivedAt: c.now().UTC(), Metadata: map[string]string{
-			"number": strconv.Itoa(payload.Number), "head_ref": payload.PullRequest.Head.Ref,
-			"base_ref": payload.PullRequest.Base.Ref,
-		},
+		ReceivedAt: c.now().UTC(), Metadata: metadata,
 	}, nil
 }
 

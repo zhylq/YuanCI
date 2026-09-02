@@ -15,14 +15,19 @@ var ErrStale = errors.New("authorization expired or configuration changed")
 var ErrRemote = errors.New("GitHub request failed")
 var ErrRate = errors.New("GitHub rate limit reached")
 var ErrAccess = errors.New("GitHub access could not be verified")
+var ErrWebhookUnavailable = errors.New("GitHub webhook is not configured")
 
 type App struct {
-	LoginID  uuid.UUID        `json:"-"`
-	ID       uuid.UUID        `json:"id"`
-	AppID    string           `json:"app_id"`
-	Slug     string           `json:"slug"`
-	ClientID string           `json:"client_id"`
-	Key      secrets.Envelope `json:"-"`
+	LoginID              uuid.UUID        `json:"-"`
+	ID                   uuid.UUID        `json:"id"`
+	AppID                string           `json:"app_id"`
+	Slug                 string           `json:"slug"`
+	ClientID             string           `json:"client_id"`
+	Key                  secrets.Envelope `json:"-"`
+	WebhookSecret        secrets.Envelope `json:"-"`
+	WebhookSecretPresent bool             `json:"-"`
+	WebhookEnabled       bool             `json:"webhook_enabled"`
+	WebhookSecretVersion int64            `json:"-"`
 }
 type Proof struct {
 	ID        uuid.UUID
@@ -62,6 +67,7 @@ type Imported struct {
 type RepositoryStore interface {
 	IntegrationContext(context.Context, string, bool) (Snapshot, error)
 	SaveIntegrationApp(context.Context, string, Snapshot, App) error
+	WebhookIntegration(context.Context) (App, error)
 	BeginIntegrationFlow(context.Context, string, Snapshot, string, string) error
 	ConsumeIntegrationFlow(context.Context, string, string, string) (Snapshot, error)
 	SaveIntegrationProof(context.Context, string, Snapshot, Proof) error

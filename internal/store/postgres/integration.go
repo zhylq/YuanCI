@@ -63,7 +63,8 @@ func integrationSnapshot(ctx context.Context, tx pgx.Tx, actor settingsActor) (i
 	}
 	var app integration.App
 	var key []byte
-	err = tx.QueryRow(ctx, `SELECT id,login_config_id,app_id::text,client_id,slug,encrypted_key FROM github_app_configs`).Scan(&app.ID, &app.LoginID, &app.AppID, &app.ClientID, &app.Slug, &key)
+	var webhookSecret []byte
+	err = tx.QueryRow(ctx, `SELECT id,login_config_id,app_id::text,client_id,slug,encrypted_key,encrypted_webhook_secret,webhook_enabled,webhook_secret_version FROM github_app_configs`).Scan(&app.ID, &app.LoginID, &app.AppID, &app.ClientID, &app.Slug, &key, &webhookSecret, &app.WebhookEnabled, &app.WebhookSecretVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return snap, nil
 	}
@@ -72,6 +73,12 @@ func integrationSnapshot(ctx context.Context, tx pgx.Tx, actor settingsActor) (i
 	}
 	if json.Unmarshal(key, &app.Key) != nil {
 		return snap, integration.ErrConfig
+	}
+	if len(webhookSecret) != 0 {
+		if json.Unmarshal(webhookSecret, &app.WebhookSecret) != nil {
+			return snap, integration.ErrConfig
+		}
+		app.WebhookSecretPresent = true
 	}
 	snap.App = &app
 	var proof integration.Proof
@@ -119,9 +126,20 @@ func (s *Store) SaveIntegrationApp(ctx context.Context, token string, expected i
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO github_app_configs(id,login_config_id,app_id,client_id,slug,encrypted_key) VALUES($1,$2,$3,$4,$5,$6)
+		var webhookSecret any
+		if app.WebhookSecretPresent {
+			encoded, marshalErr := json.Marshal(app.WebhookSecret)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			webhookSecret = encoded
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO github_app_configs(id,login_config_id,app_id,client_id,slug,encrypted_key,encrypted_webhook_secret,webhook_enabled,webhook_secret_version,webhook_secret_updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $7::jsonb IS NULL THEN NULL ELSE clock_timestamp() END)
   ON CONFLICT(singleton) DO UPDATE SET id=EXCLUDED.id,login_config_id=EXCLUDED.login_config_id,app_id=EXCLUDED.app_id,
-  client_id=EXCLUDED.client_id,slug=EXCLUDED.slug,encrypted_key=EXCLUDED.encrypted_key,updated_at=clock_timestamp()`, app.ID, app.LoginID, app.AppID, app.ClientID, app.Slug, key)
+  client_id=EXCLUDED.client_id,slug=EXCLUDED.slug,encrypted_key=EXCLUDED.encrypted_key,encrypted_webhook_secret=EXCLUDED.encrypted_webhook_secret,
+  webhook_enabled=EXCLUDED.webhook_enabled,webhook_secret_version=EXCLUDED.webhook_secret_version,
+  webhook_secret_updated_at=CASE WHEN github_app_configs.webhook_secret_version IS DISTINCT FROM EXCLUDED.webhook_secret_version THEN clock_timestamp() ELSE github_app_configs.webhook_secret_updated_at END,
+  updated_at=clock_timestamp()`, app.ID, app.LoginID, app.AppID, app.ClientID, app.Slug, key, webhookSecret, app.WebhookEnabled, app.WebhookSecretVersion)
 		if err != nil {
 			return err
 		}
@@ -133,6 +151,25 @@ func (s *Store) SaveIntegrationApp(ctx context.Context, token string, expected i
 		}
 		return appendAudit(ctx, tx, actor.session.UserID, "github_app.configured", "github_app", app.ID)
 	})
+}
+
+func (s *Store) WebhookIntegration(ctx context.Context) (integration.App, error) {
+	var app integration.App
+	var encrypted []byte
+	err := s.pool.QueryRow(ctx, `SELECT a.id,a.login_config_id,a.app_id::text,a.client_id,a.slug,a.encrypted_webhook_secret,a.webhook_enabled,a.webhook_secret_version
+ FROM github_app_configs a JOIN login_configs l ON l.id=a.login_config_id WHERE l.status='active'`).Scan(
+		&app.ID, &app.LoginID, &app.AppID, &app.ClientID, &app.Slug, &encrypted, &app.WebhookEnabled, &app.WebhookSecretVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return app, integration.ErrWebhookUnavailable
+	}
+	if err != nil {
+		return app, err
+	}
+	if len(encrypted) == 0 || json.Unmarshal(encrypted, &app.WebhookSecret) != nil {
+		return app, integration.ErrWebhookUnavailable
+	}
+	app.WebhookSecretPresent = true
+	return app, nil
 }
 func (s *Store) BeginIntegrationFlow(ctx context.Context, token string, expected integration.Snapshot, state, nonce string) error {
 	stateHash, err := identity.TokenDigest(state)

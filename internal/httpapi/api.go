@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/yuanci/yuanci/internal/buildinfo"
+	"github.com/yuanci/yuanci/internal/githubhook"
 	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/pipeline"
 	"github.com/yuanci/yuanci/internal/project"
@@ -24,15 +25,16 @@ import (
 )
 
 type API struct {
-	logger     *slog.Logger
-	store      runmodel.Store
-	bodyLimit  int64
-	startedAt  time.Time
-	sessions   identity.Sessions
-	authorized runmodel.AuthorizedStore
-	projects   project.Store
-	origin     string
-	oauth      *GitHubLogin
+	logger      *slog.Logger
+	store       runmodel.Store
+	bodyLimit   int64
+	startedAt   time.Time
+	sessions    identity.Sessions
+	authorized  runmodel.AuthorizedStore
+	projects    project.Store
+	origin      string
+	oauth       *GitHubLogin
+	githubHooks *githubhook.Service
 }
 
 // NewEvaluation exposes the deliberately unauthenticated milestone API.

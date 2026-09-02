@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yuanci/yuanci/internal/authorization"
+	"github.com/yuanci/yuanci/internal/githubhook"
 	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/project"
 	runmodel "github.com/yuanci/yuanci/internal/run"
@@ -51,6 +52,15 @@ func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend Browser
 			mux.HandleFunc("POST /api/v1/settings/auth/github", a.browserAuth(a.saveLoginSettings))
 			mux.HandleFunc("POST /api/v1/settings/auth/github/verify", a.browserAuth(a.verifyLoginSettings))
 			if a.oauth.Integrations != nil {
+				hookStore, ok := store.(githubhook.Store)
+				if !ok {
+					return nil, errors.New("managed GitHub integration requires a webhook inbox")
+				}
+				a.githubHooks, err = githubhook.New(a.oauth.Integrations, hookStore)
+				if err != nil {
+					return nil, err
+				}
+				mux.HandleFunc("POST /api/v1/webhooks/github", a.receiveGitHubWebhook)
 				mux.HandleFunc("GET /api/v1/integrations/github", a.browserAuth(a.integrationSettings))
 				mux.HandleFunc("POST /api/v1/integrations/github", a.browserAuth(a.saveIntegration))
 				mux.HandleFunc("POST /api/v1/integrations/github/authorize", a.browserAuth(a.authorizeIntegration))

@@ -150,6 +150,48 @@ func TestGitHubImportEncryptionIdempotencyAndNoMembershipGrants(t *testing.T) {
 		t.Fatal("disabled repository reactivated")
 	}
 }
+
+func TestGitHubWebhookSecretIsEncryptedWriteOnlyAndPreserved(t *testing.T) {
+	s, service, session, _ := importFixture(t)
+	secret := "0123456789abcdef0123456789abcdef"
+	enabled := true
+	current, err := service.Settings(t.Context(), session.Token)
+	if err != nil || current.App == nil {
+		t.Fatal(err)
+	}
+	if err := service.Save(t.Context(), session.Token, integration.AppInput{
+		AppID: "12", PrivateKey: "replacement-key", ExpectedRevision: &current.App.ID,
+		WebhookSecret: &secret, WebhookEnabled: &enabled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := service.Settings(t.Context(), session.Token)
+	if err != nil || !settings.WebhookSecretConfigured || settings.WebhookURL != "https://ci.example.test/api/v1/webhooks/github" || settings.App == nil || !settings.App.WebhookEnabled {
+		t.Fatalf("unexpected settings: %#v %v", settings, err)
+	}
+	encoded, _ := json.Marshal(settings)
+	var stored string
+	if err := s.pool.QueryRow(t.Context(), `SELECT encrypted_webhook_secret::text FROM github_app_configs`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), secret) || strings.Contains(stored, secret) {
+		t.Fatal("webhook secret stored or returned in plaintext")
+	}
+	plain, err := service.WebhookSecret(t.Context())
+	if err != nil || string(plain) != secret {
+		t.Fatal("webhook secret could not be recovered")
+	}
+	clear(plain)
+	current, _ = service.Settings(t.Context(), session.Token)
+	if err := service.Save(t.Context(), session.Token, integration.AppInput{AppID: "12", PrivateKey: "replacement-again", ExpectedRevision: &current.App.ID}); err != nil {
+		t.Fatal(err)
+	}
+	plain, err = service.WebhookSecret(t.Context())
+	if err != nil || string(plain) != secret {
+		t.Fatal("omitted webhook secret was not preserved")
+	}
+	clear(plain)
+}
 func TestGitHubImportFlowReplayWrongAccountAndSession(t *testing.T) {
 	s, service, session, provider := importFixture(t)
 	state, nonce := identity.NewToken(), identity.NewToken()
