@@ -11,7 +11,7 @@ CREATE TABLE repository_automation_settings (
     CHECK (length(pipeline_path) BETWEEN 1 AND 256),
     CHECK (left(pipeline_path, 1) <> '/'),
     CHECK (strpos(pipeline_path, E'\\') = 0),
-    CHECK (pipeline_path !~ '(^|/)\\.{1,2}(/|$)'),
+    CHECK (pipeline_path !~ '(^|/)[.]{1,2}(/|$)'),
     CHECK (pipeline_path !~ '[[:cntrl:]]'),
     CHECK (pipeline_path ~ '[.]ya?ml$'),
     CHECK (NOT enabled OR trigger_push OR trigger_tag OR trigger_pull_request)
