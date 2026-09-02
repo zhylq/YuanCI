@@ -54,8 +54,14 @@ jobs:
       - name: Validate Compose profiles
         env:
           YUANCI_POSTGRES_PASSWORD: disposable-validation-only
-          YUANCI_RUNNER_SHARED_TOKEN: disposable-validation-token-not-a-live-secret
-          YUANCI_SERVER_URL: https://ci.example.test
+          YUANCI_PUBLIC_ORIGIN: https://ci.example.test
+          YUANCI_MASTER_KEY_PATH: /tmp/yuanci-ci/master-key
+          YUANCI_RUNNER_PKI_SERVER_DIR: /tmp/yuanci-ci/pki/server
+          YUANCI_RUNNER_GRPC_ADDRESS: ci.example.test:9443
+          YUANCI_RUNNER_GRPC_SERVER_NAME: ci.example.test
+          YUANCI_DOCKER_GID: '998'
+          YUANCI_RUNNER_ROOT_CA_PATH: /tmp/yuanci-ci/pki/root-cert.pem
+          YUANCI_RUNNER_BOOTSTRAP_DIR: /tmp/yuanci-ci/bootstrap
         run: |
           docker compose -f deploy/compose.quickstart.yml config --quiet
           docker compose -f deploy/compose.production.yml config --quiet
