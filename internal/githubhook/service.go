@@ -24,9 +24,13 @@ var (
 	ErrInvalidRequest = errors.New("invalid GitHub webhook request")
 	ErrConflict       = errors.New("GitHub delivery ID conflicts with an existing payload")
 	ErrRateLimited    = errors.New("GitHub webhook rate limit reached")
+	ErrNoDelivery     = errors.New("no GitHub webhook delivery is ready")
+	ErrLeaseInvalid   = errors.New("GitHub webhook lease is invalid or expired")
 	deliveryPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$`)
 	shaPattern        = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 )
+
+const MaxAttempts = 12
 
 type SecretSource interface {
 	WebhookSecret(context.Context) ([]byte, error)
@@ -49,6 +53,38 @@ type Delivery struct {
 type Receipt struct {
 	ID        uuid.UUID `json:"id"`
 	Duplicate bool      `json:"duplicate"`
+}
+
+type WorkItem struct {
+	ID           uuid.UUID
+	LeaseID      uuid.UUID
+	Event        scm.Event
+	Attempt      int
+	LeaseExpires time.Time
+}
+
+type FinalState string
+
+const (
+	FinalProcessed FinalState = "processed"
+	FinalIgnored   FinalState = "ignored"
+	FinalRetry     FinalState = "retry"
+	FinalDead      FinalState = "dead_letter"
+)
+
+type Finalize struct {
+	ID           uuid.UUID
+	LeaseID      uuid.UUID
+	State        FinalState
+	NextAttempt  time.Time
+	ErrorCode    string
+	ErrorSummary string
+}
+
+type WorkStore interface {
+	ClaimWebhook(context.Context, time.Duration) (*WorkItem, error)
+	FinalizeWebhook(context.Context, Finalize) error
+	RecoverWebhookLeases(context.Context, int) (int, error)
 }
 
 type Service struct {

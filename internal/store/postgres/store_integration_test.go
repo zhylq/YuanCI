@@ -533,7 +533,7 @@ func TestRunnerIdentityMigrationRecoversLegacyJobs(t *testing.T) {
 	if err := connection.QueryRow(t.Context(), `SELECT status,certificate_serial FROM runners WHERE id=$1`, runnerID).Scan(&runnerStatus, &legacySerial); err != nil {
 		t.Fatal(err)
 	}
-	if leaseCount != 0 || migrationCount != 10 || userCount != 1 || recoveryAuditCount != 2 || runnerStatus != "offline" || legacySerial != nil {
+	if leaseCount != 0 || migrationCount != 11 || userCount != 1 || recoveryAuditCount != 2 || runnerStatus != "offline" || legacySerial != nil {
 		t.Fatalf("upgrade preservation: leases=%d migrations=%d users=%d audits=%d runner=%s serial=%v", leaseCount, migrationCount, userCount, recoveryAuditCount, runnerStatus, legacySerial)
 	}
 
