@@ -619,3 +619,19 @@ the batch outcome and remaining work.
   shared-token migration. It explicitly records that supported disable/revoke
   administration, cross-host rehearsal, forced-partition smoke, logs/secrets,
   webhook orchestration, 72-hour soak and security certification remain open.
+## 2026-09-02 — project automatic-build policy persistence
+
+- Added provider-neutral per-project automation settings with safe synthesized
+  defaults: automatic builds remain disabled while push, tag, same-repository PR,
+  older-commit cancellation and `.yuanci.yml` are prepared for explicit use.
+- Pipeline paths are bounded, relative YAML paths and reject control characters,
+  Windows separators, normalization ambiguity and traversal in both Go and
+  PostgreSQL. Enabling remains closed until the next immutable GitHub config
+  validation increment can prove the installation and pipeline are usable.
+- Writes require `repository.manage`, recheck the browser session, use a
+  repository-scoped lock plus expected revision for first-write-safe compare and
+  swap, and commit the bounded audit event atomically with the settings.
+- Tests cover defaults, viewer rejection, revisions, stale and simultaneous
+  first writes, premature enablement, database constraint defense and audit
+  rollback. Focused and full Linux/PostgreSQL 17 Race suites plus `go vet` passed;
+  all four Compose files also passed configuration validation.
