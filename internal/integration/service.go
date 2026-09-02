@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/yuanci/yuanci/internal/githubapp"
 	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/secrets"
 )
@@ -81,7 +82,7 @@ func (s *Service) Save(ctx context.Context, token string, input AppInput) error 
 	}
 	app.ID = uuid.New()
 	app.LoginID = snap.LoginID
-	app.Key, err = s.cipher.Seal(key, appAAD(app.ID))
+	app.Key, err = s.cipher.Seal(key, githubapp.KeyAAD(app.ID))
 	if err != nil {
 		return ErrConfig
 	}
@@ -166,7 +167,6 @@ func (s *Service) Finish(ctx context.Context, token, state, nonce, code string) 
 	}
 	return s.Repo.SaveIntegrationProof(ctx, token, snap, proof)
 }
-func appAAD(id uuid.UUID) []byte     { return []byte("yuanci:github-app:" + id.String()) }
 func proofAAD(id uuid.UUID) []byte   { return []byte("yuanci:github-proof:" + id.String()) }
 func webhookAAD(id uuid.UUID) []byte { return []byte("yuanci:github-webhook:" + id.String()) }
 
@@ -205,7 +205,7 @@ func (s *Service) verifiedInstallations(ctx context.Context, snap Snapshot, acce
 	if err != nil {
 		return nil, err
 	}
-	key, err := s.cipher.Open(snap.App.Key, appAAD(snap.App.ID))
+	key, err := s.cipher.Open(snap.App.Key, githubapp.KeyAAD(snap.App.ID))
 	if err != nil {
 		return nil, ErrConfig
 	}
@@ -244,7 +244,7 @@ func (s *Service) installation(ctx context.Context, snap Snapshot, access, id st
 	}
 	for _, item := range items {
 		if item.ID == id {
-			key, err := s.cipher.Open(snap.App.Key, appAAD(snap.App.ID))
+			key, err := s.cipher.Open(snap.App.Key, githubapp.KeyAAD(snap.App.ID))
 			if err != nil {
 				return Installation{}, ErrConfig
 			}

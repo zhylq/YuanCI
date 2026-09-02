@@ -635,3 +635,23 @@ the batch outcome and remaining work.
   first writes, premature enablement, database constraint defense and audit
   rollback. Focused and full Linux/PostgreSQL 17 Race suites plus `go vet` passed;
   all four Compose files also passed configuration validation.
+
+## 2026-09-02 — immutable GitHub pipeline retrieval
+
+- Added a trusted GitHub runtime repository lookup that binds an active imported
+  repository to its installation and current active GitHub App configuration;
+  webhook owner, repository name and clone URL are never used as authority.
+- GitHub App credentials now mint a short-lived installation token restricted to
+  exactly one repository and read-only `contents` permission. Token responses,
+  permissions, repository identity and lifetime fail closed, while private-key
+  and token byte buffers are cleared after use.
+- Pipeline configuration is fetched only from the 40-character commit SHA in the
+  verified event, with a validated bounded repository-relative YAML path and a
+  one-MiB response limit. External-fork pull requests are rejected before any
+  database credential lookup or token issuance.
+- Unit tests cover trusted-local identity, exact-SHA requests, least-privilege
+  token bodies, redirects, malformed inputs, excessive permissions, unsafe token
+  lifetimes and secret-safe errors. PostgreSQL integration tests cover active and
+  inactive imported repositories. The isolated Linux/PostgreSQL 17 suite passed
+  `go test -race -count=1 -timeout=120s ./...` and `go vet ./...` after one
+  transient Alpine package-download retry.

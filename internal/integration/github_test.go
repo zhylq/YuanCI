@@ -169,3 +169,71 @@ func TestGitHubOAuthPKCEAndRepositoryIntersection(t *testing.T) {
 		t.Fatal("path injection")
 	}
 }
+
+func TestGitHubRepositoryScopedTokenAndImmutableFile(t *testing.T) {
+	_, key := testKey(t)
+	g := NewGitHub()
+	token := "ghs_repository_token"
+	expires := time.Now().UTC().Add(50 * time.Minute).Truncate(time.Second)
+	calls := 0
+	g.client.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.URL.Host != "api.github.com" || r.URL.Scheme != "https" {
+			t.Fatal("runtime request escaped fixed GitHub API host")
+		}
+		switch calls {
+		case 1:
+			if r.Method != http.MethodPost || r.URL.Path != "/app/installations/34/access_tokens" ||
+				!strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ey") || r.Header.Get("Content-Type") != "application/json" {
+				t.Fatal("invalid installation token request")
+			}
+			var body struct {
+				RepositoryIDs []int64           `json:"repository_ids"`
+				Permissions   map[string]string `json:"permissions"`
+			}
+			if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.RepositoryIDs) != 1 || body.RepositoryIDs[0] != 70 || body.Permissions["contents"] != "read" {
+				t.Fatalf("token scope widened: %#v", body)
+			}
+			return reply(http.StatusCreated, `{"token":"`+token+`","expires_at":"`+expires.Format(time.RFC3339)+`","repositories":[{"id":70}],"permissions":{"contents":"read","metadata":"read"}}`), nil
+		case 2:
+			if r.Method != http.MethodGet || r.URL.Path != "/repos/trusted/repo/contents/ci/pipeline.yml" ||
+				r.URL.Query().Get("ref") != "0123456789abcdef0123456789abcdef01234567" ||
+				r.Header.Get("Authorization") != "Bearer "+token || r.Header.Get("Accept") != "application/vnd.github.raw+json" {
+				t.Fatal("file request was not exact-SHA authenticated")
+			}
+			return reply(http.StatusOK, "version: v1"), nil
+		default:
+			t.Fatal("unexpected runtime request")
+			return nil, errors.New("unexpected request")
+		}
+	})
+	issued, expiry, err := g.InstallationToken(t.Context(), "Iv1.test", key, "34", "70")
+	if err != nil || string(issued) != token || !expiry.Equal(expires) {
+		t.Fatalf("token reply: %q %v %v", issued, expiry, err)
+	}
+	content, err := g.RepositoryFile(t.Context(), issued, "trusted", "repo", "ci/pipeline.yml", "0123456789abcdef0123456789abcdef01234567")
+	if err != nil || string(content) != "version: v1" || calls != 2 {
+		t.Fatalf("file reply: %q calls=%d error=%v", content, calls, err)
+	}
+}
+
+func TestGitHubRuntimeCredentialResponseFailsClosed(t *testing.T) {
+	_, key := testKey(t)
+	for _, body := range []string{
+		`{"token":"secret","expires_at":"2030-01-01T00:00:00Z","repositories":[{"id":71}],"permissions":{"contents":"read"}}`,
+		`{"token":"secret","expires_at":"2030-01-01T00:00:00Z","repositories":[{"id":70}],"permissions":{"contents":"write"}}`,
+		`{"token":"secret","expires_at":"2030-01-01T00:00:00Z","repositories":[{"id":70}],"permissions":{"contents":"read","issues":"read"}}`,
+		`{"token":"secret value","expires_at":"2030-01-01T00:00:00Z","repositories":[{"id":70}],"permissions":{"contents":"read"}}`,
+	} {
+		g := NewGitHub()
+		g.client.Transport = transportFunc(func(*http.Request) (*http.Response, error) { return reply(http.StatusCreated, body), nil })
+		if token, _, err := g.InstallationToken(t.Context(), "Iv1.test", key, "34", "70"); err == nil || len(token) != 0 || strings.Contains(err.Error(), "secret") {
+			t.Fatalf("unsafe token response accepted or exposed: token=%q error=%v", token, err)
+		}
+	}
+	g := NewGitHub()
+	g.client.Transport = transportFunc(func(*http.Request) (*http.Response, error) { return reply(http.StatusFound, "secret"), nil })
+	if _, err := g.RepositoryFile(t.Context(), []byte("token"), "trusted", "repo", ".yuanci.yml", "0123456789abcdef0123456789abcdef01234567"); !errors.Is(err, ErrRemote) || strings.Contains(err.Error(), "secret") {
+		t.Fatal("redirect or response detail exposed")
+	}
+}

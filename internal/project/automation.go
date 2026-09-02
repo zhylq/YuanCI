@@ -51,12 +51,19 @@ type AutomationUpdate struct {
 }
 
 func (u AutomationUpdate) Validate() error {
-	if u.ExpectedRevision < 0 || len(u.PipelinePath) < 1 || len(u.PipelinePath) > 256 ||
-		strings.HasPrefix(u.PipelinePath, "/") || strings.Contains(u.PipelinePath, "\\") ||
-		path.Clean(u.PipelinePath) != u.PipelinePath || unsafePathSegment(u.PipelinePath) ||
-		(!strings.HasSuffix(u.PipelinePath, ".yml") && !strings.HasSuffix(u.PipelinePath, ".yaml")) ||
-		strings.IndexFunc(u.PipelinePath, unicode.IsControl) >= 0 ||
+	if u.ExpectedRevision < 0 || ValidatePipelinePath(u.PipelinePath) != nil ||
 		(u.Enabled && !u.TriggerPush && !u.TriggerTag && !u.TriggerPullRequest) {
+		return ErrAutomationInvalid
+	}
+	return nil
+}
+
+func ValidatePipelinePath(value string) error {
+	if len(value) < 1 || len(value) > 256 ||
+		strings.HasPrefix(value, "/") || strings.Contains(value, "\\") ||
+		path.Clean(value) != value || unsafePathSegment(value) ||
+		(!strings.HasSuffix(value, ".yml") && !strings.HasSuffix(value, ".yaml")) ||
+		strings.IndexFunc(value, unicode.IsControl) >= 0 {
 		return ErrAutomationInvalid
 	}
 	return nil

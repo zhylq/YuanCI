@@ -24,6 +24,7 @@ import (
 
 var slugPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$`)
 var repoPattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,100}$`)
+var commitPattern = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
 type GitHub struct{ client *http.Client }
 
@@ -220,6 +221,138 @@ func (g *GitHub) VerifyInstallation(ctx context.Context, app App, key []byte, in
 	}
 	return nil
 }
+
+func (g *GitHub) InstallationToken(ctx context.Context, clientID string, key []byte, installID, repositoryID string) ([]byte, time.Time, error) {
+	failed := func(err error) ([]byte, time.Time, error) { return nil, time.Time{}, err }
+	if !identity.ValidGitHubSubject(installID) || !identity.ValidGitHubSubject(repositoryID) {
+		return failed(ErrConfig)
+	}
+	repositoryNumber, err := strconv.ParseInt(repositoryID, 10, 64)
+	if err != nil || repositoryNumber <= 0 {
+		return failed(ErrConfig)
+	}
+	jwt, err := appJWT(clientID, key)
+	if err != nil {
+		return failed(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"repository_ids": []int64{repositoryNumber},
+		"permissions":    map[string]string{"contents": "read"},
+	})
+	if err != nil {
+		return failed(ErrRemote)
+	}
+	endpoint := "https://api.github.com/app/installations/" + installID + "/access_tokens"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return failed(ErrRemote)
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("X-GitHub-Api-Version", "2026-03-10")
+	request.Header.Set("Authorization", "Bearer "+jwt)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "YuanCI/0.1")
+	response, err := g.client.Do(request)
+	if err != nil {
+		return failed(ErrRemote)
+	}
+	defer response.Body.Close()
+	if err := runtimeResponseError(response, http.StatusCreated); err != nil {
+		return failed(err)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, (64<<10)+1))
+	if err != nil || len(data) > 64<<10 {
+		return failed(ErrRemote)
+	}
+	var reply struct {
+		Token        string    `json:"token"`
+		ExpiresAt    time.Time `json:"expires_at"`
+		Repositories []struct {
+			ID int64 `json:"id"`
+		} `json:"repositories"`
+		Permissions map[string]string `json:"permissions"`
+	}
+	if json.Unmarshal(data, &reply) != nil || len(reply.Token) < 1 || len(reply.Token) > 8192 ||
+		strings.ContainsAny(reply.Token, " \r\n\x00") || len(reply.Repositories) != 1 ||
+		reply.Repositories[0].ID != repositoryNumber || reply.Permissions["contents"] != "read" {
+		return failed(ErrRemote)
+	}
+	for name, permission := range reply.Permissions {
+		if permission != "read" || (name != "contents" && name != "metadata") {
+			return failed(ErrAccess)
+		}
+	}
+	return []byte(reply.Token), reply.ExpiresAt, nil
+}
+
+func (g *GitHub) RepositoryFile(ctx context.Context, token []byte, owner, name, filePath, sha string) ([]byte, error) {
+	if len(token) < 1 || len(token) > 8192 || bytes.IndexFunc(token, func(r rune) bool { return r == ' ' || r == '\r' || r == '\n' || r == 0 }) >= 0 ||
+		!repoPattern.MatchString(owner) || !repoPattern.MatchString(name) || owner == "." || owner == ".." || name == "." || name == ".." || !commitPattern.MatchString(sha) {
+		return nil, ErrConfig
+	}
+	escapedPath, err := runtimeRepositoryPath(filePath)
+	if err != nil {
+		return nil, err
+	}
+	endpoint, err := url.Parse("https://api.github.com/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/contents/" + escapedPath)
+	if err != nil {
+		return nil, ErrConfig
+	}
+	query := endpoint.Query()
+	query.Set("ref", sha)
+	endpoint.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, ErrRemote
+	}
+	request.Header.Set("Accept", "application/vnd.github.raw+json")
+	request.Header.Set("X-GitHub-Api-Version", "2026-03-10")
+	request.Header.Set("Authorization", "Bearer "+string(token))
+	request.Header.Set("User-Agent", "YuanCI/0.1")
+	response, err := g.client.Do(request)
+	if err != nil {
+		return nil, ErrRemote
+	}
+	defer response.Body.Close()
+	if err := runtimeResponseError(response, http.StatusOK); err != nil {
+		return nil, err
+	}
+	content, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	if err != nil || len(content) > 1<<20 {
+		return nil, ErrRemote
+	}
+	return content, nil
+}
+
+func runtimeRepositoryPath(value string) (string, error) {
+	if value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
+		return "", ErrConfig
+	}
+	parts := strings.Split(value, "/")
+	for index, part := range parts {
+		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, "\r\n\x00") {
+			return "", ErrConfig
+		}
+		parts[index] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/"), nil
+}
+
+func runtimeResponseError(response *http.Response, expected int) error {
+	if response.StatusCode == expected {
+		return nil
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	if response.StatusCode == http.StatusTooManyRequests ||
+		(response.StatusCode == http.StatusForbidden && (response.Header.Get("X-RateLimit-Remaining") == "0" || response.Header.Get("Retry-After") != "")) {
+		return ErrRate
+	}
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusNotFound {
+		return ErrAccess
+	}
+	return ErrRemote
+}
+
 func (g *GitHub) Repositories(ctx context.Context, token, installID string, page int) (RepoPage, error) {
 	if !identity.ValidGitHubSubject(installID) || page < 1 || page > 100 {
 		return RepoPage{}, ErrConfig
