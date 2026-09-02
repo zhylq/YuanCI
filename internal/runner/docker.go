@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,17 +17,20 @@ import (
 )
 
 type DockerExecutor struct {
-	Binary string
-	Stdout io.Writer
-	Stderr io.Writer
+	Binary         string
+	Stdout         io.Writer
+	Stderr         io.Writer
+	CleanupTimeout time.Duration
+	command        func(context.Context, string, ...string) *exec.Cmd
 }
 
 func NewDockerExecutor(stdout, stderr io.Writer) *DockerExecutor {
-	return &DockerExecutor{Binary: "docker", Stdout: stdout, Stderr: stderr}
+	return &DockerExecutor{Binary: "docker", Stdout: stdout, Stderr: stderr, CleanupTimeout: 15 * time.Second,
+		command: exec.CommandContext}
 }
 
 func (e *DockerExecutor) Check(ctx context.Context) error {
-	command := exec.CommandContext(ctx, e.Binary, "version", "--format", "{{.Server.Version}}")
+	command := e.commandFor(ctx, e.Binary, "version", "--format", "{{.Server.Version}}")
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("docker daemon is unavailable: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -37,19 +41,27 @@ func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipe
 	if len(spec.Services) > 0 {
 		return errors.New("service containers are declared but not implemented by the milestone-0 executor")
 	}
-	volume := "yuanci-workspace-" + strings.ReplaceAll(jobID.String(), "-", "")
-	if err := e.run(ctx, "volume", "create", volume); err != nil {
-		return err
-	}
-	defer func() { _ = e.run(context.Background(), "volume", "rm", "-f", volume) }()
-
 	jobCtx := ctx
 	if spec.Timeout > 0 {
 		var cancel context.CancelFunc
 		jobCtx, cancel = context.WithTimeout(ctx, spec.Timeout)
 		defer cancel()
 	}
+	if err := jobCtx.Err(); err != nil {
+		return err
+	}
+	volume, network := dockerResourceNames(jobID)
+	if err := e.run(jobCtx, "volume", "create", volume); err != nil {
+		return err
+	}
+	defer e.cleanup(jobID, len(spec.Steps), volume, network)
+	if err := e.run(jobCtx, "network", "create", "--driver", "bridge", network); err != nil {
+		return err
+	}
 	for index, step := range spec.Steps {
+		if err := jobCtx.Err(); err != nil {
+			return err
+		}
 		image := step.Image
 		if image == "" {
 			image = spec.Image
@@ -66,7 +78,7 @@ func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipe
 			}
 			stepCtx, cancel = context.WithTimeout(jobCtx, duration)
 		}
-		args := buildDockerArgs(volume, jobID, index, image, spec, step)
+		args := buildDockerArgs(volume, network, jobID, index, image, spec, step)
 		err := e.run(stepCtx, args...)
 		cancel()
 		if err != nil {
@@ -76,9 +88,9 @@ func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipe
 	return nil
 }
 
-func buildDockerArgs(volume string, jobID uuid.UUID, index int, image string, job pipeline.PlanJob, step pipeline.Step) []string {
-	name := fmt.Sprintf("yuanci-%s-%d", strings.ReplaceAll(jobID.String(), "-", ""), index)
-	args := []string{"run", "--rm", "--name", name, "--network", "bridge", "--cap-drop", "ALL",
+func buildDockerArgs(volume, network string, jobID uuid.UUID, index int, image string, job pipeline.PlanJob, step pipeline.Step) []string {
+	name := dockerContainerName(jobID, index)
+	args := []string{"run", "--rm", "--name", name, "--network", network, "--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges", "--pids-limit", "256", "--read-only",
 		"--tmpfs", "/tmp:rw,nosuid,size=536870912", "--volume", volume + ":/workspace",
 		"--workdir", defaultString(step.WorkingDir, "/workspace"), "--env", "HOME=/tmp"}
@@ -111,13 +123,63 @@ func buildDockerArgs(volume string, jobID uuid.UUID, index int, image string, jo
 }
 
 func (e *DockerExecutor) run(ctx context.Context, args ...string) error {
-	command := exec.CommandContext(ctx, e.Binary, args...)
+	command := e.commandFor(ctx, e.Binary, args...)
 	command.Stdout = e.Stdout
 	command.Stderr = e.Stderr
 	if err := command.Run(); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (e *DockerExecutor) cleanup(jobID uuid.UUID, steps int, volume, network string) {
+	timeout := e.CleanupTimeout
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	containerArgs := []string{"container", "rm", "-f"}
+	for index := 0; index < steps; index++ {
+		containerArgs = append(containerArgs, dockerContainerName(jobID, index))
+	}
+	if steps > 0 {
+		e.runQuiet(ctx, containerArgs...)
+	}
+	var cleanup sync.WaitGroup
+	cleanup.Add(2)
+	go func() {
+		defer cleanup.Done()
+		e.runQuiet(ctx, "network", "rm", network)
+	}()
+	go func() {
+		defer cleanup.Done()
+		e.runQuiet(ctx, "volume", "rm", "-f", volume)
+	}()
+	cleanup.Wait()
+}
+
+func (e *DockerExecutor) runQuiet(ctx context.Context, args ...string) {
+	command := e.commandFor(ctx, e.Binary, args...)
+	command.Stdout = io.Discard
+	command.Stderr = io.Discard
+	_ = command.Run()
+}
+
+func (e *DockerExecutor) commandFor(ctx context.Context, name string, args ...string) *exec.Cmd {
+	if e.command != nil {
+		return e.command(ctx, name, args...)
+	}
+	return exec.CommandContext(ctx, name, args...)
+}
+
+func dockerResourceNames(jobID uuid.UUID) (string, string) {
+	suffix := strings.ReplaceAll(jobID.String(), "-", "")
+	return "yuanci-workspace-" + suffix, "yuanci-network-" + suffix
+}
+
+func dockerContainerName(jobID uuid.UUID, index int) string {
+	return fmt.Sprintf("yuanci-%s-%d", strings.ReplaceAll(jobID.String(), "-", ""), index)
 }
 
 var resourcePattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?(?:[kmgtKMGT]i?[bB]?)?$`)

@@ -559,3 +559,29 @@ the batch outcome and remaining work.
   `go test -race -count=1 -timeout=120s ./...` and `go vet ./...`; its dedicated
   containers, network and database volume were removed. Quickstart was not
   changed; executor lease-deadline cleanup is the next batch.
+
+## 2026-09-02 — lease-authoritative execution and Docker cleanup
+
+- Every assigned Job now owns a cancellation context and a timer for the last
+  Server-confirmed lease deadline. Renewal safely replaces the timer; cancellation,
+  Runner shutdown, Job timeout or loss of lease authority stops execution. Once
+  authority is lost it cannot be restored by a late response, and no successful
+  completion is sent for that execution.
+- Runner shutdown cancels all active Jobs and waits at most 15 seconds for
+  executors. Local capacity remains a hard independent limit, and a Job whose
+  start acknowledgement races with lease loss is discarded without invoking the
+  executor.
+- Docker Jobs use deterministic container, private bridge-network and workspace-
+  volume names. Cleanup runs from a separate 15-second context after cancellation:
+  all step containers are removed in one command, then network and volume cleanup
+  run concurrently so both receive an attempt within the overall bound.
+- Tests use a controllable fake Docker process to prove that cancellation reaches
+  the process and container/network/volume cleanup still runs. Lease tests cover
+  deadline extension, network-partition expiry, start/cancel races and bounded
+  Runner shutdown. The Runner package passed ten consecutive focused runs.
+- Host `go test ./...` and `go vet ./...` passed. The first Linux attempts were
+  interrupted by `proxy.golang.org` EOFs; a disposable run using a one-shot
+  alternate module proxy then exposed and fixed two slow-race-test cleanup timing
+  assumptions. The final Linux/PostgreSQL 17 run passed `go test -race -count=1
+  -timeout=120s ./...` and `go vet ./...` with exit 0. All dedicated containers,
+  network and database storage were removed.

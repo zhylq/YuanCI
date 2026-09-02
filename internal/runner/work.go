@@ -9,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"math/rand/v2"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -58,13 +60,16 @@ const (
 )
 
 type localJob struct {
-	id           uuid.UUID
-	leaseToken   string
-	leaseExpires time.Time
-	plan         pipeline.PlanJob
-	phase        localJobPhase
-	cancel       context.CancelFunc
-	result       *executionResult
+	id            uuid.UUID
+	leaseToken    string
+	leaseExpires  time.Time
+	plan          pipeline.PlanJob
+	phase         localJobPhase
+	ctx           context.Context
+	cancel        context.CancelFunc
+	result        *executionResult
+	leaseTimer    *time.Timer
+	authorityLost atomic.Bool
 }
 
 type executionResult struct {
@@ -96,11 +101,14 @@ func (client *WorkClient) Run(ctx context.Context, executor Executor) error {
 	}
 	active := make(map[uuid.UUID]*localJob)
 	results := make(chan executionResult, client.config.Capabilities.Capacity)
+	leaseLosses := make(chan uuid.UUID, client.config.Capabilities.Capacity)
+	var executors sync.WaitGroup
 	backoff := workReconnectMinimum
 	for {
-		err := client.runSession(ctx, executor, active, results)
+		err := client.runSession(ctx, executor, active, results, leaseLosses, &executors)
 		if ctx.Err() != nil {
 			cancelJobs(active)
+			waitExecutors(&executors, 15*time.Second)
 			return nil
 		}
 		if errors.Is(err, errCertificateRotationDue) {
@@ -123,6 +131,7 @@ func (client *WorkClient) Run(ctx context.Context, executor Executor) error {
 		case <-ctx.Done():
 			timer.Stop()
 			cancelJobs(active)
+			waitExecutors(&executors, 15*time.Second)
 			return nil
 		case <-timer.C:
 		}
@@ -131,7 +140,7 @@ func (client *WorkClient) Run(ctx context.Context, executor Executor) error {
 }
 
 func (client *WorkClient) runSession(ctx context.Context, executor Executor, active map[uuid.UUID]*localJob,
-	results chan executionResult) error {
+	results chan executionResult, leaseLosses chan uuid.UUID, executors *sync.WaitGroup) error {
 	tlsConfig, err := client.config.Credentials.TLSConfig(client.config.ServerName)
 	if err != nil {
 		return err
@@ -177,12 +186,15 @@ func (client *WorkClient) runSession(ctx context.Context, executor Executor, act
 		case err := <-receiveErrors:
 			return err
 		case response := <-responses:
-			if err := client.handleResponse(ctx, stream, executor, active, results, response); err != nil {
+			if err := client.handleResponse(ctx, stream, executor, active, results, leaseLosses, executors, response); err != nil {
 				return err
 			}
 		case result := <-results:
 			job := active[result.jobID]
-			if job == nil || job.phase != jobRunning {
+			if job == nil || job.phase != jobRunning || job.authorityLost.Load() || !time.Now().Before(job.leaseExpires) {
+				if job != nil && (!time.Now().Before(job.leaseExpires) || job.authorityLost.Load()) {
+					forgetJob(active, job)
+				}
 				continue
 			}
 			job.phase = jobCompleted
@@ -196,13 +208,18 @@ func (client *WorkClient) runSession(ctx context.Context, executor Executor, act
 			}
 		case <-timerChannel(rotation):
 			return errCertificateRotationDue
+		case jobID := <-leaseLosses:
+			if job := active[jobID]; job != nil && job.authorityLost.Load() {
+				forgetJob(active, job)
+			}
 		}
 	}
 }
 
 func (client *WorkClient) handleResponse(ctx context.Context,
 	stream grpc.BidiStreamingClient[runnerv1.WorkRequest, runnerv1.WorkResponse], executor Executor,
-	active map[uuid.UUID]*localJob, results chan<- executionResult, response *runnerv1.WorkResponse) error {
+	active map[uuid.UUID]*localJob, results chan<- executionResult, leaseLosses chan<- uuid.UUID,
+	executors *sync.WaitGroup, response *runnerv1.WorkResponse) error {
 	if response == nil || response.Body == nil {
 		return errors.New("invalid Runner work response")
 	}
@@ -221,6 +238,12 @@ func (client *WorkClient) handleResponse(ctx context.Context,
 		if len(active) >= int(client.config.Capabilities.Capacity) {
 			return errors.New("Runner local capacity exceeded")
 		}
+		jobCtx, cancel := context.WithCancel(ctx)
+		job.ctx = jobCtx
+		job.cancel = cancel
+		if !armLeaseDeadline(job, leaseLosses) {
+			return errors.New("Runner assignment lease expired before acceptance")
+		}
 		active[job.id] = job
 		return stream.Send(&runnerv1.WorkRequest{Body: &runnerv1.WorkRequest_JobAccepted{JobAccepted: &runnerv1.JobAccepted{
 			JobId: job.id.String(), LeaseToken: job.leaseToken}}})
@@ -233,7 +256,15 @@ func (client *WorkClient) handleResponse(ctx context.Context,
 		if err != nil || job == nil {
 			return errors.New("unknown Runner lease renewal")
 		}
+		if job.authorityLost.Load() {
+			forgetJob(active, job)
+			return nil
+		}
 		job.leaseExpires = body.LeaseRenewed.ExpiresAt.AsTime()
+		if !resetLeaseDeadline(job, leaseLosses) {
+			forgetJob(active, job)
+			return nil
+		}
 		switch job.phase {
 		case jobAwaitingAcceptance:
 			job.phase = jobAwaitingStart
@@ -241,9 +272,11 @@ func (client *WorkClient) handleResponse(ctx context.Context,
 				JobId: job.id.String(), LeaseToken: job.leaseToken}}})
 		case jobAwaitingStart:
 			job.phase = jobRunning
-			jobCtx, cancel := context.WithCancel(ctx)
-			job.cancel = cancel
-			go executeJob(jobCtx, executor, job, results)
+			executors.Add(1)
+			go func() {
+				defer executors.Done()
+				executeJob(job.ctx, executor, job, results)
+			}()
 		case jobCompleted:
 			if job.result == nil {
 				return errors.New("Runner completion state is invalid")
@@ -260,10 +293,7 @@ func (client *WorkClient) handleResponse(ctx context.Context,
 			return errors.New("invalid Runner cancellation")
 		}
 		if job := active[jobID]; job != nil {
-			if job.cancel != nil {
-				job.cancel()
-			}
-			delete(active, jobID)
+			forgetJob(active, job)
 		}
 		return nil
 	case *runnerv1.WorkResponse_JobRejected:
@@ -272,10 +302,9 @@ func (client *WorkClient) handleResponse(ctx context.Context,
 		}
 		jobID, err := uuid.Parse(body.JobRejected.JobId)
 		if err == nil {
-			if job := active[jobID]; job != nil && job.cancel != nil {
-				job.cancel()
+			if job := active[jobID]; job != nil {
+				forgetJob(active, job)
 			}
-			delete(active, jobID)
 		}
 		return nil
 	default:
@@ -320,7 +349,7 @@ func sendHeartbeat(stream grpc.BidiStreamingClient[runnerv1.WorkRequest, runnerv
 	capabilities *runnerv1.RunnerCapabilities, active map[uuid.UUID]*localJob) error {
 	leases := make([]*runnerv1.ActiveLease, 0, len(active))
 	for _, job := range active {
-		if job.phase != jobRunning && job.phase != jobCompleted {
+		if job.authorityLost.Load() || (job.phase != jobRunning && job.phase != jobCompleted) {
 			continue
 		}
 		leases = append(leases, &runnerv1.ActiveLease{JobId: job.id.String(), LeaseToken: job.leaseToken,
@@ -376,9 +405,65 @@ func receiveWork(ctx context.Context, stream grpc.BidiStreamingClient[runnerv1.W
 
 func cancelJobs(active map[uuid.UUID]*localJob) {
 	for _, job := range active {
-		if job.cancel != nil {
-			job.cancel()
+		if job.leaseTimer != nil {
+			job.leaseTimer.Stop()
 		}
+		job.authorityLost.Store(true)
+		job.cancel()
+	}
+}
+
+func armLeaseDeadline(job *localJob, losses chan<- uuid.UUID) bool {
+	if job.authorityLost.Load() || !time.Now().Before(job.leaseExpires) {
+		loseLease(job, losses)
+		return false
+	}
+	job.leaseTimer = time.AfterFunc(time.Until(job.leaseExpires), func() { loseLease(job, losses) })
+	return true
+}
+
+func resetLeaseDeadline(job *localJob, losses chan<- uuid.UUID) bool {
+	if job.authorityLost.Load() {
+		return false
+	}
+	if job.leaseTimer != nil && !job.leaseTimer.Stop() {
+		loseLease(job, losses)
+		return false
+	}
+	return armLeaseDeadline(job, losses)
+}
+
+func loseLease(job *localJob, losses chan<- uuid.UUID) {
+	if !job.authorityLost.CompareAndSwap(false, true) {
+		return
+	}
+	job.cancel()
+	select {
+	case losses <- job.id:
+	default:
+	}
+}
+
+func forgetJob(active map[uuid.UUID]*localJob, job *localJob) {
+	if job.leaseTimer != nil {
+		job.leaseTimer.Stop()
+	}
+	job.authorityLost.Store(true)
+	job.cancel()
+	delete(active, job.id)
+}
+
+func waitExecutors(executors *sync.WaitGroup, maximum time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		executors.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(maximum)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
 	}
 }
 
