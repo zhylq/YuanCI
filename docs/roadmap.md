@@ -1,6 +1,6 @@
 # Development roadmap
 
-## Current delivery status — 2026-09-01
+## Current delivery status — 2026-09-02
 
 This is still pre-alpha, not a finished CI/CD product. See the
 [development log](development-log.md) for executed tests and known limitations.
@@ -12,13 +12,13 @@ This is still pre-alpha, not a finished CI/CD product. See the
 | Authorization | Scoped policy/sessions/audit, GitHub OAuth/PKCE, explicit bootstrap/linking, one-use setup code, encrypted candidate settings and verified activation | Real GitHub sandbox login, membership/audit lifecycle, last-admin/recovery and deployment enforcement |
 | Secrets | Envelope encryption, AAD binding, corrupt-input/fuzz tests, file-supplied master key and encrypted login credentials | Job-secret storage API, key rotation, scoped release and streaming redaction |
 | Docker | Source-context exclusions, loopback Quickstart, separate verification and authenticated-preview profiles | Release digest locks, signed multi-architecture images and recovery drills |
-| Runner | Local-key enrollment, mTLS identity, capability scheduling, strict leases, recovery, resilient Work stream, certificate rotation, lease-deadline cancellation and deterministic Docker cleanup | Compose migration and deployment fault smoke tests |
+| Runner | Local-key enrollment, one-use registration, mTLS identity, capability scheduling, strict leases/recovery, certificate rotation, lease-deadline cancellation, deterministic Docker cleanup, one-command Quickstart and split deployment examples | Cross-host production rehearsal, supported disable/revoke administration, forced-partition smoke and 72-hour soak |
 | Console | Evaluation dashboard, YAML validation/plan preview, login/logout, setup/settings, scoped project browser and GitHub installation/repository picker | Run step detail/logs, full visual editor and administration |
 | SCM | GitHub REST adapter, signed event normalization tests, encrypted App keys, verified installation discovery and idempotent repository import | Real GitHub App sandbox, webhook orchestration, private checkout plus GitLab, Gitea and Gitee |
 | CD | Design only | Environments, approvals, SSH/Compose execution, health checks and rollback |
 
-Next implementation order: Runner Compose migration and operator guide;
-real GitHub import sandbox acceptance; GitHub end-to-end CI; complete
+Next implementation order: real GitHub import sandbox acceptance; GitHub
+webhook-to-build/status vertical slice; run logs and console detail; complete
 console; remaining SCM/CI capabilities; protected CD; release qualification.
 Do not remove the insecure-evaluation gate merely because the policy tests pass.
 

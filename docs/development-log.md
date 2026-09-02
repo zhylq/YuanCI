@@ -585,3 +585,37 @@ the batch outcome and remaining work.
   assumptions. The final Linux/PostgreSQL 17 run passed `go test -race -count=1
   -timeout=120s ./...` and `go vet ./...` with exit 0. All dedicated containers,
   network and database storage were removed.
+
+## 2026-09-02 — mTLS Compose migration and deployment smoke
+
+- Removed the obsolete HTTP polling/shared-token Runner client, routes and
+  configuration. Server and Runner now reject the old shared-token variables;
+  the only execution channel is certificate-authenticated gRPC.
+- Added a default standard Runner Pool migration, one-shot Quickstart PKI and
+  registration-token initialization, persistent Runner identity, non-root
+  Runner image, and separate production control-plane/Runner Compose examples.
+  The Server remains read-only and never receives the Docker Socket.
+- A fresh, isolated `yuanci-mtls-smoke` Quickstart exposed and fixed a parent
+  PKI directory traversal-permission error. After the fix, Server health passed,
+  the one-use token was deleted, the Runner persisted its identity, and a real
+  Alpine Job moved from queued to succeeded through PostgreSQL, mTLS Work and
+  the Docker executor. Restarting Runner reused the same Runner ID and certificate.
+- The smoke used host port 18080 because the user's existing Quickstart already
+  owned 8080; the existing deployment was not modified. The isolated environment
+  was removed after verification. A forced Runner network partition canceled a
+  120-second task at the last confirmed lease deadline; Server reconciliation
+  finalized the Run as failed and no managed container, private network or
+  workspace volume remained. Recreating only the Runner restored its mTLS Work
+  stream while reusing the same identity.
+- Host `go test ./...`, `go vet ./...`, all 23 web tests, ESLint and the production
+  web build passed. The first isolated Linux/PostgreSQL 17 race run correctly
+  exposed three fixtures that still expected eight migrations or an empty Pool
+  table; after updating them for migration 000009, `go test -race -count=1
+  -timeout=120s ./...` and `go vet ./...` passed with exit code 0. Both dedicated
+  Docker projects, networks and temporary data volumes were removed.
+- Published a Chinese PKI/operator guide covering the offline-root ceremony,
+  one-time token transfer, firewalling, split-host deployment, automatic rotation,
+  replacement, backup boundaries, troubleshooting and the incompatible pre-alpha
+  shared-token migration. It explicitly records that supported disable/revoke
+  administration, cross-host rehearsal, forced-partition smoke, logs/secrets,
+  webhook orchestration, 72-hour soak and security certification remain open.

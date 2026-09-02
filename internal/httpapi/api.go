@@ -2,8 +2,6 @@ package httpapi
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -26,22 +24,21 @@ import (
 )
 
 type API struct {
-	logger      *slog.Logger
-	store       runmodel.Store
-	bodyLimit   int64
-	runnerToken string
-	startedAt   time.Time
-	sessions    identity.Sessions
-	authorized  runmodel.AuthorizedStore
-	projects    project.Store
-	origin      string
-	oauth       *GitHubLogin
+	logger     *slog.Logger
+	store      runmodel.Store
+	bodyLimit  int64
+	startedAt  time.Time
+	sessions   identity.Sessions
+	authorized runmodel.AuthorizedStore
+	projects   project.Store
+	origin     string
+	oauth      *GitHubLogin
 }
 
 // NewEvaluation exposes the deliberately unauthenticated milestone API.
 // The executable may call this only after the explicit evaluation config gate.
-func NewEvaluation(logger *slog.Logger, store runmodel.Store, bodyLimit int64, runnerToken string) http.Handler {
-	api := &API{logger: logger, store: store, bodyLimit: bodyLimit, runnerToken: runnerToken, startedAt: time.Now().UTC()}
+func NewEvaluation(logger *slog.Logger, store runmodel.Store, bodyLimit int64) http.Handler {
+	api := &API{logger: logger, store: store, bodyLimit: bodyLimit, startedAt: time.Now().UTC()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", api.health)
 	mux.HandleFunc("GET /readyz", api.ready)
@@ -50,107 +47,11 @@ func NewEvaluation(logger *slog.Logger, store runmodel.Store, bodyLimit int64, r
 	mux.HandleFunc("POST /api/v1/pipelines/validate", api.validatePipeline)
 	mux.HandleFunc("GET /api/v1/runs", api.listRuns)
 	mux.HandleFunc("POST /api/v1/runs", api.createRun)
-	mux.HandleFunc("POST /api/v1/runner/jobs/claim", api.runnerAuth(api.claimJob))
-	mux.HandleFunc("POST /api/v1/runner/jobs/{jobID}/start", api.runnerAuth(api.startJob))
-	mux.HandleFunc("POST /api/v1/runner/jobs/{jobID}/complete", api.runnerAuth(api.completeJob))
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
+		writeProblem(w, http.StatusNotFound, "not found", "API endpoint does not exist")
+	})
 	mux.Handle("/", webui.Handler())
 	return api.middleware(mux)
-}
-
-func (a *API) claimJob(w http.ResponseWriter, r *http.Request) {
-	var request runmodel.ClaimRequest
-	if err := decodeJSON(w, r, &request); err != nil {
-		return
-	}
-	if strings.TrimSpace(request.RunnerName) == "" {
-		writeProblem(w, http.StatusUnprocessableEntity, "invalid runner", "runner_name is required")
-		return
-	}
-	assignment, err := a.store.ClaimJob(r.Context(), request)
-	if err != nil {
-		a.logger.Error("claim job", "error", err)
-		writeProblem(w, http.StatusInternalServerError, "internal error", "could not claim a job")
-		return
-	}
-	if assignment == nil {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	writeJSON(w, http.StatusOK, assignment)
-}
-
-type leaseRequest struct {
-	LeaseToken string `json:"lease_token"`
-}
-type completeJobRequest struct {
-	LeaseToken string             `json:"lease_token"`
-	Status     runmodel.JobStatus `json:"status"`
-}
-
-func (a *API) startJob(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("jobID"))
-	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "invalid job", "jobID must be a UUID")
-		return
-	}
-	var request leaseRequest
-	if err := decodeJSON(w, r, &request); err != nil {
-		return
-	}
-	if err := a.store.StartJob(r.Context(), id, request.LeaseToken); err != nil {
-		if errors.Is(err, runmodel.ErrLeaseInvalid) {
-			writeProblem(w, http.StatusConflict, "invalid lease", err.Error())
-			return
-		}
-		writeProblem(w, http.StatusInternalServerError, "internal error", "could not start job")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (a *API) completeJob(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("jobID"))
-	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "invalid job", "jobID must be a UUID")
-		return
-	}
-	var request completeJobRequest
-	if err := decodeJSON(w, r, &request); err != nil {
-		return
-	}
-	if err := a.store.CompleteJob(r.Context(), id, request.LeaseToken, request.Status); err != nil {
-		if errors.Is(err, runmodel.ErrLeaseInvalid) {
-			writeProblem(w, http.StatusConflict, "invalid lease", err.Error())
-			return
-		}
-		writeProblem(w, http.StatusUnprocessableEntity, "invalid completion", err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (a *API) runnerAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if a.runnerToken == "" {
-			writeProblem(w, http.StatusServiceUnavailable, "runner protocol disabled", "runner authentication is not configured")
-			return
-		}
-		fields := strings.Fields(r.Header.Get("Authorization"))
-		if len(r.Header.Values("Authorization")) != 1 || len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			writeProblem(w, http.StatusUnauthorized, "unauthorized", "runner token is invalid")
-			return
-		}
-		provided := fields[1]
-		expectedDigest := sha256.Sum256([]byte(a.runnerToken))
-		providedDigest := sha256.Sum256([]byte(provided))
-		if subtle.ConstantTimeCompare(expectedDigest[:], providedDigest[:]) != 1 {
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			writeProblem(w, http.StatusUnauthorized, "unauthorized", "runner token is invalid")
-			return
-		}
-		next(w, r)
-	}
 }
 
 func (a *API) health(w http.ResponseWriter, _ *http.Request) {

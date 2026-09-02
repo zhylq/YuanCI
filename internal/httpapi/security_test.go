@@ -16,22 +16,8 @@ import (
 	runmodel "github.com/yuanci/yuanci/internal/run"
 )
 
-func TestEvaluationRunnerRequiresBearerScheme(t *testing.T) {
-	handler := NewEvaluation(slog.New(slog.NewTextHandler(io.Discard, nil)), runmodel.NewMemoryStore(), 1024, "fixture-runner-token")
-	for header, status := range map[string]int{"fixture-runner-token": 401, "Basic fixture-runner-token": 401, "Bearer fixture-runner-token extra": 401, "Bearer wrong": 401, "Bearer fixture-runner-token": 204} {
-		r := httptest.NewRequest(http.MethodPost, "/api/v1/runner/jobs/claim", strings.NewReader(`{"runner_name":"fixture"}`))
-		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("Authorization", header)
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, r)
-		if w.Code != status {
-			t.Errorf("auth framing status=%d want=%d", w.Code, status)
-		}
-	}
-}
-
 func TestJSONFramingAndSafeErrors(t *testing.T) {
-	handler := NewEvaluation(slog.New(slog.NewTextHandler(io.Discard, nil)), runmodel.NewMemoryStore(), 1024, "fixture")
+	handler := NewEvaluation(slog.New(slog.NewTextHandler(io.Discard, nil)), runmodel.NewMemoryStore(), 1024)
 	for _, tt := range []struct {
 		name, body, content string
 		status              int
@@ -54,6 +40,23 @@ func TestJSONFramingAndSafeErrors(t *testing.T) {
 				t.Fatal("parse error reflected input")
 			}
 		})
+	}
+}
+
+func TestEvaluationDoesNotExposeLegacyRunnerAPI(t *testing.T) {
+	handler := NewEvaluation(slog.New(slog.NewTextHandler(io.Discard, nil)), runmodel.NewMemoryStore(), 1024)
+	for _, path := range []string{
+		"/api/v1/runner/jobs/claim",
+		"/api/v1/runner/jobs/00000000-0000-4000-8000-000000000001/start",
+		"/api/v1/runner/jobs/00000000-0000-4000-8000-000000000001/complete",
+	} {
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound || !strings.Contains(response.Header().Get("Content-Type"), "application/problem+json") {
+			t.Fatalf("path=%s status=%d content-type=%q body=%s", path, response.Code, response.Header().Get("Content-Type"), response.Body.String())
+		}
 	}
 }
 

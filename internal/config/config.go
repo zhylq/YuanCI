@@ -23,7 +23,6 @@ type Server struct {
 	Milestone0InsecureAPI bool
 	ShutdownTimeout       time.Duration
 	RequestBodyLimit      int64
-	RunnerSharedToken     string
 	AuthenticatedPreview  bool
 	PublicOrigin          string
 	GitHubClientID        string
@@ -47,7 +46,9 @@ func LoadServer() (Server, error) {
 		Milestone0InsecureAPI: envBool("YUANCI_MILESTONE0_INSECURE_API", false),
 		ShutdownTimeout:       15 * time.Second,
 		RequestBodyLimit:      1 << 20,
-		RunnerSharedToken:     os.Getenv("YUANCI_RUNNER_SHARED_TOKEN"),
+	}
+	if os.Getenv("YUANCI_RUNNER_SHARED_TOKEN") != "" || os.Getenv("YUANCI_RUNNER_TOKEN") != "" || os.Getenv("YUANCI_SERVER_URL") != "" {
+		return Server{}, errors.New("legacy Runner shared-token settings are no longer supported; configure Runner gRPC mTLS")
 	}
 
 	if raw := os.Getenv("YUANCI_AUTHENTICATED_PREVIEW"); raw != "" {
@@ -71,7 +72,7 @@ func LoadServer() (Server, error) {
 		return Server{}, errors.New("YUANCI_DATABASE_URL is required unless YUANCI_DEV_IN_MEMORY=true")
 	}
 	if cfg.AuthenticatedPreview {
-		if cfg.DevInMemory || cfg.Milestone0InsecureAPI || cfg.RunnerSharedToken != "" {
+		if cfg.DevInMemory || cfg.Milestone0InsecureAPI {
 			return Server{}, errors.New("authenticated preview cannot enable evaluation mode, memory storage or legacy Runner credentials")
 		}
 		loader := loadGitHub
@@ -112,8 +113,8 @@ func loadRunnerGRPC(cfg *Server) error {
 	if configured == 0 {
 		return nil
 	}
-	if configured != len(values) || cfg.DevInMemory || !cfg.AuthenticatedPreview || cfg.RunnerSharedToken != "" {
-		return errors.New("Runner gRPC requires all TLS file settings, PostgreSQL and the authenticated control plane without legacy Runner credentials")
+	if configured != len(values) || cfg.DevInMemory || (!cfg.AuthenticatedPreview && !cfg.Milestone0InsecureAPI) {
+		return errors.New("Runner gRPC requires all TLS file settings and PostgreSQL in an explicitly selected control-plane mode")
 	}
 	cfg.RunnerGRPCAddress = values[0]
 	cfg.RunnerServerCertFile = values[1]
@@ -192,11 +193,8 @@ func loadGitHub(cfg *Server) error {
 
 type Runner struct {
 	Name                  string
-	ServerURL             string
-	Token                 string
 	Capacity              int
 	Labels                map[string]string
-	PollPeriod            time.Duration
 	GRPCAddress           string
 	GRPCServerName        string
 	RootCAFile            string
@@ -217,11 +215,8 @@ func LoadRunner() (Runner, error) {
 	}
 	cfg := Runner{
 		Name:                  env("YUANCI_RUNNER_NAME", hostname()),
-		ServerURL:             os.Getenv("YUANCI_SERVER_URL"),
-		Token:                 os.Getenv("YUANCI_RUNNER_TOKEN"),
 		Capacity:              capacity,
 		Labels:                map[string]string{"executor": "docker"},
-		PollPeriod:            3 * time.Second,
 		GRPCAddress:           os.Getenv("YUANCI_RUNNER_GRPC_ADDRESS"),
 		GRPCServerName:        os.Getenv("YUANCI_RUNNER_GRPC_SERVER_NAME"),
 		RootCAFile:            os.Getenv("YUANCI_RUNNER_ROOT_CA_FILE"),
@@ -240,15 +235,9 @@ func LoadRunner() (Runner, error) {
 		}
 		cfg.AvailableDiskBytes = value
 	}
-	if cfg.GRPCAddress != "" {
-		if cfg.GRPCServerName == "" || cfg.RootCAFile == "" || cfg.StateDir == "" || !filepath.IsAbs(cfg.StateDir) ||
-			(cfg.RegistrationToken != "" && cfg.RegistrationTokenFile != "") {
-			return Runner{}, errors.New("Runner gRPC requires server name, root CA, absolute state directory and at most one registration token source")
-		}
-		return cfg, nil
-	}
-	if cfg.ServerURL == "" || cfg.Token == "" {
-		return Runner{}, errors.New("YUANCI_SERVER_URL and YUANCI_RUNNER_TOKEN are required")
+	if cfg.GRPCAddress == "" || cfg.GRPCServerName == "" || cfg.RootCAFile == "" || cfg.StateDir == "" || !filepath.IsAbs(cfg.StateDir) ||
+		(cfg.RegistrationToken != "" && cfg.RegistrationTokenFile != "") {
+		return Runner{}, errors.New("Runner requires gRPC address, server name, root CA, absolute state directory and at most one registration token source")
 	}
 	return cfg, nil
 }

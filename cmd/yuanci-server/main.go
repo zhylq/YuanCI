@@ -90,7 +90,7 @@ func main() {
 		}
 		logger.Warn("authenticated preview enabled; legacy Runner API disabled; not production ready")
 	} else {
-		handler = httpapi.NewEvaluation(logger, store, cfg.RequestBodyLimit, cfg.RunnerSharedToken)
+		handler = httpapi.NewEvaluation(logger, store, cfg.RequestBodyLimit)
 	}
 
 	server := &http.Server{

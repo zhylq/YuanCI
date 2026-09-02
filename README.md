@@ -4,7 +4,7 @@
 
 YuanCI is a lightweight, self-hosted CI/CD control plane and runner for small and medium engineering teams. The project is being built around a Go modular monolith, isolated Go runners, PostgreSQL, and a React/TypeScript interface.
 
-> **Project status:** early development. The current milestone provides the architecture baseline, pipeline v1 compiler, run state machine, database schema, HTTP API foundation, certificate-bound Runner service and client with lease-loss cleanup, GitHub SCM adapter, web console shell, and Docker Compose packaging. The Compose mTLS migration and release qualification are still pending, and the project is not suitable for production workloads.
+> **Project status:** pre-alpha. The current milestone provides the architecture baseline, pipeline v1 compiler, run state machine, PostgreSQL queue, certificate-bound Runner service and client with lease-loss cleanup, GitHub SCM adapter, web console shell, and mTLS Docker Compose packaging. It has not completed webhook-to-build orchestration, log/secret delivery, the remaining SCM providers, CD, a 72-hour soak, or an external security review. It is not a production release.
 
 Database-backed startup requires an explicit mode: isolated insecure evaluation,
 or the new [GitHub authenticated preview](docs/auth-preview.zh-CN.md). The latter
@@ -41,9 +41,10 @@ go test ./...
 docker compose -f deploy/compose.quickstart.yml up --build
 ```
 
-Quickstart exposes the console and API at `http://localhost:8080`. Supply
-`YUANCI_POSTGRES_PASSWORD` and `YUANCI_RUNNER_SHARED_TOKEN` as long random
-values in the process environment; do not commit a populated `.env` file.
+Quickstart exposes the console and API at `http://localhost:8080`. Supply a
+long random `YUANCI_POSTGRES_PASSWORD`; one-shot PKI and Runner registration are
+created inside persistent Docker volumes. The plaintext registration token is
+deleted after enrollment. Do not commit a populated `.env` file.
 
 The quickstart profile mounts the Docker socket into the runner. It is intended only for local evaluation and trusted internal jobs. Production deployments must use `deploy/compose.production.yml` for the control plane and `deploy/compose.runner.yml` on a dedicated runner host.
 
@@ -68,6 +69,7 @@ YuanCI reads `.yuanci.yml` from the repository root. See [the example](examples/
 - [GitHub login preview deployment (Chinese, no host Go installation needed)](docs/auth-preview.zh-CN.md)
 - [Managed Git-platform settings wizard and Docker deployment](docs/managed-setup.zh-CN.md)
 - [GitHub App configuration, installation and repository import](docs/github-import.zh-CN.md)
+- [Runner mTLS PKI and split deployment operations](docs/runner-pki.md)
 
 ## License
 

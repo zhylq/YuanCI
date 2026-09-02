@@ -18,10 +18,13 @@ func TestRunnerIdentityEnrollmentRotationRevocationAndAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	standardPool := uuid.New()
+	var standardPool uuid.UUID
+	if err := store.pool.QueryRow(t.Context(), `SELECT id FROM runner_pools WHERE name='standard' AND pool_type='standard'`).Scan(&standardPool); err != nil {
+		t.Fatal(err)
+	}
 	privilegedPool := uuid.New()
 	if _, err := store.pool.Exec(t.Context(), `INSERT INTO runner_pools(id,name,pool_type) VALUES
-        ($1,'standard','standard'),($2,'privileged','privileged')`, standardPool, privilegedPool); err != nil {
+        ($1,'privileged','privileged')`, privilegedPool); err != nil {
 		t.Fatal(err)
 	}
 

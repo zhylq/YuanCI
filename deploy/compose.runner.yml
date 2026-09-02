@@ -1,14 +1,39 @@
 name: yuanci-runner
 
 services:
+  state-init:
+    image: ghcr.io/yuanci/yuanci-runner:${YUANCI_VERSION:-latest}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["mkdir -p /state/identity && chown -R 10001:10001 /state"]
+    volumes: ["runner-state:/state"]
+    network_mode: none
+    security_opt: ["no-new-privileges:true"]
+
   runner:
     image: ghcr.io/yuanci/yuanci-runner:${YUANCI_VERSION:-latest}
     restart: unless-stopped
     environment:
-      YUANCI_SERVER_URL: ${YUANCI_SERVER_URL:?set YUANCI_SERVER_URL}
-      YUANCI_RUNNER_TOKEN: ${YUANCI_RUNNER_SHARED_TOKEN:?set YUANCI_RUNNER_SHARED_TOKEN}
+      YUANCI_RUNNER_GRPC_ADDRESS: ${YUANCI_RUNNER_GRPC_ADDRESS:?set host:port}
+      YUANCI_RUNNER_GRPC_SERVER_NAME: ${YUANCI_RUNNER_GRPC_SERVER_NAME:?set certificate DNS name or IP}
+      YUANCI_RUNNER_ROOT_CA_FILE: /run/yuanci-pki/root-cert.pem
+      YUANCI_RUNNER_STATE_DIR: /var/lib/yuanci-runner/identity
+      YUANCI_RUNNER_REGISTRATION_TOKEN_FILE: /run/yuanci-bootstrap/registration-token
       YUANCI_RUNNER_NAME: ${YUANCI_RUNNER_NAME:-docker-runner-1}
       YUANCI_RUNNER_CAPACITY: ${YUANCI_RUNNER_CAPACITY:-2}
+      YUANCI_RUNNER_AVAILABLE_DISK_BYTES: ${YUANCI_RUNNER_AVAILABLE_DISK_BYTES:-10737418240}
+    user: "10001:10001"
+    group_add: ["${YUANCI_DOCKER_GID:?set Docker socket group ID}"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${YUANCI_RUNNER_ROOT_CA_PATH:?set absolute root-cert.pem path}:/run/yuanci-pki/root-cert.pem:ro
+      - ${YUANCI_RUNNER_BOOTSTRAP_DIR:?set writable token directory}:/run/yuanci-bootstrap
+      - runner-state:/var/lib/yuanci-runner
+    depends_on:
+      state-init: { condition: service_completed_successfully }
     security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=64m"]
+
+volumes:
+  runner-state:

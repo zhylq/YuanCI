@@ -52,6 +52,18 @@ func TestRunnerGRPCConfigurationIsAtomicAndRequiresPostgres(t *testing.T) {
 	if err := loadRunnerGRPC(&insecure); err == nil || !strings.Contains(err.Error(), "PostgreSQL") {
 		t.Fatalf("in-memory Runner PKI configuration accepted: %v", err)
 	}
+	evaluation := Server{Milestone0InsecureAPI: true, DatabaseURL: "postgres://example"}
+	if err := loadRunnerGRPC(&evaluation); err != nil || evaluation.RunnerGRPCAddress != ":9443" {
+		t.Fatalf("explicit PostgreSQL evaluation gRPC configuration rejected: %v", err)
+	}
+}
+
+func TestServerRejectsLegacyRunnerCredentials(t *testing.T) {
+	t.Setenv("YUANCI_DEV_IN_MEMORY", "true")
+	t.Setenv("YUANCI_RUNNER_SHARED_TOKEN", "obsolete")
+	if _, err := LoadServer(); err == nil || !strings.Contains(err.Error(), "no longer supported") {
+		t.Fatalf("legacy Runner credential accepted: %v", err)
+	}
 }
 
 func TestRunnerGRPCClientConfiguration(t *testing.T) {

@@ -21,13 +21,37 @@ services:
     restart: unless-stopped
     environment:
       YUANCI_DATABASE_URL: postgres://yuanci:${YUANCI_POSTGRES_PASSWORD}@postgres:5432/yuanci?sslmode=disable
-      YUANCI_RUNNER_SHARED_TOKEN: ${YUANCI_RUNNER_SHARED_TOKEN:?set YUANCI_RUNNER_SHARED_TOKEN}
-    ports: ["127.0.0.1:8080:8080"]
+      YUANCI_AUTHENTICATED_PREVIEW: "true"
+      YUANCI_AUTH_MANAGED_SETUP: "true"
+      YUANCI_PUBLIC_ORIGIN: ${YUANCI_PUBLIC_ORIGIN:?set the public HTTPS origin}
+      YUANCI_MASTER_KEY_FILE: /run/secrets/master_key
+      YUANCI_RUNNER_GRPC_ADDR: ":9443"
+      YUANCI_RUNNER_SERVER_CERT_FILE: /run/yuanci-pki/server-chain.pem
+      YUANCI_RUNNER_SERVER_KEY_FILE: /run/yuanci-pki/server-key.pem
+      YUANCI_RUNNER_CLIENT_CA_FILE: /run/yuanci-pki/root-cert.pem
+      YUANCI_RUNNER_ISSUER_CERT_FILE: /run/yuanci-pki/intermediate-cert.pem
+      YUANCI_RUNNER_ISSUER_KEY_FILE: /run/yuanci-pki/intermediate-key.pem
+    ports:
+      - "127.0.0.1:${YUANCI_HTTP_PORT:-8080}:8080"
+      - "${YUANCI_RUNNER_GRPC_BIND:-0.0.0.0}:${YUANCI_RUNNER_GRPC_PORT:-9443}:9443"
+    user: "10001:10001"
+    secrets: [master_key]
+    volumes:
+      - ${YUANCI_RUNNER_PKI_SERVER_DIR:?set absolute online PKI server directory}:/run/yuanci-pki:ro
     depends_on:
       postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
     security_opt: ["no-new-privileges:true"]
     read_only: true
     tmpfs: ["/tmp:size=64m"]
+
+secrets:
+  master_key:
+    file: ${YUANCI_MASTER_KEY_PATH:?set absolute master key file path}
 
 volumes:
   postgres-data:

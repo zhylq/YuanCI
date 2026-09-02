@@ -42,6 +42,7 @@ FROM docker:28-cli AS runner
 RUN addgroup -S yuanci && adduser -S -G yuanci -u 10001 yuanci
 COPY --from=build /out/yuanci-runner /usr/local/bin/yuanci-runner
 # Docker socket group IDs vary by host. Configure group_add in Compose instead of running privileged.
+USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/yuanci-runner"]
 
 FROM alpine:3.21 AS cli
