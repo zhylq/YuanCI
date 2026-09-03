@@ -3,6 +3,7 @@ package githubci
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -28,10 +29,13 @@ stages:
 type orchestratorStore struct {
 	repositoryID uuid.UUID
 	settings     project.AutomationSettings
+	policyErr    error
 	policyCalls  int
 	finalized    []githubhook.Finalize
+	finalizeErr  error
 	commit       RunCommit
 	commitResult RunResult
+	commitErr    error
 }
 
 func (s *orchestratorStore) RuntimeAutomationForGitHub(_ context.Context, externalID string) (uuid.UUID, project.AutomationSettings, error) {
@@ -39,17 +43,20 @@ func (s *orchestratorStore) RuntimeAutomationForGitHub(_ context.Context, extern
 	if externalID != "70" {
 		return uuid.Nil, project.AutomationSettings{}, errors.New("unexpected repository")
 	}
+	if s.policyErr != nil {
+		return uuid.Nil, project.AutomationSettings{}, s.policyErr
+	}
 	return s.repositoryID, s.settings, nil
 }
 
 func (s *orchestratorStore) CommitWebhookRun(_ context.Context, request RunCommit) (RunResult, error) {
 	s.commit = request
-	return s.commitResult, nil
+	return s.commitResult, s.commitErr
 }
 
 func (s *orchestratorStore) FinalizeWebhook(_ context.Context, request githubhook.Finalize) error {
 	s.finalized = append(s.finalized, request)
-	return nil
+	return s.finalizeErr
 }
 
 type pipelineFetcher struct {
@@ -58,13 +65,14 @@ type pipelineFetcher struct {
 	calls      int
 	event      scm.Event
 	path       string
+	err        error
 }
 
 func (f *pipelineFetcher) FetchPipeline(_ context.Context, event scm.Event, path string) (githubapp.Repository, []byte, error) {
 	f.calls++
 	f.event = event
 	f.path = path
-	return f.repository, append([]byte(nil), f.source...), nil
+	return f.repository, append([]byte(nil), f.source...), f.err
 }
 
 func TestOrchestratorClassifiesIgnoredDeliveriesBeforeFetching(t *testing.T) {
@@ -156,11 +164,127 @@ func TestOrchestratorRejectsRepositoryIdentityMismatch(t *testing.T) {
 	store := &orchestratorStore{repositoryID: uuid.New(), settings: settings}
 	fetcher := &pipelineFetcher{repository: githubapp.Repository{ID: uuid.New()}, source: []byte(orchestratorPipeline)}
 	orchestrator, _ := NewOrchestrator(store, fetcher)
-	if _, err := orchestrator.Process(t.Context(), workItem(webhookEvent(scm.EventPush))); !errors.Is(err, ErrRepositoryMismatch) {
-		t.Fatalf("expected repository mismatch, got %v", err)
+	outcome, err := orchestrator.Process(t.Context(), workItem(webhookEvent(scm.EventPush)))
+	if err != nil || outcome != OutcomeDeadLettered {
+		t.Fatalf("process mismatch: outcome=%q err=%v", outcome, err)
 	}
-	if len(store.finalized) != 0 || store.commit.RepositoryID != uuid.Nil {
-		t.Fatal("mismatched repository changed delivery or committed a run")
+	if len(store.finalized) != 1 || store.finalized[0].ErrorCode != "repository_mismatch" ||
+		store.finalized[0].State != githubhook.FinalDead || store.commit.RepositoryID != uuid.Nil {
+		t.Fatalf("mismatched repository was not safely dead-lettered: %#v", store.finalized)
+	}
+}
+
+func TestOrchestratorSchedulesBoundedDeterministicRetries(t *testing.T) {
+	now := time.Date(2026, 9, 3, 8, 0, 0, 0, time.UTC)
+	settings := project.DefaultAutomationSettings()
+	settings.Enabled = true
+	tests := []struct {
+		attempt int
+		delay   time.Duration
+	}{
+		{1, 5 * time.Second},
+		{2, 10 * time.Second},
+		{9, 15 * time.Minute},
+		{11, 15 * time.Minute},
+	}
+	for _, test := range tests {
+		t.Run(test.delay.String()+"-attempt", func(t *testing.T) {
+			store := &orchestratorStore{repositoryID: uuid.New(), settings: settings}
+			fetcher := &pipelineFetcher{err: errors.New("dial tcp token=super-secret")}
+			orchestrator, _ := NewOrchestrator(store, fetcher)
+			orchestrator.now = func() time.Time { return now }
+			item := workItem(webhookEvent(scm.EventPush))
+			item.Attempt = test.attempt
+			outcome, err := orchestrator.Process(t.Context(), item)
+			if err != nil || outcome != OutcomeRetryScheduled {
+				t.Fatalf("process: outcome=%q err=%v", outcome, err)
+			}
+			final := store.finalized[0]
+			if final.State != githubhook.FinalRetry || !final.NextAttempt.Equal(now.Add(test.delay)) ||
+				final.ErrorCode != "processing_unavailable" || final.ErrorSummary != "GitHub delivery processing is temporarily unavailable" {
+				t.Fatalf("unexpected retry finalization: %#v", final)
+			}
+		})
+	}
+}
+
+func TestOrchestratorDeadLettersPermanentAndExhaustedErrorsWithRedactedSummaries(t *testing.T) {
+	now := time.Date(2026, 9, 3, 8, 0, 0, 0, time.UTC)
+	settings := project.DefaultAutomationSettings()
+	settings.Enabled = true
+	tests := []struct {
+		name    string
+		attempt int
+		fetcher *pipelineFetcher
+		code    string
+		summary string
+	}{
+		{"missing pipeline", 1, &pipelineFetcher{err: errors.Join(scm.ErrNotFound, errors.New("Authorization: Bearer secret-token"))}, "pipeline_not_found", "Pipeline configuration was not found at the event commit"},
+		{"invalid pipeline", 1, &pipelineFetcher{repository: githubapp.Repository{ID: uuid.Nil}, source: []byte("password: hunter2")}, "pipeline_invalid", "Pipeline configuration is invalid"},
+		{"retry exhausted", githubhook.MaxAttempts, &pipelineFetcher{err: errors.New("postgres password=database-secret")}, "retry_exhausted", "GitHub delivery processing failed after the retry limit"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repositoryID := uuid.New()
+			store := &orchestratorStore{repositoryID: repositoryID, settings: settings}
+			if test.name == "invalid pipeline" {
+				test.fetcher.repository.ID = repositoryID
+			}
+			orchestrator, _ := NewOrchestrator(store, test.fetcher)
+			orchestrator.now = func() time.Time { return now }
+			item := workItem(webhookEvent(scm.EventPush))
+			item.Attempt = test.attempt
+			outcome, err := orchestrator.Process(t.Context(), item)
+			if err != nil || outcome != OutcomeDeadLettered {
+				t.Fatalf("process: outcome=%q err=%v", outcome, err)
+			}
+			final := store.finalized[0]
+			if final.State != githubhook.FinalDead || !final.NextAttempt.IsZero() ||
+				final.ErrorCode != test.code || final.ErrorSummary != test.summary {
+				t.Fatalf("unexpected dead-letter finalization: %#v", final)
+			}
+		})
+	}
+}
+
+func TestOrchestratorReturnsFinalizationFailure(t *testing.T) {
+	finalizeErr := errors.New("database unavailable")
+	settings := project.DefaultAutomationSettings()
+	settings.Enabled = true
+	store := &orchestratorStore{repositoryID: uuid.New(), settings: settings, finalizeErr: finalizeErr}
+	orchestrator, _ := NewOrchestrator(store, &pipelineFetcher{err: scm.ErrRateLimited})
+	if _, err := orchestrator.Process(t.Context(), workItem(webhookEvent(scm.EventPush))); !errors.Is(err, finalizeErr) {
+		t.Fatalf("expected finalization error, got %v", err)
+	}
+}
+
+func TestClassifyFailureUsesSafeStableCategories(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		transient bool
+		code      string
+	}{
+		{"rate limit", fmt.Errorf("remote detail with token: %w", scm.ErrRateLimited), true, "github_rate_limited"},
+		{"deadline", context.DeadlineExceeded, true, "processing_interrupted"},
+		{"credential", githubapp.ErrCredentialUnavailable, false, "credential_unavailable"},
+		{"not found", scm.ErrNotFound, false, "pipeline_not_found"},
+		{"invalid pipeline", ErrInvalidPipeline, false, "pipeline_invalid"},
+		{"repository mismatch", ErrRepositoryMismatch, false, "repository_mismatch"},
+		{"repository unavailable", ErrRepositoryUnavailable, false, "repository_unavailable"},
+		{"invalid delivery", ErrInvalidDelivery, false, "delivery_invalid"},
+		{"unknown store error", errors.New("dsn=postgres://secret"), true, "processing_unavailable"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := classifyFailure(test.err)
+			if got.transient != test.transient || got.code != test.code || got.summary == "" || len(got.summary) > 1024 {
+				t.Fatalf("classifyFailure(%v)=%#v", test.err, got)
+			}
+			if got.summary == test.err.Error() {
+				t.Fatal("persisted summary reused the raw error")
+			}
+		})
 	}
 }
 
@@ -190,5 +314,5 @@ func forkEvent() scm.Event {
 }
 
 func workItem(event scm.Event) githubhook.WorkItem {
-	return githubhook.WorkItem{ID: uuid.New(), LeaseID: uuid.New(), Event: event, LeaseExpires: time.Now().Add(time.Minute)}
+	return githubhook.WorkItem{ID: uuid.New(), LeaseID: uuid.New(), Event: event, Attempt: 1, LeaseExpires: time.Now().Add(time.Minute)}
 }

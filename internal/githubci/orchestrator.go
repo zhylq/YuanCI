@@ -3,6 +3,7 @@ package githubci
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,12 @@ import (
 )
 
 var ErrInvalidDelivery = errors.New("invalid GitHub CI delivery")
+var ErrInvalidPipeline = errors.New("invalid GitHub pipeline configuration")
+
+const (
+	retryBaseDelay = 5 * time.Second
+	retryMaxDelay  = 15 * time.Minute
+)
 
 type Outcome string
 
@@ -23,14 +30,16 @@ const (
 	OutcomeIgnoredTrigger  Outcome = "ignored_trigger"
 	OutcomeRunCreated      Outcome = "run_created"
 	OutcomeRunReused       Outcome = "run_reused"
+	OutcomeRetryScheduled  Outcome = "retry_scheduled"
+	OutcomeDeadLettered    Outcome = "dead_lettered"
 )
 
 type PipelineFetcher interface {
 	FetchPipeline(context.Context, scm.Event, string) (githubapp.Repository, []byte, error)
 }
 
-// Orchestrator processes one already-claimed delivery. Retry and dead-letter
-// decisions intentionally remain outside this single-delivery boundary.
+// Orchestrator processes and finalizes one already-claimed delivery. Claiming,
+// lease recovery and the worker loop remain outside this boundary.
 type Orchestrator struct {
 	store   Store
 	fetcher PipelineFetcher
@@ -45,8 +54,19 @@ func NewOrchestrator(store Store, fetcher PipelineFetcher) (*Orchestrator, error
 }
 
 func (o *Orchestrator) Process(ctx context.Context, delivery githubhook.WorkItem) (Outcome, error) {
+	outcome, err := o.process(ctx, delivery)
+	if err == nil {
+		return outcome, nil
+	}
+	if delivery.ID == uuid.Nil || delivery.LeaseID == uuid.Nil {
+		return "", ErrInvalidDelivery
+	}
+	return o.finalizeFailure(ctx, delivery, err)
+}
+
+func (o *Orchestrator) process(ctx context.Context, delivery githubhook.WorkItem) (Outcome, error) {
 	if delivery.ID == uuid.Nil || delivery.LeaseID == uuid.Nil || delivery.Event.Provider != scm.GitHub ||
-		delivery.Event.Repository.ExternalID == "" {
+		delivery.Event.Repository.ExternalID == "" || delivery.Attempt < 1 {
 		return "", ErrInvalidDelivery
 	}
 	repositoryID, settings, err := o.store.RuntimeAutomationForGitHub(ctx, delivery.Event.Repository.ExternalID)
@@ -72,7 +92,7 @@ func (o *Orchestrator) Process(ctx context.Context, delivery githubhook.WorkItem
 	now := o.now().UTC()
 	plan, err := pipeline.Compile(source, now)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %v", ErrInvalidPipeline, err)
 	}
 	result, err := o.store.CommitWebhookRun(ctx, RunCommit{
 		Delivery: delivery, RepositoryID: repositoryID, PipelinePath: settings.PipelinePath,
@@ -85,6 +105,72 @@ func (o *Orchestrator) Process(ctx context.Context, delivery githubhook.WorkItem
 		return OutcomeRunCreated, nil
 	}
 	return OutcomeRunReused, nil
+}
+
+func (o *Orchestrator) finalizeFailure(ctx context.Context, delivery githubhook.WorkItem, processErr error) (Outcome, error) {
+	failure := classifyFailure(processErr)
+	final := githubhook.Finalize{
+		ID: delivery.ID, LeaseID: delivery.LeaseID,
+		ErrorCode: failure.code, ErrorSummary: failure.summary,
+	}
+	outcome := OutcomeDeadLettered
+	if failure.transient && delivery.Attempt < githubhook.MaxAttempts {
+		final.State = githubhook.FinalRetry
+		final.NextAttempt = o.now().UTC().Add(retryDelay(delivery.Attempt))
+		outcome = OutcomeRetryScheduled
+	} else {
+		final.State = githubhook.FinalDead
+		if failure.transient {
+			final.ErrorCode = "retry_exhausted"
+			final.ErrorSummary = "GitHub delivery processing failed after the retry limit"
+		}
+	}
+	if err := o.store.FinalizeWebhook(ctx, final); err != nil {
+		return "", fmt.Errorf("finalize GitHub delivery failure: %w", err)
+	}
+	return outcome, nil
+}
+
+type failureClass struct {
+	transient bool
+	code      string
+	summary   string
+}
+
+func classifyFailure(err error) failureClass {
+	switch {
+	case errors.Is(err, scm.ErrRateLimited):
+		return failureClass{true, "github_rate_limited", "GitHub API rate limit delayed delivery processing"}
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return failureClass{true, "processing_interrupted", "GitHub delivery processing was interrupted"}
+	case errors.Is(err, scm.ErrUnauthorized), errors.Is(err, githubapp.ErrCredentialUnavailable):
+		return failureClass{false, "credential_unavailable", "GitHub repository credential is unavailable"}
+	case errors.Is(err, scm.ErrNotFound):
+		return failureClass{false, "pipeline_not_found", "Pipeline configuration was not found at the event commit"}
+	case errors.Is(err, ErrInvalidPipeline):
+		return failureClass{false, "pipeline_invalid", "Pipeline configuration is invalid"}
+	case errors.Is(err, ErrRepositoryMismatch):
+		return failureClass{false, "repository_mismatch", "GitHub repository identity changed during delivery processing"}
+	case errors.Is(err, ErrRepositoryUnavailable), errors.Is(err, githubapp.ErrRepositoryUnavailable):
+		return failureClass{false, "repository_unavailable", "GitHub repository is unavailable for automation"}
+	case errors.Is(err, ErrInvalidDelivery), errors.Is(err, ErrInvalidCommit),
+		errors.Is(err, githubapp.ErrInvalidEvent), errors.Is(err, githubapp.ErrExternalFork),
+		errors.Is(err, project.ErrAutomationInvalid), errors.Is(err, project.ErrAutomationNotReady):
+		return failureClass{false, "delivery_invalid", "GitHub delivery cannot be processed safely"}
+	default:
+		return failureClass{true, "processing_unavailable", "GitHub delivery processing is temporarily unavailable"}
+	}
+}
+
+func retryDelay(attempt int) time.Duration {
+	delay := retryBaseDelay
+	for current := 1; current < attempt && delay < retryMaxDelay; current++ {
+		delay *= 2
+		if delay > retryMaxDelay {
+			delay = retryMaxDelay
+		}
+	}
+	return delay
 }
 
 func (o *Orchestrator) ignore(ctx context.Context, delivery githubhook.WorkItem, outcome Outcome, code, summary string) (Outcome, error) {

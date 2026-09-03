@@ -726,3 +726,22 @@ the batch outcome and remaining work.
   specific PostgreSQL 17 integration test passed, as did focused `go vet` and
   `git diff --check`. GH-01 is not a phase gate, so no full repository suite,
   frontend build, Compose validation or deployment-image build was run.
+
+## 2026-09-03 — GH-02 webhook failure policy
+
+- Extended the single-delivery orchestrator with explicit transient and
+  permanent failure categories. Rate limits, interruption and unknown
+  infrastructure failures retry safely; invalid delivery/configuration,
+  unavailable credentials or repositories, missing pipeline files and trusted
+  repository mismatches dead-letter immediately.
+- Retries use a deterministic exponential schedule starting at five seconds,
+  capped at fifteen minutes, and stop at the existing twelve-attempt limit.
+  Exhausted deliveries receive a distinct stable terminal classification.
+- Delivery finalization persists only bounded stable codes and fixed summaries;
+  raw provider, database, parser and credential-bearing error text is never
+  copied into the inbox record. Unit coverage includes secret-bearing wrapped
+  errors, permanent failures, retry exhaustion and finalization failure.
+- The focused `internal/githubci` test and vet runs passed in the pinned Go 1.27
+  container, followed by `git diff --check`. GH-02 is not a phase gate, so no
+  full repository suite, frontend build, Compose validation or deployment-image
+  build was run.
