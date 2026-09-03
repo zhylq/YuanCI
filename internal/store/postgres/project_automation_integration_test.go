@@ -4,10 +4,99 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/yuanci/yuanci/internal/authorization"
 	"github.com/yuanci/yuanci/internal/project"
 )
+
+func bindGitHubAutomation(t *testing.T, f accessFixture) uuid.UUID {
+	t.Helper()
+	loginID, appRevision := uuid.New(), uuid.New()
+	if _, err := f.store.pool.Exec(t.Context(), `INSERT INTO login_configs
+		(id,client_id,encrypted_secret,bootstrap_subject,status,created_by)
+		VALUES($1,'Iv1.test','{}','1','active',$2)`, loginID, f.admin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.pool.Exec(t.Context(), `INSERT INTO github_app_configs
+		(id,login_config_id,app_id,client_id,slug,encrypted_key)
+		VALUES($1,$2,99,'Iv1.test','fixture','{}')`, appRevision, loginID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.pool.Exec(t.Context(), `INSERT INTO github_accounts(account_id,organization_id) VALUES(12,$1)`, f.organization); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.pool.Exec(t.Context(), `INSERT INTO github_installations(id,app_id,account_id) VALUES(34,99,12)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.pool.Exec(t.Context(), `UPDATE repositories SET external_id='70',github_installation_id=34 WHERE id=$1`, f.project); err != nil {
+		t.Fatal(err)
+	}
+	return appRevision
+}
+
+func automationValidation(projectID, appRevision uuid.UUID, revision int64) project.AutomationValidation {
+	return project.AutomationValidation{RepositoryID: projectID, AppRevision: appRevision, SettingsRevision: revision,
+		PipelinePath: project.DefaultPipelinePath, CommitSHA: "0123456789abcdef0123456789abcdef01234567",
+		ConfigSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		PipelineName: "validated", ValidatedAt: time.Now().UTC()}
+}
+
+func TestProjectAutomationValidationProofGatesEnablement(t *testing.T) {
+	f := newAccessFixture(t)
+	appRevision := bindGitHubAutomation(t, f)
+	grantProject(t, f, authorization.Viewer)
+	if _, err := f.store.GetProjectAutomationValidationTarget(t.Context(), f.memberSession.Token, f.project, 0); !errors.Is(err, authorization.ErrForbidden) {
+		t.Fatalf("viewer validated automation: %v", err)
+	}
+	grantProject(t, f, authorization.Maintainer)
+	target, err := f.store.GetProjectAutomationValidationTarget(t.Context(), f.memberSession.Token, f.project, 0)
+	if err != nil || target.RepositoryExternalID != "70" || target.PipelinePath != project.DefaultPipelinePath || target.SettingsRevision != 0 {
+		t.Fatalf("validation target: %#v %v", target, err)
+	}
+	proof := automationValidation(f.project, appRevision, 0)
+	if err := f.store.RecordProjectAutomationValidation(t.Context(), f.memberSession.Token, proof); err != nil {
+		t.Fatal(err)
+	}
+	enabled := automationUpdate(0)
+	enabled.Enabled = true
+	enabled.PipelinePath = project.DefaultPipelinePath
+	settings, err := f.store.UpdateProjectAutomation(t.Context(), f.memberSession.Token, f.project, enabled)
+	if err != nil || !settings.Enabled || settings.Revision != 1 {
+		t.Fatalf("validated enable: %#v %v", settings, err)
+	}
+	disabled := enabled
+	disabled.Enabled, disabled.ExpectedRevision = false, settings.Revision
+	settings, err = f.store.UpdateProjectAutomation(t.Context(), f.memberSession.Token, f.project, disabled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled.ExpectedRevision = settings.Revision
+	if _, err := f.store.UpdateProjectAutomation(t.Context(), f.memberSession.Token, f.project, enabled); !errors.Is(err, project.ErrAutomationNotReady) {
+		t.Fatalf("stale proof enabled automation: %v", err)
+	}
+	proof.SettingsRevision = settings.Revision
+	proof.AppRevision = uuid.New()
+	if err := f.store.RecordProjectAutomationValidation(t.Context(), f.memberSession.Token, proof); !errors.Is(err, project.ErrAutomationConflict) {
+		t.Fatalf("wrong App revision proof recorded: %v", err)
+	}
+}
+
+func TestProjectAutomationValidationAuditFailureRollsBack(t *testing.T) {
+	f := newAccessFixture(t)
+	appRevision := bindGitHubAutomation(t, f)
+	grantProject(t, f, authorization.Maintainer)
+	rejectAudit(t, f.store)
+	if err := f.store.RecordProjectAutomationValidation(t.Context(), f.memberSession.Token,
+		automationValidation(f.project, appRevision, 0)); err == nil {
+		t.Fatal("audit failure did not fail validation")
+	}
+	var rows int
+	if err := f.store.pool.QueryRow(t.Context(), `SELECT count(*) FROM repository_automation_validations WHERE repository_id=$1`, f.project).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("partial validation persisted: rows=%d error=%v", rows, err)
+	}
+}
 
 func automationUpdate(revision int64) project.AutomationUpdate {
 	return project.AutomationUpdate{

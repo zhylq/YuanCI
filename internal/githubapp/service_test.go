@@ -35,6 +35,7 @@ type serviceProvider struct {
 	name         string
 	path         string
 	sha          string
+	commitSHA    string
 }
 
 func (p *serviceProvider) InstallationToken(_ context.Context, _ string, key []byte, installID, repositoryID string) ([]byte, time.Time, error) {
@@ -47,6 +48,38 @@ func (p *serviceProvider) InstallationToken(_ context.Context, _ string, key []b
 func (p *serviceProvider) RepositoryFile(_ context.Context, _ []byte, owner, name, path, sha string) ([]byte, error) {
 	p.owner, p.name, p.path, p.sha = owner, name, path, sha
 	return p.content, nil
+}
+
+func (p *serviceProvider) RepositoryCommit(_ context.Context, _ []byte, owner, name, ref string) (string, error) {
+	p.owner, p.name = owner, name
+	return p.commitSHA, nil
+}
+
+func TestValidateDefaultPipelineReturnsImmutableProof(t *testing.T) {
+	master := []byte(strings.Repeat("m", 32))
+	cipher, err := secrets.NewCipher(master)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appID := uuid.New()
+	envelope, err := cipher.Seal([]byte("private-app-key"), KeyAAD(appID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := Repository{ID: uuid.New(), ExternalID: "70", Owner: "trusted", Name: "repository", DefaultBranch: "main",
+		InstallationID: "34", AppID: appID, AppClientID: "Iv1.test", EncryptedKey: envelope}
+	content := []byte("version: v1\nname: validated\nstages:\n  - name: test\n    jobs:\n      - name: unit\n        image: alpine\n        steps: [{name: test, commands: ['true']}]\n")
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	provider := &serviceProvider{token: []byte("temporary-installation-token"), expiry: time.Now().Add(50 * time.Minute), content: content, commitSHA: sha}
+	service, err := New(serviceStore{repository: repository}, cipher, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := service.ValidateDefaultPipeline(t.Context(), "70", "ci/pipeline.yml")
+	if err != nil || proof.RepositoryID != repository.ID || proof.AppRevision != appID || proof.CommitSHA != sha ||
+		proof.PipelineName != "validated" || proof.ConfigSHA256 == "" || provider.sha != sha {
+		t.Fatalf("validation proof: %#v error=%v provider=%#v", proof, err, provider)
+	}
 }
 
 func TestFetchPipelineUsesTrustedRepositoryAndImmutableSHA(t *testing.T) {

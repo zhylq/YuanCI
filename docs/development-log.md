@@ -779,3 +779,23 @@ the batch outcome and remaining work.
   rollback when audit persistence fails. Focused package tests, vet and
   `git diff --check` passed. GH-04 is not a phase gate, so no full repository
   suite, frontend build, Compose validation or deployment-image build was run.
+
+## 2026-09-03 — GH-05 authenticated automation validation and enablement
+
+- Added authenticated project automation read/update and immutable pipeline
+  validation endpoints. Browser mutations retain exact-Origin, session-bound
+  CSRF and live `repository.manage` authorization checks.
+- Validation resolves the trusted GitHub default branch to one exact commit,
+  fetches and compiles only at that SHA, and persists a bounded proof containing
+  the settings revision, active GitHub App revision, path, commit SHA and config
+  hash. Remote work occurs outside database transactions.
+- Enablement now uses the repository-scoped compare-and-swap lock and accepts a
+  request only when its expected revision, pipeline path and current App match a
+  successfully committed proof. Concurrent settings, identity, installation or
+  App changes invalidate the operation; validation and update audits are atomic.
+- Focused service/provider, HTTP, project and PostgreSQL 17 tests cover immutable
+  SHA retrieval, RBAC, Origin/CSRF rejection, stale revisions, unvalidated and
+  stale-proof enablement, safe provider failures, migration, and audit rollback.
+  Focused package tests, vet and `git diff --check` passed. GH-05 is not a phase
+  gate, so no full repository suite, frontend build, Compose validation or
+  deployment-image build was run.

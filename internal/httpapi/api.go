@@ -32,6 +32,7 @@ type API struct {
 	sessions    identity.Sessions
 	authorized  runmodel.AuthorizedStore
 	projects    project.Store
+	automation  project.AutomationStore
 	origin      string
 	oauth       *GitHubLogin
 	githubHooks *githubhook.Service

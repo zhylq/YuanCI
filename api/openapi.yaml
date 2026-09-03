@@ -189,6 +189,62 @@ paths:
         '401': { description: Session invalid or expired }
         '404': { description: Project unavailable or access denied }
         '503': { description: Query unavailable }
+  /projects/{projectID}/automation:
+    get:
+      operationId: getProjectAutomation
+      description: Read the provider-neutral automatic-build policy. Revision zero is the safe synthesized disabled default.
+      parameters:
+        - { $ref: '#/components/parameters/ProjectID' }
+      responses:
+        '200': { description: Current settings, content: { application/json: { schema: { $ref: '#/components/schemas/AutomationSettings' } } } }
+        '401': { description: Session invalid or expired }
+        '404': { description: Project unavailable or access denied }
+        '503': { description: Query unavailable }
+    put:
+      operationId: updateProjectAutomation
+      description: Compare-and-swap update. Enabling requires a validation proof for the same settings revision, pipeline path and active GitHub App revision.
+      parameters:
+        - { $ref: '#/components/parameters/ProjectID' }
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+        - { $ref: '#/components/parameters/CSRFToken' }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AutomationUpdate' } } }
+      responses:
+        '200': { description: Updated settings, content: { application/json: { schema: { $ref: '#/components/schemas/AutomationSettings' } } } }
+        '401': { description: Session invalid or expired }
+        '403': { description: Origin or CSRF validation failed }
+        '404': { description: Project unavailable or repository.manage denied }
+        '409': { description: Revision conflict or current settings/App have not been validated }
+        '422': { description: Invalid settings }
+        '503': { description: Update or audit unavailable; transaction rolled back }
+  /projects/{projectID}/pipeline/validate:
+    post:
+      operationId: validateProjectPipeline
+      description: Resolve the trusted GitHub default branch to one commit, fetch and compile only at that SHA, then atomically record a proof bound to the settings and active App revisions. Does not create a Run.
+      parameters:
+        - { $ref: '#/components/parameters/ProjectID' }
+        - { $ref: '#/components/parameters/BrowserOrigin' }
+        - { $ref: '#/components/parameters/CSRFToken' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_revision]
+              properties: { expected_revision: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: Immutable validation proof, content: { application/json: { schema: { $ref: '#/components/schemas/AutomationValidation' } } } }
+        '401': { description: Session invalid or expired }
+        '403': { description: Origin or CSRF validation failed }
+        '404': { description: Project unavailable or repository.manage denied }
+        '409': { description: Settings/App revision conflict or GitHub installation unavailable }
+        '422': { description: Pipeline validation errors }
+        '429': { description: GitHub rate limited }
+        '502': { description: GitHub validation failed; no proof stored }
+        '503': { description: Store or audit unavailable; no proof stored }
   /auth/status:
     get:
       operationId: getAuthenticationStatus
@@ -599,6 +655,41 @@ components:
       properties:
         items: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/ProjectRunSummary' } }
         next_cursor: { type: string, maxLength: 160 }
+    AutomationSettings:
+      type: object
+      additionalProperties: false
+      required: [enabled, pipeline_path, trigger_push, trigger_tag, trigger_pull_request, cancel_older_commits, revision]
+      properties:
+        enabled: { type: boolean }
+        pipeline_path: { type: string, minLength: 1, maxLength: 256, description: Normalized repository-relative .yml or .yaml path without traversal, backslashes or control characters }
+        trigger_push: { type: boolean }
+        trigger_tag: { type: boolean }
+        trigger_pull_request: { type: boolean }
+        cancel_older_commits: { type: boolean }
+        revision: { type: integer, minimum: 0 }
+    AutomationUpdate:
+      type: object
+      additionalProperties: false
+      required: [enabled, pipeline_path, trigger_push, trigger_tag, trigger_pull_request, cancel_older_commits, expected_revision]
+      properties:
+        enabled: { type: boolean }
+        pipeline_path: { type: string, minLength: 1, maxLength: 256 }
+        trigger_push: { type: boolean }
+        trigger_tag: { type: boolean }
+        trigger_pull_request: { type: boolean }
+        cancel_older_commits: { type: boolean }
+        expected_revision: { type: integer, minimum: 0 }
+    AutomationValidation:
+      type: object
+      additionalProperties: false
+      required: [valid, settings_revision, commit_sha, config_sha256, pipeline_name, errors]
+      properties:
+        valid: { type: boolean, const: true }
+        settings_revision: { type: integer, minimum: 0 }
+        commit_sha: { type: string, pattern: '^[0-9a-f]{40}$' }
+        config_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        pipeline_name: { type: string, minLength: 1, maxLength: 128 }
+        errors: { type: array, maxItems: 0 }
     LoginConfig:
       type: object
       properties:

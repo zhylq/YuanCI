@@ -324,6 +324,48 @@ func (g *GitHub) RepositoryFile(ctx context.Context, token []byte, owner, name, 
 	return content, nil
 }
 
+func (g *GitHub) RepositoryCommit(ctx context.Context, token []byte, owner, name, ref string) (string, error) {
+	if len(token) < 1 || len(token) > 8192 || bytes.IndexFunc(token, func(r rune) bool { return r == ' ' || r == '\r' || r == '\n' || r == 0 }) >= 0 ||
+		!repoPattern.MatchString(owner) || !repoPattern.MatchString(name) || owner == "." || owner == ".." || name == "." || name == ".." ||
+		len(ref) < 1 || len(ref) > 255 || strings.HasPrefix(ref, "/") || strings.ContainsAny(ref, "\r\n\x00") {
+		return "", ErrConfig
+	}
+	if _, err := runtimeRepositoryPath(ref); err != nil {
+		return "", err
+	}
+	endpoint, err := url.Parse("https://api.github.com/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/commits/" + url.PathEscape(ref))
+	if err != nil {
+		return "", ErrConfig
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return "", ErrRemote
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("X-GitHub-Api-Version", "2026-03-10")
+	request.Header.Set("Authorization", "Bearer "+string(token))
+	request.Header.Set("User-Agent", "YuanCI/0.1")
+	response, err := g.client.Do(request)
+	if err != nil {
+		return "", ErrRemote
+	}
+	defer response.Body.Close()
+	if err := runtimeResponseError(response, http.StatusOK); err != nil {
+		return "", err
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, (64<<10)+1))
+	if err != nil || len(data) > 64<<10 {
+		return "", ErrRemote
+	}
+	var reply struct {
+		SHA string `json:"sha"`
+	}
+	if json.Unmarshal(data, &reply) != nil || !commitPattern.MatchString(reply.SHA) {
+		return "", ErrRemote
+	}
+	return strings.ToLower(reply.SHA), nil
+}
+
 func runtimeRepositoryPath(value string) (string, error) {
 	if value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
 		return "", ErrConfig

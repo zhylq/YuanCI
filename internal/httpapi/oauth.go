@@ -1,16 +1,22 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
 
 	"github.com/google/uuid"
 
+	"github.com/yuanci/yuanci/internal/githubapp"
 	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/integration"
 	"github.com/yuanci/yuanci/internal/provisioning"
 )
+
+type AutomationPipeline interface {
+	ValidateDefaultPipeline(context.Context, string, string) (githubapp.ValidationProof, error)
+}
 
 // GitHubLogin is installed only on the authenticated surface, never evaluation.
 type GitHubLogin struct {
@@ -18,6 +24,7 @@ type GitHubLogin struct {
 	Provider     identity.OAuthProvider
 	Managed      *provisioning.Service
 	Integrations *integration.Service
+	Pipeline     AutomationPipeline
 }
 
 func (a *API) startLogin(w http.ResponseWriter, r *http.Request) {

@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/yuanci/yuanci/internal/identity"
+	"github.com/yuanci/yuanci/internal/pipeline"
 	"github.com/yuanci/yuanci/internal/project"
 	"github.com/yuanci/yuanci/internal/scm"
 	"github.com/yuanci/yuanci/internal/secrets"
@@ -43,7 +45,16 @@ type Store interface {
 
 type Provider interface {
 	InstallationToken(context.Context, string, []byte, string, string) ([]byte, time.Time, error)
+	RepositoryCommit(context.Context, []byte, string, string, string) (string, error)
 	RepositoryFile(context.Context, []byte, string, string, string, string) ([]byte, error)
+}
+
+type ValidationProof struct {
+	RepositoryID uuid.UUID
+	AppRevision  uuid.UUID
+	CommitSHA    string
+	ConfigSHA256 string
+	PipelineName string
 }
 
 type Service struct {
@@ -102,4 +113,52 @@ func (s *Service) FetchPipeline(ctx context.Context, event scm.Event, pipelinePa
 		return Repository{}, nil, fmt.Errorf("read GitHub pipeline at event commit: %w", err)
 	}
 	return repository, content, nil
+}
+
+// ValidateDefaultPipeline resolves the mutable default branch once, then reads
+// and compiles the configuration only at the returned immutable commit SHA.
+func (s *Service) ValidateDefaultPipeline(ctx context.Context, externalID, pipelinePath string) (ValidationProof, error) {
+	if !identity.ValidGitHubSubject(externalID) || project.ValidatePipelinePath(pipelinePath) != nil {
+		return ValidationProof{}, ErrInvalidEvent
+	}
+	repository, err := s.store.ResolveGitHubRepository(ctx, externalID)
+	if err != nil {
+		return ValidationProof{}, err
+	}
+	if repository.DefaultBranch == "" || len(repository.DefaultBranch) > 255 || strings.ContainsAny(repository.DefaultBranch, "\r\n\x00") {
+		return ValidationProof{}, ErrRepositoryUnavailable
+	}
+	key, err := s.cipher.Open(repository.EncryptedKey, KeyAAD(repository.AppID))
+	if err != nil {
+		return ValidationProof{}, ErrCredentialUnavailable
+	}
+	defer clear(key)
+	token, expiry, err := s.provider.InstallationToken(ctx, repository.AppClientID, key,
+		repository.InstallationID, repository.ExternalID)
+	if err != nil {
+		return ValidationProof{}, fmt.Errorf("mint GitHub installation token: %w", err)
+	}
+	defer clear(token)
+	now := s.now()
+	if len(token) == 0 || !expiry.After(now.Add(30*time.Second)) || expiry.After(now.Add(65*time.Minute)) {
+		return ValidationProof{}, ErrCredentialUnavailable
+	}
+	commitSHA, err := s.provider.RepositoryCommit(ctx, token, repository.Owner, repository.Name, repository.DefaultBranch)
+	if err != nil || !shaPattern.MatchString(commitSHA) {
+		if err == nil {
+			err = ErrRepositoryUnavailable
+		}
+		return ValidationProof{}, fmt.Errorf("resolve GitHub default branch: %w", err)
+	}
+	commitSHA = strings.ToLower(commitSHA)
+	content, err := s.provider.RepositoryFile(ctx, token, repository.Owner, repository.Name, pipelinePath, commitSHA)
+	if err != nil {
+		return ValidationProof{}, fmt.Errorf("read GitHub pipeline at validated commit: %w", err)
+	}
+	plan, err := pipeline.Compile(content, now)
+	if err != nil {
+		return ValidationProof{}, err
+	}
+	return ValidationProof{RepositoryID: repository.ID, AppRevision: repository.AppID, CommitSHA: commitSHA,
+		ConfigSHA256: plan.ConfigSHA256, PipelineName: plan.Name}, nil
 }

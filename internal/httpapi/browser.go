@@ -34,12 +34,16 @@ func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend Browser
 		return nil, errors.New("authenticated API requires all dependencies and a request limit")
 	}
 	a := &API{logger: logger, store: store, sessions: backend, authorized: backend, projects: backend, bodyLimit: bodyLimit, origin: u.Scheme + "://" + u.Host, startedAt: time.Now().UTC()}
+	a.automation, _ = backend.(project.AutomationStore)
 	if len(login) > 1 || (len(login) == 1 && (login[0].Store == nil || (login[0].Provider == nil && login[0].Managed == nil) || (login[0].Provider != nil && login[0].Managed != nil))) {
 		return nil, errors.New("login requires one complete provider and flow store")
 	}
 	mux := http.NewServeMux()
 	if len(login) == 1 {
 		a.oauth = &login[0]
+		if a.oauth.Pipeline != nil && a.automation == nil {
+			return nil, errors.New("GitHub automation validation requires an automation store")
+		}
 		mux.HandleFunc("GET /api/v1/auth/github/start", a.startLogin)
 		mux.HandleFunc("GET /api/v1/auth/github/callback", a.finishLogin)
 		mux.HandleFunc("POST /api/v1/auth/github/link", a.browserAuth(a.linkIdentity))
@@ -79,6 +83,13 @@ func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend Browser
 	mux.HandleFunc("GET /api/v1/projects", a.browserAuth(a.listProjects))
 	mux.HandleFunc("GET /api/v1/projects/{projectID}", a.browserAuth(a.projectDetail))
 	mux.HandleFunc("GET /api/v1/projects/{projectID}/runs", a.browserAuth(a.projectRuns))
+	if a.automation != nil {
+		mux.HandleFunc("GET /api/v1/projects/{projectID}/automation", a.browserAuth(a.projectAutomation))
+		mux.HandleFunc("PUT /api/v1/projects/{projectID}/automation", a.browserAuth(a.updateProjectAutomation))
+		if a.oauth != nil && a.oauth.Pipeline != nil {
+			mux.HandleFunc("POST /api/v1/projects/{projectID}/pipeline/validate", a.browserAuth(a.validateProjectAutomation))
+		}
+	}
 	mux.HandleFunc("DELETE /api/v1/session", a.browserAuth(a.logout))
 	mux.HandleFunc("POST /api/v1/pipelines/validate", a.browserAuth(a.validatePipeline))
 	mux.HandleFunc("GET /api/v1/runs", a.browserAuth(a.listRuns))

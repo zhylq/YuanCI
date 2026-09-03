@@ -196,6 +196,13 @@ func TestGitHubRepositoryScopedTokenAndImmutableFile(t *testing.T) {
 			}
 			return reply(http.StatusCreated, `{"token":"`+token+`","expires_at":"`+expires.Format(time.RFC3339)+`","repositories":[{"id":70}],"permissions":{"contents":"read","metadata":"read"}}`), nil
 		case 2:
+			if r.Method != http.MethodGet || r.URL.Path != "/repos/trusted/repo/commits/release/1" ||
+				r.URL.EscapedPath() != "/repos/trusted/repo/commits/release%2F1" ||
+				r.Header.Get("Authorization") != "Bearer "+token {
+				t.Fatal("default-branch commit request was not authenticated")
+			}
+			return reply(http.StatusOK, `{"sha":"0123456789ABCDEF0123456789ABCDEF01234567"}`), nil
+		case 3:
 			if r.Method != http.MethodGet || r.URL.Path != "/repos/trusted/repo/contents/ci/pipeline.yml" ||
 				r.URL.Query().Get("ref") != "0123456789abcdef0123456789abcdef01234567" ||
 				r.Header.Get("Authorization") != "Bearer "+token || r.Header.Get("Accept") != "application/vnd.github.raw+json" {
@@ -211,8 +218,12 @@ func TestGitHubRepositoryScopedTokenAndImmutableFile(t *testing.T) {
 	if err != nil || string(issued) != token || !expiry.Equal(expires) {
 		t.Fatalf("token reply: %q %v %v", issued, expiry, err)
 	}
+	commit, err := g.RepositoryCommit(t.Context(), issued, "trusted", "repo", "release/1")
+	if err != nil || commit != "0123456789abcdef0123456789abcdef01234567" {
+		t.Fatalf("commit reply: %q error=%v", commit, err)
+	}
 	content, err := g.RepositoryFile(t.Context(), issued, "trusted", "repo", "ci/pipeline.yml", "0123456789abcdef0123456789abcdef01234567")
-	if err != nil || string(content) != "version: v1" || calls != 2 {
+	if err != nil || string(content) != "version: v1" || calls != 3 {
 		t.Fatalf("file reply: %q calls=%d error=%v", content, calls, err)
 	}
 }

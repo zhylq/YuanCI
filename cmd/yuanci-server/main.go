@@ -80,7 +80,7 @@ func main() {
 				logger.Error("GitHub pipeline service initialization failed")
 				os.Exit(2)
 			}
-			login = httpapi.GitHubLogin{Store: database, Managed: provisioning.New(database, cipher, cfg.PublicOrigin), Integrations: integrations}
+			login = httpapi.GitHubLogin{Store: database, Managed: provisioning.New(database, cipher, cfg.PublicOrigin), Integrations: integrations, Pipeline: githubPipeline}
 			stopCleanup := startIntegrationCleanup(logger, database)
 			defer stopCleanup()
 		} else {

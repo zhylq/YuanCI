@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"path"
+	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/google/uuid"
@@ -17,6 +19,8 @@ var (
 )
 
 const DefaultPipelinePath = ".yuanci.yml"
+
+var lowercaseHex = regexp.MustCompile(`^[0-9a-f]+$`)
 
 // AutomationSettings is the provider-neutral policy evaluated for an incoming
 // SCM event. Revision zero represents the synthesized, never-written default.
@@ -41,13 +45,40 @@ func DefaultAutomationSettings() AutomationSettings {
 }
 
 type AutomationUpdate struct {
-	Enabled            bool
-	PipelinePath       string
-	TriggerPush        bool
-	TriggerTag         bool
-	TriggerPullRequest bool
-	CancelOlderCommits bool
-	ExpectedRevision   int64
+	Enabled            bool   `json:"enabled"`
+	PipelinePath       string `json:"pipeline_path"`
+	TriggerPush        bool   `json:"trigger_push"`
+	TriggerTag         bool   `json:"trigger_tag"`
+	TriggerPullRequest bool   `json:"trigger_pull_request"`
+	CancelOlderCommits bool   `json:"cancel_older_commits"`
+	ExpectedRevision   int64  `json:"expected_revision"`
+}
+
+type AutomationValidationTarget struct {
+	RepositoryExternalID string
+	PipelinePath         string
+	SettingsRevision     int64
+}
+
+type AutomationValidation struct {
+	RepositoryID     uuid.UUID
+	AppRevision      uuid.UUID
+	SettingsRevision int64
+	PipelinePath     string
+	CommitSHA        string
+	ConfigSHA256     string
+	PipelineName     string
+	ValidatedAt      time.Time
+}
+
+func (v AutomationValidation) Validate() error {
+	if v.RepositoryID == uuid.Nil || v.AppRevision == uuid.Nil || v.SettingsRevision < 0 ||
+		ValidatePipelinePath(v.PipelinePath) != nil || len(v.CommitSHA) != 40 || !lowercaseHex.MatchString(v.CommitSHA) ||
+		len(v.ConfigSHA256) != 64 || !lowercaseHex.MatchString(v.ConfigSHA256) || v.PipelineName == "" ||
+		len(v.PipelineName) > 128 || v.ValidatedAt.IsZero() {
+		return ErrAutomationInvalid
+	}
+	return nil
 }
 
 func (u AutomationUpdate) Validate() error {
@@ -81,4 +112,6 @@ func unsafePathSegment(value string) bool {
 type AutomationStore interface {
 	GetProjectAutomation(context.Context, string, uuid.UUID) (AutomationSettings, error)
 	UpdateProjectAutomation(context.Context, string, uuid.UUID, AutomationUpdate) (AutomationSettings, error)
+	GetProjectAutomationValidationTarget(context.Context, string, uuid.UUID, int64) (AutomationValidationTarget, error)
+	RecordProjectAutomationValidation(context.Context, string, AutomationValidation) error
 }
