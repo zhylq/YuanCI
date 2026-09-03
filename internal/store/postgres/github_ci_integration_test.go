@@ -65,11 +65,18 @@ func TestCommitWebhookRunIsAtomicAndIdempotent(t *testing.T) {
 	if err != nil || settings.Enabled {
 		t.Fatalf("runtime defaults: %#v %v", settings, err)
 	}
+	resolvedID, settings, err := store.RuntimeAutomationForGitHub(t.Context(), "70")
+	if err != nil || resolvedID != repositoryID || settings.Enabled {
+		t.Fatalf("GitHub runtime defaults: id=%s settings=%#v err=%v", resolvedID, settings, err)
+	}
 	if _, err := store.pool.Exec(t.Context(), `UPDATE repositories SET active=false WHERE id=$1`, repositoryID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.RuntimeAutomation(t.Context(), repositoryID); !errors.Is(err, githubci.ErrRepositoryUnavailable) {
 		t.Fatalf("inactive repository automation was available: %v", err)
+	}
+	if _, _, err := store.RuntimeAutomationForGitHub(t.Context(), "70"); !errors.Is(err, githubci.ErrRepositoryUnavailable) {
+		t.Fatalf("inactive GitHub repository automation was available: %v", err)
 	}
 	if _, err := store.pool.Exec(t.Context(), `UPDATE repositories SET active=true WHERE id=$1`, repositoryID); err != nil {
 		t.Fatal(err)

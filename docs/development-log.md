@@ -708,3 +708,21 @@ the batch outcome and remaining work.
 - Added a reusable Chinese trigger prompt so repository documents and Git state,
   rather than accumulated chat history, carry context between tasks. The next
   implementation task is `GH-01`.
+
+## 2026-09-03 — GH-01 single-delivery GitHub orchestration
+
+- Added a single-delivery orchestrator that resolves an active imported GitHub
+  repository and its automation policy from trusted local state before any
+  remote configuration request.
+- Disabled projects, external-fork pull requests, disabled event types and
+  unsupported event types now finalize as explicitly classified ignored
+  deliveries without fetching configuration or creating a Run.
+- Accepted events fetch the configured pipeline only at the immutable event SHA,
+  verify that the trusted repository identity did not change between policy and
+  credential resolution, compile the pipeline, and use the existing atomic Run
+  commit with distinct created and idempotently reused outcomes.
+- Focused `internal/githubci` unit tests cover every outcome classification and
+  the repository-identity guard. The affected PostgreSQL package test and the
+  specific PostgreSQL 17 integration test passed, as did focused `go vet` and
+  `git diff --check`. GH-01 is not a phase gate, so no full repository suite,
+  frontend build, Compose validation or deployment-image build was run.

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/yuanci/yuanci/internal/githubci"
 	"github.com/yuanci/yuanci/internal/githubhook"
+	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/pipeline"
 	"github.com/yuanci/yuanci/internal/project"
 	runmodel "github.com/yuanci/yuanci/internal/run"
@@ -29,6 +30,26 @@ func (s *Store) RuntimeAutomation(ctx context.Context, repositoryID uuid.UUID) (
 		return project.AutomationSettings{}, githubci.ErrRepositoryUnavailable
 	}
 	return settings, err
+}
+
+func (s *Store) RuntimeAutomationForGitHub(ctx context.Context, externalID string) (uuid.UUID, project.AutomationSettings, error) {
+	if !identity.ValidGitHubSubject(externalID) {
+		return uuid.Nil, project.AutomationSettings{}, githubci.ErrRepositoryUnavailable
+	}
+	var repositoryID uuid.UUID
+	var settings project.AutomationSettings
+	err := s.pool.QueryRow(ctx, `SELECT r.id,COALESCE(s.enabled,false),
+		COALESCE(s.pipeline_path,'.yuanci.yml'),COALESCE(s.trigger_push,true),COALESCE(s.trigger_tag,true),
+		COALESCE(s.trigger_pull_request,true),COALESCE(s.cancel_older_commits,true),COALESCE(s.revision,0)
+		FROM repositories r LEFT JOIN repository_automation_settings s ON s.repository_id=r.id
+		WHERE r.provider='github' AND r.provider_instance=$1 AND r.external_id=$2 AND r.active`,
+		identity.GitHubInstance, externalID).Scan(&repositoryID, &settings.Enabled, &settings.PipelinePath,
+		&settings.TriggerPush, &settings.TriggerTag, &settings.TriggerPullRequest,
+		&settings.CancelOlderCommits, &settings.Revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, project.AutomationSettings{}, githubci.ErrRepositoryUnavailable
+	}
+	return repositoryID, settings, err
 }
 
 func (s *Store) CommitWebhookRun(ctx context.Context, request githubci.RunCommit) (githubci.RunResult, error) {

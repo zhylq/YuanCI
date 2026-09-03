@@ -14,6 +14,7 @@ import (
 
 var ErrInvalidCommit = errors.New("invalid GitHub CI run commit")
 var ErrRepositoryUnavailable = errors.New("GitHub CI repository is not available")
+var ErrRepositoryMismatch = errors.New("GitHub CI repository identity changed")
 
 type RunCommit struct {
 	Delivery       githubhook.WorkItem
@@ -30,6 +31,7 @@ type RunResult struct {
 }
 
 type Store interface {
-	RuntimeAutomation(context.Context, uuid.UUID) (project.AutomationSettings, error)
+	RuntimeAutomationForGitHub(context.Context, string) (uuid.UUID, project.AutomationSettings, error)
 	CommitWebhookRun(context.Context, RunCommit) (RunResult, error)
+	FinalizeWebhook(context.Context, githubhook.Finalize) error
 }
