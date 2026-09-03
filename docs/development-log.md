@@ -818,6 +818,21 @@ the batch outcome and remaining work.
   repository suite, frontend build, Compose validation or deployment-image
   build was run.
 
+## 2026-09-03 — SRC-05 one-shot secure Git checkout helper
+
+- Added a single-use Git helper container command that receives the checkout
+  credential only through stdin and keeps it out of process arguments and
+  environment variables. Its transient Git configuration lives on a bounded
+  tmpfs and is removed on every helper exit.
+- Checkout policy disables interactive prompting, credential helpers and
+  persistence, hooks, redirects, non-HTTPS protocols, LFS filters and recursive
+  submodules. The helper fetches only the assigned commit and checks it out in
+  detached mode in the Docker workspace.
+- Focused Runner command-construction tests prove the token does not enter argv
+  or environment and cover the hardened Git/Docker settings plus unsafe token
+  rejection. Focused package tests, vet and `git diff --check` passed. SRC-05 is
+  not a phase gate, so no full repository suite was run.
+
 ## 2026-09-03 — SRC-02 non-persistent Runner assignment credentials
 
 - Runner gRPC now requests a GitHub checkout credential only after a
