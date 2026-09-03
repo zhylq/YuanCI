@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	runnerv1 "github.com/yuanci/yuanci/gen/runner/v1"
+	"github.com/yuanci/yuanci/internal/githubapp"
 	runmodel "github.com/yuanci/yuanci/internal/run"
 	"github.com/yuanci/yuanci/internal/runnerauth"
 	"google.golang.org/grpc"
@@ -40,18 +41,29 @@ type Server struct {
 	runnerv1.UnimplementedRunnerServiceServer
 	auth              *runnerauth.Service
 	jobs              runmodel.RunnerJobStore
+	credentials       CredentialIssuer
 	rootPEM           []byte
 	registrationSlots chan struct{}
 	sessionsMu        sync.Mutex
 	sessions          map[uuid.UUID]struct{}
 }
 
-func NewServer(auth *runnerauth.Service, jobs runmodel.RunnerJobStore, rootPEM []byte, tlsConfig *tls.Config) (*grpc.Server, error) {
+type CredentialIssuer interface {
+	IssueCheckoutCredential(context.Context, uuid.UUID, string) (githubapp.CheckoutCredential, error)
+}
+
+func NewServer(auth *runnerauth.Service, jobs runmodel.RunnerJobStore, rootPEM []byte, tlsConfig *tls.Config,
+	credentialIssuers ...CredentialIssuer) (*grpc.Server, error) {
 	if auth == nil || jobs == nil || len(rootPEM) == 0 || tlsConfig == nil || tlsConfig.MinVersion < tls.VersionTLS13 ||
-		tlsConfig.ClientAuth != tls.VerifyClientCertIfGiven || len(tlsConfig.Certificates) == 0 || tlsConfig.ClientCAs == nil {
+		tlsConfig.ClientAuth != tls.VerifyClientCertIfGiven || len(tlsConfig.Certificates) == 0 || tlsConfig.ClientCAs == nil ||
+		len(credentialIssuers) > 1 {
 		return nil, errors.New("invalid Runner gRPC security configuration")
 	}
-	implementation := &Server{auth: auth, jobs: jobs, rootPEM: append([]byte(nil), rootPEM...),
+	var credentialIssuer CredentialIssuer
+	if len(credentialIssuers) == 1 {
+		credentialIssuer = credentialIssuers[0]
+	}
+	implementation := &Server{auth: auth, jobs: jobs, credentials: credentialIssuer, rootPEM: append([]byte(nil), rootPEM...),
 		registrationSlots: make(chan struct{}, 16), sessions: make(map[uuid.UUID]struct{})}
 	server := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsConfig.Clone())),
@@ -227,12 +239,61 @@ func (server *Server) handleHeartbeat(stream grpc.BidiStreamingServer[runnerv1.W
 		if err != nil || len(plan) > 1<<20 {
 			return status.Error(codes.Internal, "Runner assignment could not be encoded")
 		}
-		if err := stream.Send(&runnerv1.WorkResponse{Body: &runnerv1.WorkResponse_Assignment{Assignment: &runnerv1.JobAssignment{
+		message := &runnerv1.JobAssignment{
 			JobId: assignment.JobID.String(), RunId: assignment.RunID.String(), LeaseToken: assignment.LeaseToken,
-			LeaseExpiresAt: timestamppb.New(assignment.LeaseExpires), ExecutionPlanJson: plan}}}); err != nil {
+			LeaseExpiresAt: timestamppb.New(assignment.LeaseExpires), ExecutionPlanJson: plan}
+		if assignment.Source != nil {
+			if err := server.attachSourceCredential(stream.Context(), identity.RunnerID, assignment, message); err != nil {
+				return err
+			}
+		}
+		response := &runnerv1.WorkResponse{Body: &runnerv1.WorkResponse_Assignment{Assignment: message}}
+		if err := stream.Send(response); err != nil {
+			if message.Credential != nil {
+				clear(message.Credential.Token)
+			}
 			return err
 		}
+		if message.Credential != nil {
+			clear(message.Credential.Token)
+		}
 	}
+}
+
+func (server *Server) attachSourceCredential(ctx context.Context, runnerID uuid.UUID, assignment *runmodel.Assignment,
+	message *runnerv1.JobAssignment) error {
+	source := assignment.Source
+	lease := runmodel.LeaseRequest{RunnerID: runnerID, JobID: assignment.JobID, LeaseToken: assignment.LeaseToken}
+	fail := func(permanent bool) error {
+		var err error
+		if permanent {
+			err = server.jobs.CompleteRunnerJob(ctx, runmodel.RunnerCompletion{RunnerID: runnerID, JobID: assignment.JobID,
+				LeaseToken: assignment.LeaseToken, Status: runmodel.JobFailed})
+		} else {
+			err = server.jobs.ReleaseRunnerJob(ctx, lease)
+		}
+		if err != nil {
+			return workStoreError(err)
+		}
+		return status.Error(codes.Internal, "Runner assignment credential is unavailable")
+	}
+	if server.credentials == nil || source.Provider != "github" || source.RepositoryUUID == uuid.Nil {
+		return fail(true)
+	}
+	credential, err := server.credentials.IssueCheckoutCredential(ctx, source.RepositoryUUID, source.RepositoryID)
+	defer clear(credential.Token)
+	if err != nil {
+		return fail(errors.Is(err, githubapp.ErrRepositoryUnavailable) || errors.Is(err, githubapp.ErrCredentialUnavailable))
+	}
+	if credential.RepositoryID != source.RepositoryID || len(credential.Token) == 0 || len(credential.Token) > 4<<10 ||
+		!credential.ExpiresAt.After(time.Now()) {
+		return fail(true)
+	}
+	message.Source = &runnerv1.SourceCheckout{Provider: source.Provider, RepositoryId: source.RepositoryID,
+		CloneUrl: source.CloneURL, CommitSha: source.CommitSHA}
+	message.Credential = &runnerv1.EphemeralCredential{Token: append([]byte(nil), credential.Token...),
+		ExpiresAt: timestamppb.New(credential.ExpiresAt)}
+	return nil
 }
 
 func (server *Server) handleReceipt(stream grpc.BidiStreamingServer[runnerv1.WorkRequest, runnerv1.WorkResponse],

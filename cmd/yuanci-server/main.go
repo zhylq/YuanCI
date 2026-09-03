@@ -141,7 +141,11 @@ func main() {
 			logger.Error("Runner identity service initialization failed")
 			os.Exit(2)
 		}
-		grpcServer, err = runnergrpc.NewServer(auth, store.(runmodel.RunnerJobStore), pki.RootPEM, pki.TLSConfig)
+		var credentialIssuers []runnergrpc.CredentialIssuer
+		if githubPipeline != nil {
+			credentialIssuers = append(credentialIssuers, githubPipeline)
+		}
+		grpcServer, err = runnergrpc.NewServer(auth, store.(runmodel.RunnerJobStore), pki.RootPEM, pki.TLSConfig, credentialIssuers...)
 		if err != nil {
 			logger.Error("Runner gRPC initialization failed")
 			os.Exit(2)

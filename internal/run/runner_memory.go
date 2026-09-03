@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/yuanci/yuanci/internal/pipeline"
@@ -64,6 +65,24 @@ func (m *MemoryStore) AcknowledgeRunnerJob(_ context.Context, request LeaseReque
 		job.acceptedAt = &now
 	}
 	return LeaseState{JobID: job.assignment.JobID, LeaseExpires: job.assignment.LeaseExpires}, nil
+}
+
+func (m *MemoryStore) ReleaseRunnerJob(_ context.Context, request LeaseRequest) error {
+	if err := validateLeaseRequest(request); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job := m.findJob(request.JobID)
+	if !m.validRunnerLease(job, request.RunnerID, request.LeaseToken) || job.status != JobAssigned || job.acceptedAt != nil {
+		return ErrLeaseInvalid
+	}
+	job.status = JobQueued
+	job.runnerID = uuid.Nil
+	job.assignment.LeaseToken = ""
+	job.assignment.LeaseExpires = time.Time{}
+	job.leaseRenewed = nil
+	return nil
 }
 
 func (m *MemoryStore) StartRunnerJob(_ context.Context, request LeaseRequest) (LeaseState, error) {

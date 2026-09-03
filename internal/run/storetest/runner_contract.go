@@ -90,6 +90,36 @@ func ExerciseRunner(t *testing.T, provision RunnerProvision) {
 		}
 	})
 
+	t.Run("assignment_release_is_lease_bound_and_requeues", func(t *testing.T) {
+		runner := base()
+		store := provision(t, runner)
+		creator := store.(interface {
+			Create(context.Context, runmodel.Record) (runmodel.Record, error)
+		})
+		if _, err := creator.Create(t.Context(), RunnerRecord(t, 1, pipeline.RunnerRequirements{}, "")); err != nil {
+			t.Fatal(err)
+		}
+		assignment, err := store.ClaimRunnerJob(t.Context(), runmodel.RunnerClaim{RunnerID: runner.ID})
+		if err != nil || assignment == nil {
+			t.Fatalf("claim: %#v %v", assignment, err)
+		}
+		wrong := runmodel.LeaseRequest{RunnerID: runner.ID, JobID: assignment.JobID, LeaseToken: "wrong"}
+		if err := store.ReleaseRunnerJob(t.Context(), wrong); !errors.Is(err, runmodel.ErrLeaseInvalid) {
+			t.Fatalf("wrong lease released assignment: %v", err)
+		}
+		lease := runmodel.LeaseRequest{RunnerID: runner.ID, JobID: assignment.JobID, LeaseToken: assignment.LeaseToken}
+		if err := store.ReleaseRunnerJob(t.Context(), lease); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.AcknowledgeRunnerJob(t.Context(), lease); !errors.Is(err, runmodel.ErrLeaseInvalid) {
+			t.Fatalf("released lease remained usable: %v", err)
+		}
+		retry, err := store.ClaimRunnerJob(t.Context(), runmodel.RunnerClaim{RunnerID: runner.ID})
+		if err != nil || retry == nil || retry.JobID != assignment.JobID || retry.LeaseToken == assignment.LeaseToken {
+			t.Fatalf("released assignment was not safely requeued: %#v %v", retry, err)
+		}
+	})
+
 	t.Run("capacity_is_atomic", func(t *testing.T) {
 		runner := base()
 		store := provision(t, runner)

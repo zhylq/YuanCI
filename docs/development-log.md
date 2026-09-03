@@ -817,3 +817,22 @@ the batch outcome and remaining work.
   and `git diff --check` passed. SRC-01 is not a phase gate, so no full
   repository suite, frontend build, Compose validation or deployment-image
   build was run.
+
+## 2026-09-03 — SRC-02 non-persistent Runner assignment credentials
+
+- Runner gRPC now requests a GitHub checkout credential only after a
+  protocol-v2 source Job has been claimed, binds the request to both the local
+  repository UUID and provider repository ID, and attaches source plus
+  credential fields only to the certificate-authenticated assignment response.
+- Credential bytes are copied only for the synchronous gRPC send and both the
+  issuer-owned and response buffers are cleared afterward. Credential values
+  never enter the Run, Job, execution plan or store contracts, and issuance
+  errors return only a generic Runner message.
+- Added a lease-bound assignment release operation to the memory and PostgreSQL
+  stores. Transient provider failures clear and requeue an unaccepted
+  assignment with a fresh lease on retry; permanent repository or credential
+  binding failures atomically fail the Job and converge the Run.
+- Focused Runner store, PostgreSQL 17, gRPC, shipped Runner and server package
+  tests passed, together with focused `go vet` and `git diff --check`. SRC-02 is
+  not a phase gate, so no full repository suite, frontend build, Compose
+  validation or deployment-image build was run.

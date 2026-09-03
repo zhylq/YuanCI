@@ -77,6 +77,7 @@ type RunnerCompletion struct {
 
 type RunnerJobStore interface {
 	ClaimRunnerJob(context.Context, RunnerClaim) (*Assignment, error)
+	ReleaseRunnerJob(context.Context, LeaseRequest) error
 	AcknowledgeRunnerJob(context.Context, LeaseRequest) (LeaseState, error)
 	StartRunnerJob(context.Context, LeaseRequest) (LeaseState, error)
 	RenewRunnerLeases(context.Context, HeartbeatRequest) (HeartbeatResult, error)

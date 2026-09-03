@@ -67,10 +67,11 @@ type Assignment struct {
 // SourceCheckout is trusted control-plane metadata for an immutable checkout.
 // Credentials are deliberately not part of this persistent assignment model.
 type SourceCheckout struct {
-	Provider     string
-	RepositoryID string
-	CloneURL     string
-	CommitSHA    string
+	RepositoryUUID uuid.UUID
+	Provider       string
+	RepositoryID   string
+	CloneURL       string
+	CommitSHA      string
 }
 
 type memoryJob struct {

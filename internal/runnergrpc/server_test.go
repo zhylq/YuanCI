@@ -1,6 +1,7 @@
 package runnergrpc
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ed25519"
@@ -8,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	runnerv1 "github.com/yuanci/yuanci/gen/runner/v1"
+	"github.com/yuanci/yuanci/internal/githubapp"
 	runmodel "github.com/yuanci/yuanci/internal/run"
 	"github.com/yuanci/yuanci/internal/run/storetest"
 	"github.com/yuanci/yuanci/internal/runnerauth"
@@ -27,7 +30,63 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
+
+type credentialIssuerStub struct {
+	credential githubapp.CheckoutCredential
+	err        error
+	repository uuid.UUID
+	external   string
+}
+
+func (issuer *credentialIssuerStub) IssueCheckoutCredential(_ context.Context, repository uuid.UUID, external string) (githubapp.CheckoutCredential, error) {
+	issuer.repository = repository
+	issuer.external = external
+	return issuer.credential, issuer.err
+}
+
+type assignmentJobStore struct {
+	assignment *runmodel.Assignment
+	released   []runmodel.LeaseRequest
+	completed  []runmodel.RunnerCompletion
+}
+
+func (store *assignmentJobStore) ClaimRunnerJob(context.Context, runmodel.RunnerClaim) (*runmodel.Assignment, error) {
+	assignment := store.assignment
+	store.assignment = nil
+	return assignment, nil
+}
+func (*assignmentJobStore) AcknowledgeRunnerJob(context.Context, runmodel.LeaseRequest) (runmodel.LeaseState, error) {
+	return runmodel.LeaseState{}, nil
+}
+func (*assignmentJobStore) StartRunnerJob(context.Context, runmodel.LeaseRequest) (runmodel.LeaseState, error) {
+	return runmodel.LeaseState{}, nil
+}
+func (*assignmentJobStore) RenewRunnerLeases(context.Context, runmodel.HeartbeatRequest) (runmodel.HeartbeatResult, error) {
+	return runmodel.HeartbeatResult{}, nil
+}
+func (store *assignmentJobStore) ReleaseRunnerJob(_ context.Context, request runmodel.LeaseRequest) error {
+	store.released = append(store.released, request)
+	return nil
+}
+func (store *assignmentJobStore) CompleteRunnerJob(_ context.Context, request runmodel.RunnerCompletion) error {
+	store.completed = append(store.completed, request)
+	return nil
+}
+
+type captureWorkStream struct {
+	grpc.ServerStream
+	ctx       context.Context
+	responses []*runnerv1.WorkResponse
+}
+
+func (stream *captureWorkStream) Context() context.Context      { return stream.ctx }
+func (*captureWorkStream) Recv() (*runnerv1.WorkRequest, error) { return nil, io.EOF }
+func (stream *captureWorkStream) Send(response *runnerv1.WorkResponse) error {
+	stream.responses = append(stream.responses, proto.Clone(response).(*runnerv1.WorkResponse))
+	return nil
+}
 
 type runnerStoreStub struct {
 	expectedToken [32]byte
@@ -188,6 +247,80 @@ func TestWorkStreamAssignsRenewsAndCompletesWithCertificateIdentity(t *testing.T
 	if err != nil || len(runs) != 1 || runs[0].Status != runmodel.StatusSucceeded {
 		t.Fatalf("completion not persisted: %#v %v", runs, err)
 	}
+}
+
+func TestSourceAssignmentIssuesCredentialOnlyForDeliveryAndClearsBuffer(t *testing.T) {
+	repository := uuid.New()
+	token := []byte("ephemeral-checkout-token")
+	expires := time.Now().Add(30 * time.Minute).UTC()
+	issuer := &credentialIssuerStub{credential: githubapp.CheckoutCredential{RepositoryID: "70", Token: token, ExpiresAt: expires}}
+	jobs := &assignmentJobStore{assignment: sourceAssignment(repository)}
+	server := &Server{jobs: jobs, credentials: issuer}
+	stream := &captureWorkStream{ctx: t.Context()}
+	identity := runnerauth.Identity{RunnerID: uuid.New(), PoolType: "standard", Capabilities: runnerauth.Capabilities{ProtocolVersion: 2}}
+
+	if err := server.handleHeartbeat(stream, identity, sourceHeartbeat()); err != nil {
+		t.Fatal(err)
+	}
+	if issuer.repository != repository || issuer.external != "70" {
+		t.Fatalf("credential escaped repository binding: %s %q", issuer.repository, issuer.external)
+	}
+	if len(stream.responses) != 1 || stream.responses[0].GetAssignment() == nil {
+		t.Fatalf("missing assignment response: %#v", stream.responses)
+	}
+	assignment := stream.responses[0].GetAssignment()
+	if assignment.Source == nil || assignment.Source.RepositoryId != "70" || assignment.Credential == nil ||
+		!bytes.Equal(assignment.Credential.Token, []byte("ephemeral-checkout-token")) ||
+		!assignment.Credential.ExpiresAt.AsTime().Equal(expires) {
+		t.Fatalf("invalid source credential delivery: %#v", assignment)
+	}
+	if !bytes.Equal(token, make([]byte, len(token))) {
+		t.Fatal("issued credential buffer was retained after delivery")
+	}
+}
+
+func TestSourceAssignmentCredentialFailuresReleaseOrFailLeaseWithoutLeak(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		err       error
+		released  int
+		completed int
+	}{
+		{name: "transient provider failure releases", err: errors.New("provider secret-token failed"), released: 1},
+		{name: "repository mismatch fails", err: githubapp.ErrRepositoryUnavailable, completed: 1},
+		{name: "credential unavailable fails", err: githubapp.ErrCredentialUnavailable, completed: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			partial := []byte("partial-secret-token")
+			issuer := &credentialIssuerStub{credential: githubapp.CheckoutCredential{Token: partial}, err: test.err}
+			jobs := &assignmentJobStore{assignment: sourceAssignment(uuid.New())}
+			server := &Server{jobs: jobs, credentials: issuer}
+			err := server.handleHeartbeat(&captureWorkStream{ctx: t.Context()}, runnerauth.Identity{RunnerID: uuid.New(), PoolType: "standard",
+				Capabilities: runnerauth.Capabilities{ProtocolVersion: 2}}, sourceHeartbeat())
+			if status.Code(err) != codes.Internal || bytes.Contains([]byte(err.Error()), []byte("secret-token")) {
+				t.Fatalf("unsafe credential error: %v", err)
+			}
+			if len(jobs.released) != test.released || len(jobs.completed) != test.completed {
+				t.Fatalf("unsafe lease disposition: released=%d completed=%d", len(jobs.released), len(jobs.completed))
+			}
+			if test.completed == 1 && jobs.completed[0].Status != runmodel.JobFailed {
+				t.Fatalf("permanent issuance failure status=%s", jobs.completed[0].Status)
+			}
+			if !bytes.Equal(partial, make([]byte, len(partial))) {
+				t.Fatal("partial credential buffer was retained")
+			}
+		})
+	}
+}
+
+func sourceAssignment(repository uuid.UUID) *runmodel.Assignment {
+	return &runmodel.Assignment{JobID: uuid.New(), RunID: uuid.New(), LeaseToken: "lease-token",
+		LeaseExpires: time.Now().Add(time.Minute), Source: &runmodel.SourceCheckout{RepositoryUUID: repository,
+			Provider: "github", RepositoryID: "70", CloneURL: "https://github.com/acme/repo.git", CommitSHA: "0123456789012345678901234567890123456789"}}
+}
+
+func sourceHeartbeat() *runnerv1.Heartbeat {
+	return &runnerv1.Heartbeat{ProtocolVersion: 2, Capabilities: testCapabilities()}
 }
 
 func TestTLSRejectsUnknownIdentityWrongTrustAndOversizedMessages(t *testing.T) {
