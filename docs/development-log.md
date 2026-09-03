@@ -745,3 +745,21 @@ the batch outcome and remaining work.
   container, followed by `git diff --check`. GH-02 is not a phase gate, so no
   full repository suite, frontend build, Compose validation or deployment-image
   build was run.
+
+## 2026-09-03 — GH-03 GitHub delivery worker lifecycle
+
+- Added a single-concurrency GitHub delivery worker that claims from the durable
+  inbox with a one-minute lease, processes one claimed delivery at a time, and
+  uses a bounded idle wait instead of busy polling. Database-backed claims remain
+  safe when more than one Server process is running.
+- Lease recovery runs once before delivery processing and every five seconds
+  thereafter, with a maximum batch of 100. Worker logs expose only stable
+  aggregate counts or reasons, never delivery payloads, lease IDs or credentials.
+- Managed authenticated Server startup now creates the trusted GitHub pipeline
+  client, orchestrator and worker. On service shutdown the worker context is
+  canceled and the process waits for its loop to exit before closing storage.
+- Focused worker tests cover cancellation, duplicate-worker single processing
+  and repeated bounded recovery; the Server lifecycle test covers worker startup
+  and shutdown. Focused `go test`, `go vet` and `git diff --check` passed. GH-03
+  is not a phase gate, so no full repository suite, frontend build, Compose
+  validation or deployment-image build was run.

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/yuanci/yuanci/internal/config"
+	"github.com/yuanci/yuanci/internal/githubapp"
+	"github.com/yuanci/yuanci/internal/githubci"
 	"github.com/yuanci/yuanci/internal/httpapi"
 	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/integration"
@@ -54,8 +56,10 @@ func main() {
 	stopRecovery := startLeaseRecovery(logger, recoveryStore)
 	defer stopRecovery()
 	var handler http.Handler
+	var database *postgres.Store
+	var githubPipeline *githubapp.Service
 	if cfg.AuthenticatedPreview {
-		database := store.(*postgres.Store) // Config forbids memory storage in preview.
+		database = store.(*postgres.Store) // Config forbids memory storage in preview.
 		var login httpapi.GitHubLogin
 		if cfg.ManagedSetup {
 			if err := database.BindManagedMasterKey(ctx, cfg.MasterKey); err != nil {
@@ -68,7 +72,15 @@ func main() {
 				logger.Error("invalid master key")
 				os.Exit(2)
 			}
-			login = httpapi.GitHubLogin{Store: database, Managed: provisioning.New(database, cipher, cfg.PublicOrigin), Integrations: integration.New(database, cipher, cfg.PublicOrigin)}
+			githubProvider := integration.NewGitHub()
+			integrations := integration.New(database, cipher, cfg.PublicOrigin)
+			integrations.Provider = githubProvider
+			githubPipeline, err = githubapp.New(database, cipher, githubProvider)
+			if err != nil {
+				logger.Error("GitHub pipeline service initialization failed")
+				os.Exit(2)
+			}
+			login = httpapi.GitHubLogin{Store: database, Managed: provisioning.New(database, cipher, cfg.PublicOrigin), Integrations: integrations}
 			stopCleanup := startIntegrationCleanup(logger, database)
 			defer stopCleanup()
 		} else {
@@ -91,6 +103,20 @@ func main() {
 		logger.Warn("authenticated preview enabled; legacy Runner API disabled; not production ready")
 	} else {
 		handler = httpapi.NewEvaluation(logger, store, cfg.RequestBodyLimit)
+	}
+	if githubPipeline != nil {
+		orchestrator, workerErr := githubci.NewOrchestrator(database, githubPipeline)
+		if workerErr != nil {
+			logger.Error("GitHub delivery orchestrator initialization failed")
+			os.Exit(2)
+		}
+		worker, workerErr := githubci.NewWorker(database, orchestrator, logger)
+		if workerErr != nil {
+			logger.Error("GitHub delivery worker initialization failed")
+			os.Exit(2)
+		}
+		stopGitHubWorker := startGitHubWorker(worker)
+		defer stopGitHubWorker()
 	}
 
 	server := &http.Server{
@@ -209,6 +235,19 @@ func startLeaseRecovery(logger *slog.Logger, store runmodel.LeaseRecoveryStore) 
 	go func() {
 		defer close(done)
 		reconciler.Run(ctx)
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+func startGitHubWorker(worker *githubci.Worker) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		worker.Run(ctx)
 	}()
 	return func() {
 		cancel()
