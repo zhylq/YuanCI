@@ -38,6 +38,17 @@ type serviceProvider struct {
 	path         string
 	sha          string
 	commitSHA    string
+	status       scm.CommitStatus
+	statusToken  []byte
+}
+
+func allZeroBytes(value []byte) bool {
+	for _, item := range value {
+		if item != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *serviceProvider) InstallationToken(_ context.Context, _ string, key []byte, installID, repositoryID string) ([]byte, time.Time, error) {
@@ -46,6 +57,18 @@ func (p *serviceProvider) InstallationToken(_ context.Context, _ string, key []b
 	p.keyBuffer = key
 	p.installID, p.repositoryID = installID, repositoryID
 	return p.token, p.expiry, p.tokenErr
+}
+
+func (p *serviceProvider) CommitStatusToken(_ context.Context, _ string, key []byte, installID, repositoryID string) ([]byte, time.Time, error) {
+	p.calls++
+	p.keyObserved, p.keyBuffer = string(key), key
+	p.installID, p.repositoryID = installID, repositoryID
+	return p.token, p.expiry, p.tokenErr
+}
+
+func (p *serviceProvider) SetCommitStatus(_ context.Context, token []byte, owner, name string, status scm.CommitStatus) error {
+	p.statusToken, p.owner, p.name, p.status = token, owner, name, status
+	return nil
 }
 
 func (p *serviceProvider) RepositoryFile(_ context.Context, _ []byte, owner, name, path, sha string) ([]byte, error) {
@@ -181,6 +204,36 @@ func TestIssueCheckoutCredentialBindsRepositoryAndClearsKey(t *testing.T) {
 	}
 	if !bytes.Equal(provider.keyBuffer, make([]byte, len(provider.keyBuffer))) {
 		t.Fatal("decrypted App key buffer was not cleared")
+	}
+}
+
+func TestDeliverCommitStatusUsesFreshTokenAndClearsBuffers(t *testing.T) {
+	master := []byte(strings.Repeat("m", 32))
+	cipher, err := secrets.NewCipher(master)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appID := uuid.New()
+	envelope, err := cipher.Seal([]byte("private-app-key"), KeyAAD(appID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := Repository{ID: uuid.New(), ExternalID: "70", Owner: "trusted", Name: "repository",
+		InstallationID: "34", AppID: appID, AppClientID: "Iv1.test", EncryptedKey: envelope}
+	provider := &serviceProvider{token: []byte("fresh-status-token"), expiry: time.Now().Add(50 * time.Minute)}
+	service, err := New(serviceStore{repository: repository}, cipher, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := scm.CommitStatus{SHA: strings.Repeat("a", 40), Context: "YuanCI", State: "success", Description: "Run succeeded"}
+	if err := service.DeliverCommitStatus(t.Context(), repository.ID, repository.ExternalID, status); err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 1 || provider.owner != "trusted" || provider.name != "repository" || provider.status != status {
+		t.Fatalf("unexpected status delivery: %#v", provider)
+	}
+	if !allZeroBytes(provider.statusToken) || !allZeroBytes(provider.keyBuffer) {
+		t.Fatal("status token or App key buffer was not cleared")
 	}
 }
 

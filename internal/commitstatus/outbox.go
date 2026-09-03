@@ -29,22 +29,23 @@ const (
 var ErrInvalid = errors.New("invalid commit status outbox request")
 
 type Item struct {
-	ID               uuid.UUID
-	RepositoryID     uuid.UUID
-	RunID            uuid.UUID
-	Provider         string
-	CommitSHA        string
-	Context          string
-	State            State
-	Description      string
-	TargetURL        string
-	DeterministicKey string
-	DeliveryState    DeliveryState
-	AttemptCount     int
-	AvailableAt      time.Time
-	ExpiresAt        time.Time
-	LeaseOwner       uuid.UUID
-	LeaseExpiresAt   time.Time
+	ID                   uuid.UUID
+	RepositoryID         uuid.UUID
+	RepositoryExternalID string
+	RunID                uuid.UUID
+	Provider             string
+	CommitSHA            string
+	Context              string
+	State                State
+	Description          string
+	TargetURL            string
+	DeterministicKey     string
+	DeliveryState        DeliveryState
+	AttemptCount         int
+	AvailableAt          time.Time
+	ExpiresAt            time.Time
+	LeaseOwner           uuid.UUID
+	LeaseExpiresAt       time.Time
 }
 
 type RecoveryRepository interface {

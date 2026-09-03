@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/yuanci/yuanci/internal/identity"
+	"github.com/yuanci/yuanci/internal/scm"
 )
 
 type transportFunc func(*http.Request) (*http.Response, error)
@@ -246,5 +247,51 @@ func TestGitHubRuntimeCredentialResponseFailsClosed(t *testing.T) {
 	g.client.Transport = transportFunc(func(*http.Request) (*http.Response, error) { return reply(http.StatusFound, "secret"), nil })
 	if _, err := g.RepositoryFile(t.Context(), []byte("token"), "trusted", "repo", ".yuanci.yml", "0123456789abcdef0123456789abcdef01234567"); !errors.Is(err, ErrRemote) || strings.Contains(err.Error(), "secret") {
 		t.Fatal("redirect or response detail exposed")
+	}
+}
+
+func TestGitHubCommitStatusUsesScopedFreshTokenAndBoundedResponse(t *testing.T) {
+	_, key := testKey(t)
+	token := "fresh-status-token"
+	expires := time.Now().UTC().Add(50 * time.Minute).Truncate(time.Second)
+	calls := 0
+	g := NewGitHub()
+	g.client.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		switch calls {
+		case 1:
+			var body struct {
+				RepositoryIDs []int64           `json:"repository_ids"`
+				Permissions   map[string]string `json:"permissions"`
+			}
+			if r.Method != http.MethodPost || r.URL.Path != "/app/installations/34/access_tokens" ||
+				json.NewDecoder(r.Body).Decode(&body) != nil || len(body.RepositoryIDs) != 1 ||
+				body.RepositoryIDs[0] != 70 || body.Permissions["statuses"] != "write" || len(body.Permissions) != 1 {
+				t.Fatal("status token request widened scope")
+			}
+			return reply(http.StatusCreated, `{"token":"`+token+`","expires_at":"`+expires.Format(time.RFC3339)+`","repositories":[{"id":70}],"permissions":{"statuses":"write","metadata":"read"}}`), nil
+		case 2:
+			var body scm.CommitStatus
+			if r.Method != http.MethodPost || r.URL.Path != "/repos/trusted/repo/statuses/0123456789abcdef0123456789abcdef01234567" ||
+				r.Header.Get("Authorization") != "Bearer "+token || json.NewDecoder(r.Body).Decode(&body) != nil ||
+				body.State != "failure" || body.Context != "YuanCI" {
+				t.Fatalf("invalid status request: %#v", body)
+			}
+			return reply(http.StatusCreated, `{}`), nil
+		default:
+			return reply(http.StatusCreated, strings.Repeat("x", (64<<10)+1)), nil
+		}
+	})
+	issued, expiry, err := g.CommitStatusToken(t.Context(), "Iv1.test", key, "34", "70")
+	if err != nil || string(issued) != token || !expiry.Equal(expires) {
+		t.Fatalf("status token=%q expiry=%v err=%v", issued, expiry, err)
+	}
+	status := scm.CommitStatus{SHA: "0123456789abcdef0123456789abcdef01234567", Context: "YuanCI",
+		State: "failure", Description: "Run failed"}
+	if err := g.SetCommitStatus(t.Context(), issued, "trusted", "repo", status); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.SetCommitStatus(t.Context(), issued, "trusted", "repo", status); !errors.Is(err, ErrRemote) {
+		t.Fatalf("oversized response returned %v", err)
 	}
 }

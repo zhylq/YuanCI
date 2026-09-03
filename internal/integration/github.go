@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"github.com/yuanci/yuanci/internal/identity"
 	"io"
 	"net/http"
 	"net/url"
@@ -20,6 +19,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/yuanci/yuanci/internal/identity"
+	"github.com/yuanci/yuanci/internal/scm"
 )
 
 var slugPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$`)
@@ -223,6 +225,14 @@ func (g *GitHub) VerifyInstallation(ctx context.Context, app App, key []byte, in
 }
 
 func (g *GitHub) InstallationToken(ctx context.Context, clientID string, key []byte, installID, repositoryID string) ([]byte, time.Time, error) {
+	return g.repositoryToken(ctx, clientID, key, installID, repositoryID, "contents", "read")
+}
+
+func (g *GitHub) CommitStatusToken(ctx context.Context, clientID string, key []byte, installID, repositoryID string) ([]byte, time.Time, error) {
+	return g.repositoryToken(ctx, clientID, key, installID, repositoryID, "statuses", "write")
+}
+
+func (g *GitHub) repositoryToken(ctx context.Context, clientID string, key []byte, installID, repositoryID, permissionName, permissionValue string) ([]byte, time.Time, error) {
 	failed := func(err error) ([]byte, time.Time, error) { return nil, time.Time{}, err }
 	if !identity.ValidGitHubSubject(installID) || !identity.ValidGitHubSubject(repositoryID) {
 		return failed(ErrConfig)
@@ -237,7 +247,7 @@ func (g *GitHub) InstallationToken(ctx context.Context, clientID string, key []b
 	}
 	body, err := json.Marshal(map[string]any{
 		"repository_ids": []int64{repositoryNumber},
-		"permissions":    map[string]string{"contents": "read"},
+		"permissions":    map[string]string{permissionName: permissionValue},
 	})
 	if err != nil {
 		return failed(ErrRemote)
@@ -274,15 +284,61 @@ func (g *GitHub) InstallationToken(ctx context.Context, clientID string, key []b
 	}
 	if json.Unmarshal(data, &reply) != nil || len(reply.Token) < 1 || len(reply.Token) > 8192 ||
 		strings.ContainsAny(reply.Token, " \r\n\x00") || len(reply.Repositories) != 1 ||
-		reply.Repositories[0].ID != repositoryNumber || reply.Permissions["contents"] != "read" {
+		reply.Repositories[0].ID != repositoryNumber || reply.Permissions[permissionName] != permissionValue {
 		return failed(ErrRemote)
 	}
 	for name, permission := range reply.Permissions {
-		if permission != "read" || (name != "contents" && name != "metadata") {
+		if (name == "metadata" && permission == "read") || (name == permissionName && permission == permissionValue) {
+			continue
+		}
+		if name != "metadata" || permission != "read" {
 			return failed(ErrAccess)
 		}
 	}
 	return []byte(reply.Token), reply.ExpiresAt, nil
+}
+
+func (g *GitHub) SetCommitStatus(ctx context.Context, token []byte, owner, name string, status scm.CommitStatus) error {
+	if len(token) < 1 || len(token) > 8192 || bytes.IndexFunc(token, func(r rune) bool {
+		return r == ' ' || r == '\r' || r == '\n' || r == 0
+	}) >= 0 || !repoPattern.MatchString(owner) || !repoPattern.MatchString(name) || owner == "." || owner == ".." ||
+		name == "." || name == ".." || !commitPattern.MatchString(status.SHA) || len(status.Context) < 1 || len(status.Context) > 100 ||
+		len(status.Description) < 1 || len(status.Description) > 140 || len(status.TargetURL) > 2048 {
+		return ErrConfig
+	}
+	switch status.State {
+	case "pending", "success", "failure", "error":
+	default:
+		return ErrConfig
+	}
+	body, err := json.Marshal(map[string]string{"state": status.State, "context": status.Context,
+		"description": status.Description, "target_url": status.TargetURL})
+	if err != nil || len(body) > 4096 {
+		return ErrConfig
+	}
+	endpoint := "https://api.github.com/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/statuses/" + strings.ToLower(status.SHA)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return ErrRemote
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("X-GitHub-Api-Version", "2026-03-10")
+	request.Header.Set("Authorization", "Bearer "+string(token))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "YuanCI/0.1")
+	response, err := g.client.Do(request)
+	if err != nil {
+		return ErrRemote
+	}
+	defer response.Body.Close()
+	if err := runtimeResponseError(response, http.StatusCreated); err != nil {
+		return err
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, (64<<10)+1))
+	if err != nil || len(data) > 64<<10 {
+		return ErrRemote
+	}
+	return nil
 }
 
 func (g *GitHub) RepositoryFile(ctx context.Context, token []byte, owner, name, filePath, sha string) ([]byte, error) {

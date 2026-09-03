@@ -943,3 +943,19 @@ the batch outcome and remaining work.
   verify safe retry creates exactly one record of each kind. The full affected
   PostgreSQL package tests, focused vet and `git diff --check` passed. STAT-02
   is not a phase gate.
+
+## 2026-09-03 — STAT-03 GitHub Commit Status delivery
+
+- Added a GitHub status provider that maps the four provider-neutral outbox
+  states to GitHub's pending, success, failure and error states and carries the
+  trusted repository identity returned by the outbox claim.
+- Every delivery resolves the local/provider repository binding and mints a
+  fresh repository-scoped `statuses:write` GitHub App token. Decrypted App keys
+  and status tokens are cleared after the attempt; checkout's `contents:read`
+  credential is never reused or widened.
+- Runtime GitHub requests use fixed API hosts, bounded 4 KiB request and 64 KiB
+  response bodies, redirect refusal, validated fields and safe provider errors.
+  Focused provider/service tests cover scope, mapping, binding, buffer cleanup
+  and oversized responses. A PostgreSQL 17 claim test verifies external identity
+  hydration; affected package tests, vet and `git diff --check` passed. STAT-03
+  is not a phase gate.

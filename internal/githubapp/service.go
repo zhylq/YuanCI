@@ -46,8 +46,43 @@ type Store interface {
 
 type Provider interface {
 	InstallationToken(context.Context, string, []byte, string, string) ([]byte, time.Time, error)
+	CommitStatusToken(context.Context, string, []byte, string, string) ([]byte, time.Time, error)
 	RepositoryCommit(context.Context, []byte, string, string, string) (string, error)
 	RepositoryFile(context.Context, []byte, string, string, string, string) ([]byte, error)
+	SetCommitStatus(context.Context, []byte, string, string, scm.CommitStatus) error
+}
+
+// DeliverCommitStatus resolves the trusted repository binding, mints a fresh
+// statuses:write token, delivers one status, and clears all owned key/token bytes.
+func (s *Service) DeliverCommitStatus(ctx context.Context, repositoryID uuid.UUID, externalID string, status scm.CommitStatus) error {
+	if repositoryID == uuid.Nil || !identity.ValidGitHubSubject(externalID) {
+		return ErrRepositoryUnavailable
+	}
+	repository, err := s.store.ResolveGitHubRepository(ctx, externalID)
+	if err != nil || repository.ID != repositoryID || repository.ExternalID != externalID {
+		return ErrRepositoryUnavailable
+	}
+	key, err := s.cipher.Open(repository.EncryptedKey, KeyAAD(repository.AppID))
+	if err != nil {
+		return ErrCredentialUnavailable
+	}
+	defer clear(key)
+	token, expiry, err := s.provider.CommitStatusToken(ctx, repository.AppClientID, key,
+		repository.InstallationID, repository.ExternalID)
+	defer clear(token)
+	if err != nil {
+		return fmt.Errorf("mint GitHub commit status token: %w", err)
+	}
+	now := s.now()
+	if len(token) == 0 || len(token) > 8192 || bytes.IndexFunc(token, func(r rune) bool {
+		return r == ' ' || r == '\r' || r == '\n' || r == 0
+	}) >= 0 || !expiry.After(now.Add(30*time.Second)) || expiry.After(now.Add(65*time.Minute)) {
+		return ErrCredentialUnavailable
+	}
+	if err := s.provider.SetCommitStatus(ctx, token, repository.Owner, repository.Name, status); err != nil {
+		return fmt.Errorf("deliver GitHub commit status: %w", err)
+	}
+	return nil
 }
 
 type ValidationProof struct {

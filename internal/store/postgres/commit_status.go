@@ -67,16 +67,16 @@ func (s *Store) ClaimCommitStatus(ctx context.Context, leaseDuration time.Durati
 	}
 	var item commitstatus.Item
 	err := s.pool.QueryRow(ctx, `WITH candidate AS (
-		SELECT id FROM commit_status_outbox
-		WHERE delivery_state='queued' AND available_at<=clock_timestamp() AND expires_at>clock_timestamp()
-		ORDER BY available_at,created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
+		SELECT o.id FROM commit_status_outbox o
+		WHERE o.delivery_state='queued' AND o.available_at<=clock_timestamp() AND o.expires_at>clock_timestamp()
+		ORDER BY o.available_at,o.created_at,o.id FOR UPDATE OF o SKIP LOCKED LIMIT 1
 	)
 	UPDATE commit_status_outbox o SET delivery_state='processing',lease_owner=gen_random_uuid(),
 		lease_expires_at=clock_timestamp()+$1::interval,attempt_count=attempt_count+1,updated_at=clock_timestamp()
 	FROM candidate WHERE o.id=candidate.id
-	RETURNING o.id,o.repository_id,o.run_id,o.provider,o.commit_sha,o.context,o.commit_state,o.description,
+	RETURNING o.id,o.repository_id,(SELECT external_id FROM repositories WHERE id=o.repository_id),o.run_id,o.provider,o.commit_sha,o.context,o.commit_state,o.description,
 		COALESCE(o.target_url,''),o.deterministic_key,o.delivery_state,o.attempt_count,o.available_at,o.expires_at,
-		o.lease_owner,o.lease_expires_at`, leaseDuration.String()).Scan(&item.ID, &item.RepositoryID, &item.RunID,
+		o.lease_owner,o.lease_expires_at`, leaseDuration.String()).Scan(&item.ID, &item.RepositoryID, &item.RepositoryExternalID, &item.RunID,
 		&item.Provider, &item.CommitSHA, &item.Context, &item.State, &item.Description, &item.TargetURL,
 		&item.DeterministicKey, &item.DeliveryState, &item.AttemptCount, &item.AvailableAt, &item.ExpiresAt,
 		&item.LeaseOwner, &item.LeaseExpiresAt)
