@@ -12,7 +12,7 @@ This is still pre-alpha, not a finished CI/CD product. See the
 | Authorization | Scoped policy/sessions/audit, GitHub OAuth/PKCE, explicit bootstrap/linking, one-use setup code, encrypted candidate settings and verified activation | Real GitHub sandbox login, membership/audit lifecycle, last-admin/recovery and deployment enforcement |
 | Secrets | Envelope encryption, AAD binding, corrupt-input/fuzz tests, file-supplied master key and encrypted login credentials | Job-secret storage API, key rotation, scoped release and streaming redaction |
 | Docker | Source-context exclusions, loopback Quickstart, separate verification and authenticated-preview profiles | Release digest locks, signed multi-architecture images and recovery drills |
-| Runner | Local-key enrollment, one-use registration, mTLS identity, capability scheduling, strict leases/recovery, certificate rotation, lease-deadline cancellation, deterministic Docker cleanup, one-command Quickstart and split deployment examples | Cross-host production rehearsal, supported disable/revoke administration, forced-partition smoke and 72-hour soak |
+| Runner | Local-key enrollment, one-use registration, mTLS identity, capability scheduling, strict leases/recovery, certificate rotation, lease-deadline cancellation, deterministic Docker cleanup, protocol-v2 source assignment negotiation, one-command Quickstart and split deployment examples | Ephemeral checkout credential delivery and exact-SHA helper, cross-host production rehearsal, supported disable/revoke administration, forced-partition smoke and 72-hour soak |
 | Console | Evaluation dashboard, YAML validation/plan preview, login/logout, setup/settings, scoped project browser and GitHub installation/repository picker | Run step detail/logs, full visual editor and administration |
 | SCM | GitHub REST adapter, signed event normalization tests, encrypted App keys, verified installation discovery and idempotent repository import | Real GitHub App sandbox, webhook orchestration, private checkout plus GitLab, Gitea and Gitee |
 | CD | Design only | Environments, approvals, SSH/Compose execution, health checks and rollback |
@@ -41,8 +41,10 @@ Progress:
   SCM event model
 - App credentials and installation metadata storage, user/App intersection and
   atomic repository import now implemented (managed preview only)
-- Remaining: HTTP ingestion with
-  delivery idempotency, repository sync and automatic run/status orchestration
+- Signed HTTP ingestion, delivery idempotency, immutable configuration fetch,
+  atomic Run graph persistence and Runner source-protocol gating are complete.
+  Remaining: worker lifecycle wiring, secure checkout execution and automatic
+  status orchestration.
 
 ## Milestone 2 — complete CI
 

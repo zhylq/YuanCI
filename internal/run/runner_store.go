@@ -27,6 +27,7 @@ type RunnerDescriptor struct {
 	Labels             map[string]string
 	Capacity           int
 	AvailableDiskBytes int64
+	ProtocolVersion    int
 }
 
 type RunnerClaim struct {
@@ -87,7 +88,8 @@ func ValidateHeartbeatRequest(request HeartbeatRequest) error {
 	if runner.ID == uuid.Nil || (runner.PoolType != "standard" && runner.PoolType != "privileged" && runner.PoolType != "deployment") ||
 		runner.OS == "" || len(runner.OS) > 64 || runner.Architecture == "" || len(runner.Architecture) > 64 ||
 		runner.Executor == "" || len(runner.Executor) > 64 || runner.Capacity < 1 || runner.Capacity > 256 ||
-		runner.AvailableDiskBytes < 0 || len(runner.Labels) > 128 || len(request.ActiveJobs) > MaximumHeartbeatJobCount ||
+		runner.AvailableDiskBytes < 0 || runner.ProtocolVersion < 1 || runner.ProtocolVersion > 2 ||
+		len(runner.Labels) > 128 || len(request.ActiveJobs) > MaximumHeartbeatJobCount ||
 		len(request.ActiveJobs) > runner.Capacity {
 		return ErrInvalidRunnerRequest
 	}

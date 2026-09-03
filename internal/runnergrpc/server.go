@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -27,7 +28,13 @@ const (
 	registrationTimeout = 15 * time.Second
 	heartbeatInterval   = 10 * time.Second
 	leaseDuration       = 30 * time.Second
+	minimumProtocol     = uint32(1)
+	currentProtocol     = uint32(2)
 )
+
+func supportedProtocol(version uint32) bool {
+	return version >= minimumProtocol && version <= currentProtocol
+}
 
 type Server struct {
 	runnerv1.UnimplementedRunnerServiceServer
@@ -68,7 +75,7 @@ func (server *Server) Register(ctx context.Context, request *runnerv1.RegisterRe
 	}
 	ctx, cancel := boundedContext(ctx, registrationTimeout)
 	defer cancel()
-	if request == nil || request.ProtocolVersion != 1 || request.Capabilities == nil ||
+	if request == nil || !supportedProtocol(request.ProtocolVersion) || request.Capabilities == nil ||
 		len(request.OneTimeToken) > 512 || len(request.Name) > 128 || len(request.CsrPem) > runnerauth.MaxCSRBytes {
 		return nil, status.Error(codes.InvalidArgument, "invalid Runner registration request")
 	}
@@ -90,7 +97,7 @@ func (server *Server) RotateCertificate(ctx context.Context, request *runnerv1.R
 	if !ok {
 		return nil, authenticationError()
 	}
-	if request == nil || request.ProtocolVersion != 1 || len(request.CsrPem) == 0 || len(request.CsrPem) > runnerauth.MaxCSRBytes {
+	if request == nil || !supportedProtocol(request.ProtocolVersion) || len(request.CsrPem) == 0 || len(request.CsrPem) > runnerauth.MaxCSRBytes {
 		return nil, status.Error(codes.InvalidArgument, "invalid certificate rotation request")
 	}
 	certificate, err := server.auth.Rotate(ctx, identity, request.CsrPem)
@@ -160,17 +167,19 @@ type receiptMessage interface {
 
 func (server *Server) handleHeartbeat(stream grpc.BidiStreamingServer[runnerv1.WorkRequest, runnerv1.WorkResponse],
 	identity runnerauth.Identity, heartbeat *runnerv1.Heartbeat) error {
-	if heartbeat == nil || heartbeat.ProtocolVersion != 1 || heartbeat.Capabilities == nil ||
+	if heartbeat == nil || !supportedProtocol(heartbeat.ProtocolVersion) || heartbeat.Capabilities == nil ||
 		len(heartbeat.ActiveLeases) > runmodel.MaximumHeartbeatJobCount {
 		return status.Error(codes.InvalidArgument, "invalid Runner heartbeat")
 	}
 	capability, err := capabilities(heartbeat.Capabilities, heartbeat.ProtocolVersion)
-	if err != nil || capability.IsolationLevel != identity.PoolType {
+	if err != nil || capability.IsolationLevel != identity.PoolType ||
+		capability.ProtocolVersion != identity.Capabilities.ProtocolVersion {
 		return status.Error(codes.InvalidArgument, "invalid Runner heartbeat")
 	}
 	descriptor := runmodel.RunnerDescriptor{ID: identity.RunnerID, PoolType: identity.PoolType, OS: capability.OS,
 		Architecture: capability.Architecture, Executor: capability.Executor, Labels: capability.Labels,
-		Capacity: capability.Capacity, AvailableDiskBytes: capability.AvailableDiskBytes}
+		Capacity: capability.Capacity, AvailableDiskBytes: capability.AvailableDiskBytes,
+		ProtocolVersion: capability.ProtocolVersion}
 	request := runmodel.HeartbeatRequest{Runner: descriptor, ActiveJobs: make([]runmodel.ActiveLease, 0, len(heartbeat.ActiveLeases))}
 	for _, active := range heartbeat.ActiveLeases {
 		if active == nil || len(active.LeaseToken) > 512 {
@@ -323,7 +332,7 @@ func capabilities(input *runnerv1.RunnerCapabilities, protocol uint32) (runnerau
 	}
 	return runnerauth.Capabilities{OS: input.Os, Architecture: input.Architecture, Executor: input.Executor,
 		IsolationLevel: isolation, Labels: labels, Capacity: int(input.Capacity), AvailableDiskBytes: input.AvailableDiskBytes,
-		ProtocolVersion: int(protocol), RunnerVersion: "protocol-v1"}, nil
+		ProtocolVersion: int(protocol), RunnerVersion: fmt.Sprintf("protocol-v%d", protocol)}, nil
 }
 
 func boundedContext(parent context.Context, maximum time.Duration) (context.Context, context.CancelFunc) {

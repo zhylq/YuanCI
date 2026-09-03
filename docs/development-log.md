@@ -677,3 +677,21 @@ the batch outcome and remaining work.
   -timeout=120s ./...` and `go vet ./...`. The first image build was canceled
   after an Alpine package download stopped producing output; the clean retry
   completed with exit code 0.
+
+## 2026-09-03 — secure source assignment negotiation
+
+- Extended Runner protocol v2 with separate trusted source metadata and
+  ephemeral credential messages; credentials remain outside immutable plans
+  and persistent assignment records. Protocol v1 remains accepted for
+  source-free jobs during rolling upgrades.
+- PostgreSQL scheduling now reads the enrolled Runner protocol version before
+  claiming work. A protocol-v1 Runner cannot claim a repository-backed Run;
+  protocol v2 receives provider, stable repository identity, trusted HTTPS
+  clone URL and the exact event commit SHA from local database state.
+- Heartbeats must use the protocol version bound at enrollment, preventing a
+  connection from advertising a newer protocol and then downgrading its work
+  session. Generated Protobuf bindings were refreshed from the pinned Buf
+  image.
+- Focused protocol, scheduler and PostgreSQL tests passed. A real PostgreSQL 17
+  integration test verifies v1 rejection and v2 source metadata, followed by
+  `go test ./...` and `go vet ./...` in the pinned Go container.

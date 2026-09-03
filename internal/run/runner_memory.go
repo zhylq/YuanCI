@@ -172,6 +172,10 @@ func (m *MemoryStore) leaseAlive(job *memoryJob) bool {
 
 func cloneAssignment(value Assignment) Assignment {
 	value.Spec.RunsOn.Labels = cloneLabels(value.Spec.RunsOn.Labels)
+	if value.Source != nil {
+		source := *value.Source
+		value.Source = &source
+	}
 	return value
 }
 

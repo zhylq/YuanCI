@@ -46,3 +46,24 @@ func TestRegistrationAndRotationRequireCSR(t *testing.T) {
 		}
 	}
 }
+
+func TestSourceCredentialsAreSeparatedFromPlanAndMetadata(t *testing.T) {
+	t.Parallel()
+
+	assignment := (&runnerv1.JobAssignment{}).ProtoReflect().Descriptor()
+	source := assignment.Fields().ByName("source")
+	credential := assignment.Fields().ByName("credential")
+	if source == nil || source.Message().FullName() != "yuanci.runner.v1.SourceCheckout" {
+		t.Fatal("assignment does not expose a separate source descriptor")
+	}
+	if credential == nil || credential.Message().FullName() != "yuanci.runner.v1.EphemeralCredential" {
+		t.Fatal("assignment does not expose a separate ephemeral credential")
+	}
+	if field := source.Message().Fields().ByName("token"); field != nil {
+		t.Fatal("source metadata contains credential material")
+	}
+	token := credential.Message().Fields().ByName("token")
+	if token == nil || token.Kind() != protoreflect.BytesKind {
+		t.Fatal("ephemeral credential token must use a mutable bytes field")
+	}
+}

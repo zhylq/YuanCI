@@ -44,7 +44,8 @@ func ExerciseRunner(t *testing.T, provision RunnerProvision) {
 	t.Helper()
 	base := func() runmodel.RunnerDescriptor {
 		return runmodel.RunnerDescriptor{ID: uuid.New(), PoolType: "standard", OS: "linux", Architecture: "amd64",
-			Executor: "docker", Labels: map[string]string{"region/cn": "east"}, Capacity: 2, AvailableDiskBytes: 4 << 30}
+			Executor: "docker", Labels: map[string]string{"region/cn": "east"}, Capacity: 2, AvailableDiskBytes: 4 << 30,
+			ProtocolVersion: 1}
 	}
 
 	t.Run("matching_matrix", func(t *testing.T) {

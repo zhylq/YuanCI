@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,13 +26,13 @@ func (s *Store) ClaimRunnerJob(ctx context.Context, request runmodel.RunnerClaim
 
 	var poolType, runnerOS, architecture, executor string
 	var labels []byte
-	var capacity int
+	var capacity, protocolVersion int
 	var disk int64
 	err = tx.QueryRow(ctx, `SELECT pool.pool_type,COALESCE(runner.os,''),COALESCE(runner.architecture,''),
-        COALESCE(runner.executor,''),runner.labels,runner.capacity,COALESCE(runner.available_disk_bytes,0)
+		COALESCE(runner.executor,''),runner.labels,runner.capacity,COALESCE(runner.available_disk_bytes,0),runner.protocol_version
         FROM runners AS runner JOIN runner_pools AS pool ON pool.id=runner.pool_id
         WHERE runner.id=$1 AND runner.status <> 'disabled' FOR UPDATE OF runner`, request.RunnerID).
-		Scan(&poolType, &runnerOS, &architecture, &executor, &labels, &capacity, &disk)
+		Scan(&poolType, &runnerOS, &architecture, &executor, &labels, &capacity, &disk, &protocolVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, runmodel.ErrInvalidRunnerRequest
 	}
@@ -53,27 +54,34 @@ func (s *Store) ClaimRunnerJob(ctx context.Context, request runmodel.RunnerClaim
 	var assignment runmodel.Assignment
 	var spec []byte
 	err = tx.QueryRow(ctx, `SELECT run.id FROM runs AS run
-        WHERE run.status IN ('queued','running') AND EXISTS (
+		WHERE run.status IN ('queued','running') AND EXISTS (
             SELECT 1 FROM jobs AS job WHERE job.run_id=run.id AND job.status='queued'
               AND job.required_pool_type=$1 AND job.required_os=$2
               AND (job.required_architecture IS NULL OR job.required_architecture=$3)
               AND job.required_executor=$4 AND job.required_labels <@ $5::jsonb
-              AND job.required_disk_bytes <= $6)
+			  AND job.required_disk_bytes <= $6
+			  AND ($7 >= 2 OR run.repository_id IS NULL OR run.commit_sha IS NULL))
         ORDER BY run.created_at,run.id FOR UPDATE OF run SKIP LOCKED LIMIT 1`,
-		poolType, runnerOS, architecture, executor, labels, disk).Scan(&assignment.RunID)
+		poolType, runnerOS, architecture, executor, labels, disk, protocolVersion).Scan(&assignment.RunID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("lock matching run: %w", err)
 	}
-	err = tx.QueryRow(ctx, `SELECT id,run_id,stage_name,job_name,attempt,spec
-        FROM jobs WHERE run_id=$1 AND status='queued' AND required_pool_type=$2 AND required_os=$3
-          AND (required_architecture IS NULL OR required_architecture=$4) AND required_executor=$5
-          AND required_labels <@ $6::jsonb AND required_disk_bytes <= $7
-        ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1`, assignment.RunID, poolType,
-		runnerOS, architecture, executor, labels, disk).Scan(&assignment.JobID, &assignment.RunID,
-		&assignment.StageName, &assignment.JobName, &assignment.Attempt, &spec)
+	var sourceProvider, sourceRepositoryID, sourceCloneURL, sourceCommitSHA sql.NullString
+	err = tx.QueryRow(ctx, `SELECT job.id,job.run_id,job.stage_name,job.job_name,job.attempt,job.spec,
+		  repository.provider,repository.external_id,repository.clone_url,source_run.commit_sha
+		FROM jobs AS job JOIN runs AS source_run ON source_run.id=job.run_id
+		LEFT JOIN repositories AS repository ON repository.id=source_run.repository_id
+		WHERE job.run_id=$1 AND job.status='queued' AND job.required_pool_type=$2 AND job.required_os=$3
+		  AND (job.required_architecture IS NULL OR job.required_architecture=$4) AND job.required_executor=$5
+		  AND job.required_labels <@ $6::jsonb AND job.required_disk_bytes <= $7
+		  AND ($8 >= 2 OR source_run.repository_id IS NULL OR source_run.commit_sha IS NULL)
+		ORDER BY job.created_at,job.id FOR UPDATE OF job SKIP LOCKED LIMIT 1`, assignment.RunID, poolType,
+		runnerOS, architecture, executor, labels, disk, protocolVersion).Scan(&assignment.JobID, &assignment.RunID,
+		&assignment.StageName, &assignment.JobName, &assignment.Attempt, &spec, &sourceProvider,
+		&sourceRepositoryID, &sourceCloneURL, &sourceCommitSHA)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -82,6 +90,13 @@ func (s *Store) ClaimRunnerJob(ctx context.Context, request runmodel.RunnerClaim
 	}
 	if err := json.Unmarshal(spec, &assignment.Spec); err != nil {
 		return nil, fmt.Errorf("decode job spec: %w", err)
+	}
+	if sourceProvider.Valid || sourceRepositoryID.Valid || sourceCloneURL.Valid || sourceCommitSHA.Valid {
+		if !sourceProvider.Valid || !sourceRepositoryID.Valid || !sourceCloneURL.Valid || !sourceCommitSHA.Valid {
+			return nil, errors.New("source-backed job has incomplete repository metadata")
+		}
+		assignment.Source = &runmodel.SourceCheckout{Provider: sourceProvider.String,
+			RepositoryID: sourceRepositoryID.String, CloneURL: sourceCloneURL.String, CommitSHA: sourceCommitSHA.String}
 	}
 	assignment.LeaseToken = secureToken()
 	digest := sha256.Sum256([]byte(assignment.LeaseToken))

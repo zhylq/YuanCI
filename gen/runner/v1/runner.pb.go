@@ -295,7 +295,9 @@ type RegisterRequest struct {
 	Capabilities *RunnerCapabilities `protobuf:"bytes,3,opt,name=capabilities,proto3" json:"capabilities,omitempty"`
 	// csr_pem is at most 16 KiB. The Runner generates and retains the private key.
 	CsrPem []byte `protobuf:"bytes,4,opt,name=csr_pem,json=csrPem,proto3" json:"csr_pem,omitempty"`
-	// protocol_version must currently be 1.
+	// Protocol 1 supports plan-only jobs. Protocol 2 adds authenticated source
+	// checkout fields. Servers continue to accept protocol 1 for source-free
+	// jobs during rolling upgrades.
 	ProtocolVersion uint32 `protobuf:"varint,5,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
@@ -921,8 +923,14 @@ type JobAssignment struct {
 	LeaseExpiresAt *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=lease_expires_at,json=leaseExpiresAt,proto3" json:"lease_expires_at,omitempty"`
 	// execution_plan_json is at most 1 MiB.
 	ExecutionPlanJson []byte `protobuf:"bytes,5,opt,name=execution_plan_json,json=executionPlanJson,proto3" json:"execution_plan_json,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// source is present only when the job requires an immutable repository
+	// checkout. It never contains credentials.
+	Source *SourceCheckout `protobuf:"bytes,6,opt,name=source,proto3" json:"source,omitempty"`
+	// credential is present exactly when source is present. It is short-lived,
+	// write-only job material and must be cleared before user steps start.
+	Credential    *EphemeralCredential `protobuf:"bytes,7,opt,name=credential,proto3" json:"credential,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *JobAssignment) Reset() {
@@ -990,6 +998,146 @@ func (x *JobAssignment) GetExecutionPlanJson() []byte {
 	return nil
 }
 
+func (x *JobAssignment) GetSource() *SourceCheckout {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
+func (x *JobAssignment) GetCredential() *EphemeralCredential {
+	if x != nil {
+		return x.Credential
+	}
+	return nil
+}
+
+type SourceCheckout struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Provider string                 `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
+	// repository_id is the provider's stable repository identifier.
+	RepositoryId string `protobuf:"bytes,2,opt,name=repository_id,json=repositoryId,proto3" json:"repository_id,omitempty"`
+	// clone_url is a trusted HTTPS URL resolved from server-side repository
+	// state, never copied from a webhook payload.
+	CloneUrl string `protobuf:"bytes,3,opt,name=clone_url,json=cloneUrl,proto3" json:"clone_url,omitempty"`
+	// commit_sha is the exact 40-character commit to fetch and verify.
+	CommitSha     string `protobuf:"bytes,4,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourceCheckout) Reset() {
+	*x = SourceCheckout{}
+	mi := &file_runner_v1_runner_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourceCheckout) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourceCheckout) ProtoMessage() {}
+
+func (x *SourceCheckout) ProtoReflect() protoreflect.Message {
+	mi := &file_runner_v1_runner_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SourceCheckout.ProtoReflect.Descriptor instead.
+func (*SourceCheckout) Descriptor() ([]byte, []int) {
+	return file_runner_v1_runner_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *SourceCheckout) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *SourceCheckout) GetRepositoryId() string {
+	if x != nil {
+		return x.RepositoryId
+	}
+	return ""
+}
+
+func (x *SourceCheckout) GetCloneUrl() string {
+	if x != nil {
+		return x.CloneUrl
+	}
+	return ""
+}
+
+func (x *SourceCheckout) GetCommitSha() string {
+	if x != nil {
+		return x.CommitSha
+	}
+	return ""
+}
+
+type EphemeralCredential struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// token is at most 4 KiB and is delivered only over the authenticated mTLS
+	// work stream. It must never be logged, persisted, or placed in argv/env.
+	Token         []byte                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EphemeralCredential) Reset() {
+	*x = EphemeralCredential{}
+	mi := &file_runner_v1_runner_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EphemeralCredential) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EphemeralCredential) ProtoMessage() {}
+
+func (x *EphemeralCredential) ProtoReflect() protoreflect.Message {
+	mi := &file_runner_v1_runner_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EphemeralCredential.ProtoReflect.Descriptor instead.
+func (*EphemeralCredential) Descriptor() ([]byte, []int) {
+	return file_runner_v1_runner_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *EphemeralCredential) GetToken() []byte {
+	if x != nil {
+		return x.Token
+	}
+	return nil
+}
+
+func (x *EphemeralCredential) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
 type JobAccepted struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
@@ -1000,7 +1148,7 @@ type JobAccepted struct {
 
 func (x *JobAccepted) Reset() {
 	*x = JobAccepted{}
-	mi := &file_runner_v1_runner_proto_msgTypes[8]
+	mi := &file_runner_v1_runner_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1012,7 +1160,7 @@ func (x *JobAccepted) String() string {
 func (*JobAccepted) ProtoMessage() {}
 
 func (x *JobAccepted) ProtoReflect() protoreflect.Message {
-	mi := &file_runner_v1_runner_proto_msgTypes[8]
+	mi := &file_runner_v1_runner_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1025,7 +1173,7 @@ func (x *JobAccepted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobAccepted.ProtoReflect.Descriptor instead.
 func (*JobAccepted) Descriptor() ([]byte, []int) {
-	return file_runner_v1_runner_proto_rawDescGZIP(), []int{8}
+	return file_runner_v1_runner_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *JobAccepted) GetJobId() string {
@@ -1052,7 +1200,7 @@ type JobStarted struct {
 
 func (x *JobStarted) Reset() {
 	*x = JobStarted{}
-	mi := &file_runner_v1_runner_proto_msgTypes[9]
+	mi := &file_runner_v1_runner_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1064,7 +1212,7 @@ func (x *JobStarted) String() string {
 func (*JobStarted) ProtoMessage() {}
 
 func (x *JobStarted) ProtoReflect() protoreflect.Message {
-	mi := &file_runner_v1_runner_proto_msgTypes[9]
+	mi := &file_runner_v1_runner_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1077,7 +1225,7 @@ func (x *JobStarted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobStarted.ProtoReflect.Descriptor instead.
 func (*JobStarted) Descriptor() ([]byte, []int) {
-	return file_runner_v1_runner_proto_rawDescGZIP(), []int{9}
+	return file_runner_v1_runner_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *JobStarted) GetJobId() string {
@@ -1104,7 +1252,7 @@ type LeaseRenewed struct {
 
 func (x *LeaseRenewed) Reset() {
 	*x = LeaseRenewed{}
-	mi := &file_runner_v1_runner_proto_msgTypes[10]
+	mi := &file_runner_v1_runner_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1116,7 +1264,7 @@ func (x *LeaseRenewed) String() string {
 func (*LeaseRenewed) ProtoMessage() {}
 
 func (x *LeaseRenewed) ProtoReflect() protoreflect.Message {
-	mi := &file_runner_v1_runner_proto_msgTypes[10]
+	mi := &file_runner_v1_runner_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1129,7 +1277,7 @@ func (x *LeaseRenewed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaseRenewed.ProtoReflect.Descriptor instead.
 func (*LeaseRenewed) Descriptor() ([]byte, []int) {
-	return file_runner_v1_runner_proto_rawDescGZIP(), []int{10}
+	return file_runner_v1_runner_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *LeaseRenewed) GetJobId() string {
@@ -1157,7 +1305,7 @@ type CancelJob struct {
 
 func (x *CancelJob) Reset() {
 	*x = CancelJob{}
-	mi := &file_runner_v1_runner_proto_msgTypes[11]
+	mi := &file_runner_v1_runner_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1169,7 +1317,7 @@ func (x *CancelJob) String() string {
 func (*CancelJob) ProtoMessage() {}
 
 func (x *CancelJob) ProtoReflect() protoreflect.Message {
-	mi := &file_runner_v1_runner_proto_msgTypes[11]
+	mi := &file_runner_v1_runner_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1182,7 +1330,7 @@ func (x *CancelJob) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelJob.ProtoReflect.Descriptor instead.
 func (*CancelJob) Descriptor() ([]byte, []int) {
-	return file_runner_v1_runner_proto_rawDescGZIP(), []int{11}
+	return file_runner_v1_runner_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *CancelJob) GetJobId() string {
@@ -1221,7 +1369,7 @@ type LogChunk struct {
 
 func (x *LogChunk) Reset() {
 	*x = LogChunk{}
-	mi := &file_runner_v1_runner_proto_msgTypes[12]
+	mi := &file_runner_v1_runner_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1233,7 +1381,7 @@ func (x *LogChunk) String() string {
 func (*LogChunk) ProtoMessage() {}
 
 func (x *LogChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_runner_v1_runner_proto_msgTypes[12]
+	mi := &file_runner_v1_runner_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1246,7 +1394,7 @@ func (x *LogChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogChunk.ProtoReflect.Descriptor instead.
 func (*LogChunk) Descriptor() ([]byte, []int) {
-	return file_runner_v1_runner_proto_rawDescGZIP(), []int{12}
+	return file_runner_v1_runner_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *LogChunk) GetJobId() string {
@@ -1305,7 +1453,7 @@ type JobCompleted struct {
 
 func (x *JobCompleted) Reset() {
 	*x = JobCompleted{}
-	mi := &file_runner_v1_runner_proto_msgTypes[13]
+	mi := &file_runner_v1_runner_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1317,7 +1465,7 @@ func (x *JobCompleted) String() string {
 func (*JobCompleted) ProtoMessage() {}
 
 func (x *JobCompleted) ProtoReflect() protoreflect.Message {
-	mi := &file_runner_v1_runner_proto_msgTypes[13]
+	mi := &file_runner_v1_runner_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1330,7 +1478,7 @@ func (x *JobCompleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobCompleted.ProtoReflect.Descriptor instead.
 func (*JobCompleted) Descriptor() ([]byte, []int) {
-	return file_runner_v1_runner_proto_rawDescGZIP(), []int{13}
+	return file_runner_v1_runner_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *JobCompleted) GetJobId() string {
@@ -1386,7 +1534,7 @@ type JobRejected struct {
 
 func (x *JobRejected) Reset() {
 	*x = JobRejected{}
-	mi := &file_runner_v1_runner_proto_msgTypes[14]
+	mi := &file_runner_v1_runner_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1398,7 +1546,7 @@ func (x *JobRejected) String() string {
 func (*JobRejected) ProtoMessage() {}
 
 func (x *JobRejected) ProtoReflect() protoreflect.Message {
-	mi := &file_runner_v1_runner_proto_msgTypes[14]
+	mi := &file_runner_v1_runner_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1411,7 +1559,7 @@ func (x *JobRejected) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobRejected.ProtoReflect.Descriptor instead.
 func (*JobRejected) Descriptor() ([]byte, []int) {
-	return file_runner_v1_runner_proto_rawDescGZIP(), []int{14}
+	return file_runner_v1_runner_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *JobRejected) GetJobId() string {
@@ -1447,7 +1595,7 @@ type RotateCertificateRequest struct {
 
 func (x *RotateCertificateRequest) Reset() {
 	*x = RotateCertificateRequest{}
-	mi := &file_runner_v1_runner_proto_msgTypes[15]
+	mi := &file_runner_v1_runner_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1459,7 +1607,7 @@ func (x *RotateCertificateRequest) String() string {
 func (*RotateCertificateRequest) ProtoMessage() {}
 
 func (x *RotateCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_runner_v1_runner_proto_msgTypes[15]
+	mi := &file_runner_v1_runner_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1472,7 +1620,7 @@ func (x *RotateCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateCertificateRequest.ProtoReflect.Descriptor instead.
 func (*RotateCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_runner_v1_runner_proto_rawDescGZIP(), []int{15}
+	return file_runner_v1_runner_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *RotateCertificateRequest) GetCsrPem() []byte {
@@ -1501,7 +1649,7 @@ type RotateCertificateResponse struct {
 
 func (x *RotateCertificateResponse) Reset() {
 	*x = RotateCertificateResponse{}
-	mi := &file_runner_v1_runner_proto_msgTypes[16]
+	mi := &file_runner_v1_runner_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1513,7 +1661,7 @@ func (x *RotateCertificateResponse) String() string {
 func (*RotateCertificateResponse) ProtoMessage() {}
 
 func (x *RotateCertificateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_runner_v1_runner_proto_msgTypes[16]
+	mi := &file_runner_v1_runner_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1526,7 +1674,7 @@ func (x *RotateCertificateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateCertificateResponse.ProtoReflect.Descriptor instead.
 func (*RotateCertificateResponse) Descriptor() ([]byte, []int) {
-	return file_runner_v1_runner_proto_rawDescGZIP(), []int{16}
+	return file_runner_v1_runner_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *RotateCertificateResponse) GetCertificateChainPem() []byte {
@@ -1604,14 +1752,28 @@ const file_runner_v1_runner_proto_rawDesc = "" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1f\n" +
 	"\vlease_token\x18\x02 \x01(\tR\n" +
 	"leaseToken\x125\n" +
-	"\x05state\x18\x03 \x01(\x0e2\x1f.yuanci.runner.v1.LocalJobStateR\x05state\"\xd4\x01\n" +
+	"\x05state\x18\x03 \x01(\x0e2\x1f.yuanci.runner.v1.LocalJobStateR\x05state\"\xd5\x02\n" +
 	"\rJobAssignment\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x1f\n" +
 	"\vlease_token\x18\x03 \x01(\tR\n" +
 	"leaseToken\x12D\n" +
 	"\x10lease_expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x0eleaseExpiresAt\x12.\n" +
-	"\x13execution_plan_json\x18\x05 \x01(\fR\x11executionPlanJson\"E\n" +
+	"\x13execution_plan_json\x18\x05 \x01(\fR\x11executionPlanJson\x128\n" +
+	"\x06source\x18\x06 \x01(\v2 .yuanci.runner.v1.SourceCheckoutR\x06source\x12E\n" +
+	"\n" +
+	"credential\x18\a \x01(\v2%.yuanci.runner.v1.EphemeralCredentialR\n" +
+	"credential\"\x8d\x01\n" +
+	"\x0eSourceCheckout\x12\x1a\n" +
+	"\bprovider\x18\x01 \x01(\tR\bprovider\x12#\n" +
+	"\rrepository_id\x18\x02 \x01(\tR\frepositoryId\x12\x1b\n" +
+	"\tclone_url\x18\x03 \x01(\tR\bcloneUrl\x12\x1d\n" +
+	"\n" +
+	"commit_sha\x18\x04 \x01(\tR\tcommitSha\"f\n" +
+	"\x13EphemeralCredential\x12\x14\n" +
+	"\x05token\x18\x01 \x01(\fR\x05token\x129\n" +
+	"\n" +
+	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"E\n" +
 	"\vJobAccepted\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1f\n" +
 	"\vlease_token\x18\x02 \x01(\tR\n" +
@@ -1703,7 +1865,7 @@ func file_runner_v1_runner_proto_rawDescGZIP() []byte {
 }
 
 var file_runner_v1_runner_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_runner_v1_runner_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_runner_v1_runner_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_runner_v1_runner_proto_goTypes = []any{
 	(IsolationLevel)(0),               // 0: yuanci.runner.v1.IsolationLevel
 	(LocalJobState)(0),                // 1: yuanci.runner.v1.LocalJobState
@@ -1718,57 +1880,62 @@ var file_runner_v1_runner_proto_goTypes = []any{
 	(*Heartbeat)(nil),                 // 10: yuanci.runner.v1.Heartbeat
 	(*ActiveLease)(nil),               // 11: yuanci.runner.v1.ActiveLease
 	(*JobAssignment)(nil),             // 12: yuanci.runner.v1.JobAssignment
-	(*JobAccepted)(nil),               // 13: yuanci.runner.v1.JobAccepted
-	(*JobStarted)(nil),                // 14: yuanci.runner.v1.JobStarted
-	(*LeaseRenewed)(nil),              // 15: yuanci.runner.v1.LeaseRenewed
-	(*CancelJob)(nil),                 // 16: yuanci.runner.v1.CancelJob
-	(*LogChunk)(nil),                  // 17: yuanci.runner.v1.LogChunk
-	(*JobCompleted)(nil),              // 18: yuanci.runner.v1.JobCompleted
-	(*JobRejected)(nil),               // 19: yuanci.runner.v1.JobRejected
-	(*RotateCertificateRequest)(nil),  // 20: yuanci.runner.v1.RotateCertificateRequest
-	(*RotateCertificateResponse)(nil), // 21: yuanci.runner.v1.RotateCertificateResponse
-	nil,                               // 22: yuanci.runner.v1.RunnerCapabilities.LabelsEntry
-	(*timestamppb.Timestamp)(nil),     // 23: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),       // 24: google.protobuf.Duration
+	(*SourceCheckout)(nil),            // 13: yuanci.runner.v1.SourceCheckout
+	(*EphemeralCredential)(nil),       // 14: yuanci.runner.v1.EphemeralCredential
+	(*JobAccepted)(nil),               // 15: yuanci.runner.v1.JobAccepted
+	(*JobStarted)(nil),                // 16: yuanci.runner.v1.JobStarted
+	(*LeaseRenewed)(nil),              // 17: yuanci.runner.v1.LeaseRenewed
+	(*CancelJob)(nil),                 // 18: yuanci.runner.v1.CancelJob
+	(*LogChunk)(nil),                  // 19: yuanci.runner.v1.LogChunk
+	(*JobCompleted)(nil),              // 20: yuanci.runner.v1.JobCompleted
+	(*JobRejected)(nil),               // 21: yuanci.runner.v1.JobRejected
+	(*RotateCertificateRequest)(nil),  // 22: yuanci.runner.v1.RotateCertificateRequest
+	(*RotateCertificateResponse)(nil), // 23: yuanci.runner.v1.RotateCertificateResponse
+	nil,                               // 24: yuanci.runner.v1.RunnerCapabilities.LabelsEntry
+	(*timestamppb.Timestamp)(nil),     // 25: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),       // 26: google.protobuf.Duration
 }
 var file_runner_v1_runner_proto_depIdxs = []int32{
 	7,  // 0: yuanci.runner.v1.RegisterRequest.capabilities:type_name -> yuanci.runner.v1.RunnerCapabilities
-	23, // 1: yuanci.runner.v1.RegisterResponse.expires_at:type_name -> google.protobuf.Timestamp
-	24, // 2: yuanci.runner.v1.RegisterResponse.heartbeat_interval:type_name -> google.protobuf.Duration
-	24, // 3: yuanci.runner.v1.RegisterResponse.lease_duration:type_name -> google.protobuf.Duration
-	22, // 4: yuanci.runner.v1.RunnerCapabilities.labels:type_name -> yuanci.runner.v1.RunnerCapabilities.LabelsEntry
+	25, // 1: yuanci.runner.v1.RegisterResponse.expires_at:type_name -> google.protobuf.Timestamp
+	26, // 2: yuanci.runner.v1.RegisterResponse.heartbeat_interval:type_name -> google.protobuf.Duration
+	26, // 3: yuanci.runner.v1.RegisterResponse.lease_duration:type_name -> google.protobuf.Duration
+	24, // 4: yuanci.runner.v1.RunnerCapabilities.labels:type_name -> yuanci.runner.v1.RunnerCapabilities.LabelsEntry
 	0,  // 5: yuanci.runner.v1.RunnerCapabilities.isolation_level:type_name -> yuanci.runner.v1.IsolationLevel
 	10, // 6: yuanci.runner.v1.WorkRequest.heartbeat:type_name -> yuanci.runner.v1.Heartbeat
-	13, // 7: yuanci.runner.v1.WorkRequest.job_accepted:type_name -> yuanci.runner.v1.JobAccepted
-	14, // 8: yuanci.runner.v1.WorkRequest.job_started:type_name -> yuanci.runner.v1.JobStarted
-	17, // 9: yuanci.runner.v1.WorkRequest.log_chunk:type_name -> yuanci.runner.v1.LogChunk
-	18, // 10: yuanci.runner.v1.WorkRequest.job_completed:type_name -> yuanci.runner.v1.JobCompleted
+	15, // 7: yuanci.runner.v1.WorkRequest.job_accepted:type_name -> yuanci.runner.v1.JobAccepted
+	16, // 8: yuanci.runner.v1.WorkRequest.job_started:type_name -> yuanci.runner.v1.JobStarted
+	19, // 9: yuanci.runner.v1.WorkRequest.log_chunk:type_name -> yuanci.runner.v1.LogChunk
+	20, // 10: yuanci.runner.v1.WorkRequest.job_completed:type_name -> yuanci.runner.v1.JobCompleted
 	12, // 11: yuanci.runner.v1.WorkResponse.assignment:type_name -> yuanci.runner.v1.JobAssignment
-	16, // 12: yuanci.runner.v1.WorkResponse.cancel:type_name -> yuanci.runner.v1.CancelJob
-	15, // 13: yuanci.runner.v1.WorkResponse.lease_renewed:type_name -> yuanci.runner.v1.LeaseRenewed
-	19, // 14: yuanci.runner.v1.WorkResponse.job_rejected:type_name -> yuanci.runner.v1.JobRejected
+	18, // 12: yuanci.runner.v1.WorkResponse.cancel:type_name -> yuanci.runner.v1.CancelJob
+	17, // 13: yuanci.runner.v1.WorkResponse.lease_renewed:type_name -> yuanci.runner.v1.LeaseRenewed
+	21, // 14: yuanci.runner.v1.WorkResponse.job_rejected:type_name -> yuanci.runner.v1.JobRejected
 	7,  // 15: yuanci.runner.v1.Heartbeat.capabilities:type_name -> yuanci.runner.v1.RunnerCapabilities
 	11, // 16: yuanci.runner.v1.Heartbeat.active_leases:type_name -> yuanci.runner.v1.ActiveLease
 	1,  // 17: yuanci.runner.v1.ActiveLease.state:type_name -> yuanci.runner.v1.LocalJobState
-	23, // 18: yuanci.runner.v1.JobAssignment.lease_expires_at:type_name -> google.protobuf.Timestamp
-	23, // 19: yuanci.runner.v1.LeaseRenewed.expires_at:type_name -> google.protobuf.Timestamp
-	2,  // 20: yuanci.runner.v1.CancelJob.reason:type_name -> yuanci.runner.v1.CancelReason
-	3,  // 21: yuanci.runner.v1.JobCompleted.conclusion:type_name -> yuanci.runner.v1.JobConclusion
-	24, // 22: yuanci.runner.v1.JobCompleted.duration:type_name -> google.protobuf.Duration
-	4,  // 23: yuanci.runner.v1.JobRejected.reason:type_name -> yuanci.runner.v1.JobRejectReason
-	23, // 24: yuanci.runner.v1.RotateCertificateResponse.expires_at:type_name -> google.protobuf.Timestamp
-	23, // 25: yuanci.runner.v1.RotateCertificateResponse.previous_certificate_valid_until:type_name -> google.protobuf.Timestamp
-	5,  // 26: yuanci.runner.v1.RunnerService.Register:input_type -> yuanci.runner.v1.RegisterRequest
-	8,  // 27: yuanci.runner.v1.RunnerService.Work:input_type -> yuanci.runner.v1.WorkRequest
-	20, // 28: yuanci.runner.v1.RunnerService.RotateCertificate:input_type -> yuanci.runner.v1.RotateCertificateRequest
-	6,  // 29: yuanci.runner.v1.RunnerService.Register:output_type -> yuanci.runner.v1.RegisterResponse
-	9,  // 30: yuanci.runner.v1.RunnerService.Work:output_type -> yuanci.runner.v1.WorkResponse
-	21, // 31: yuanci.runner.v1.RunnerService.RotateCertificate:output_type -> yuanci.runner.v1.RotateCertificateResponse
-	29, // [29:32] is the sub-list for method output_type
-	26, // [26:29] is the sub-list for method input_type
-	26, // [26:26] is the sub-list for extension type_name
-	26, // [26:26] is the sub-list for extension extendee
-	0,  // [0:26] is the sub-list for field type_name
+	25, // 18: yuanci.runner.v1.JobAssignment.lease_expires_at:type_name -> google.protobuf.Timestamp
+	13, // 19: yuanci.runner.v1.JobAssignment.source:type_name -> yuanci.runner.v1.SourceCheckout
+	14, // 20: yuanci.runner.v1.JobAssignment.credential:type_name -> yuanci.runner.v1.EphemeralCredential
+	25, // 21: yuanci.runner.v1.EphemeralCredential.expires_at:type_name -> google.protobuf.Timestamp
+	25, // 22: yuanci.runner.v1.LeaseRenewed.expires_at:type_name -> google.protobuf.Timestamp
+	2,  // 23: yuanci.runner.v1.CancelJob.reason:type_name -> yuanci.runner.v1.CancelReason
+	3,  // 24: yuanci.runner.v1.JobCompleted.conclusion:type_name -> yuanci.runner.v1.JobConclusion
+	26, // 25: yuanci.runner.v1.JobCompleted.duration:type_name -> google.protobuf.Duration
+	4,  // 26: yuanci.runner.v1.JobRejected.reason:type_name -> yuanci.runner.v1.JobRejectReason
+	25, // 27: yuanci.runner.v1.RotateCertificateResponse.expires_at:type_name -> google.protobuf.Timestamp
+	25, // 28: yuanci.runner.v1.RotateCertificateResponse.previous_certificate_valid_until:type_name -> google.protobuf.Timestamp
+	5,  // 29: yuanci.runner.v1.RunnerService.Register:input_type -> yuanci.runner.v1.RegisterRequest
+	8,  // 30: yuanci.runner.v1.RunnerService.Work:input_type -> yuanci.runner.v1.WorkRequest
+	22, // 31: yuanci.runner.v1.RunnerService.RotateCertificate:input_type -> yuanci.runner.v1.RotateCertificateRequest
+	6,  // 32: yuanci.runner.v1.RunnerService.Register:output_type -> yuanci.runner.v1.RegisterResponse
+	9,  // 33: yuanci.runner.v1.RunnerService.Work:output_type -> yuanci.runner.v1.WorkResponse
+	23, // 34: yuanci.runner.v1.RunnerService.RotateCertificate:output_type -> yuanci.runner.v1.RotateCertificateResponse
+	32, // [32:35] is the sub-list for method output_type
+	29, // [29:32] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_runner_v1_runner_proto_init() }
@@ -1795,7 +1962,7 @@ func file_runner_v1_runner_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_runner_v1_runner_proto_rawDesc), len(file_runner_v1_runner_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   18,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

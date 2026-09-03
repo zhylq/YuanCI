@@ -178,7 +178,7 @@ func TestExpiredRunnerLeaseCannotBeRenewedOrChanged(t *testing.T) {
 	}
 	defer store.Close()
 	runner := runmodel.RunnerDescriptor{ID: uuid.New(), PoolType: "standard", OS: "linux", Architecture: "amd64",
-		Executor: "docker", Labels: map[string]string{}, Capacity: 1, AvailableDiskBytes: 1 << 30}
+		Executor: "docker", Labels: map[string]string{}, Capacity: 1, AvailableDiskBytes: 1 << 30, ProtocolVersion: 1}
 	poolID := uuid.New()
 	if _, err := store.pool.Exec(t.Context(), `INSERT INTO runner_pools(id,name,pool_type) VALUES ($1,$2,'standard')`,
 		poolID, "deadline-pool"); err != nil {
@@ -369,7 +369,7 @@ func newRecoveryStore(t *testing.T) (*Store, runmodel.RunnerDescriptor) {
 	}
 	t.Cleanup(store.Close)
 	runner := runmodel.RunnerDescriptor{ID: uuid.New(), PoolType: "standard", OS: "linux", Architecture: "amd64",
-		Executor: "docker", Labels: map[string]string{}, Capacity: 4, AvailableDiskBytes: 4 << 30}
+		Executor: "docker", Labels: map[string]string{}, Capacity: 4, AvailableDiskBytes: 4 << 30, ProtocolVersion: 1}
 	poolID := uuid.New()
 	if _, err := store.pool.Exec(t.Context(), `INSERT INTO runner_pools(id,name,pool_type) VALUES ($1,$2,'standard')`,
 		poolID, "recovery-"+runner.ID.String()); err != nil {

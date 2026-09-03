@@ -3,6 +3,8 @@ package postgres
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/yuanci/yuanci/internal/githubci"
 	"github.com/yuanci/yuanci/internal/githubhook"
 	"github.com/yuanci/yuanci/internal/pipeline"
+	runmodel "github.com/yuanci/yuanci/internal/run"
 	"github.com/yuanci/yuanci/internal/scm"
 )
 
@@ -137,6 +140,58 @@ func TestCommitWebhookRunIsAtomicAndIdempotent(t *testing.T) {
 	}
 	if err := store.pool.QueryRow(t.Context(), `SELECT count(*) FROM pipeline_versions`).Scan(&versions); err != nil || versions != 1 {
 		t.Fatalf("conflicting replay changed versions: %d %v", versions, err)
+	}
+}
+
+func TestSourceRunRequiresProtocolTwoRunner(t *testing.T) {
+	store, service, session, _ := importFixture(t)
+	authorizeImport(t, service, session.Token)
+	imported, err := service.Import(t.Context(), session.Token, "34", []string{"70"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := claimedGitHubDelivery(t, store, "70")
+	plan, err := pipeline.Compile([]byte(githubCIPipeline), item.Event.ReceivedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.CommitWebhookRun(t.Context(), githubci.RunCommit{Delivery: item,
+		RepositoryID: imported[0].ID, PipelinePath: ".yuanci.yml", PipelineSource: []byte(githubCIPipeline),
+		Plan: plan, CreatedAt: item.Event.ReceivedAt})
+	if err != nil || !created.Created {
+		t.Fatalf("create source run: %#v %v", created, err)
+	}
+
+	poolID := uuid.New()
+	if _, err := store.pool.Exec(t.Context(), `INSERT INTO runner_pools(id,name,pool_type)
+		VALUES ($1,$2,'standard')`, poolID, "source-protocol-pool"); err != nil {
+		t.Fatal(err)
+	}
+	insertRunner := func(protocol int) uuid.UUID {
+		runnerID := uuid.New()
+		_, insertErr := store.pool.Exec(t.Context(), `INSERT INTO runners
+			(id,pool_id,name,status,capacity,labels,certificate_serial,os,architecture,executor,
+			 isolation_level,available_disk_bytes,protocol_version,runner_version)
+			VALUES ($1,$2,$3,'online',1,'{}'::jsonb,$4,'linux','amd64','docker','standard',$5,$6,$7)`,
+			runnerID, poolID, "source-runner-"+runnerID.String(), "serial-"+runnerID.String(), int64(4<<30),
+			protocol, fmt.Sprintf("protocol-v%d", protocol))
+		if insertErr != nil {
+			t.Fatal(insertErr)
+		}
+		return runnerID
+	}
+	legacy := insertRunner(1)
+	if assignment, err := store.ClaimRunnerJob(t.Context(), runmodel.RunnerClaim{RunnerID: legacy}); err != nil || assignment != nil {
+		t.Fatalf("protocol 1 received source job: %#v %v", assignment, err)
+	}
+	current := insertRunner(2)
+	assignment, err := store.ClaimRunnerJob(t.Context(), runmodel.RunnerClaim{RunnerID: current})
+	if err != nil || assignment == nil || assignment.Source == nil {
+		t.Fatalf("protocol 2 source claim: %#v %v", assignment, err)
+	}
+	if assignment.Source.Provider != "github" || assignment.Source.RepositoryID != "70" ||
+		assignment.Source.CommitSHA != item.Event.AfterSHA || !strings.HasPrefix(assignment.Source.CloneURL, "https://") {
+		t.Fatalf("untrusted source descriptor: %#v", assignment.Source)
 	}
 }
 

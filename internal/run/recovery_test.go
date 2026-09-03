@@ -106,7 +106,7 @@ func recoveryFixture(t *testing.T, downstream bool) (*MemoryStore, RunnerDescrip
 	store := NewMemoryStore()
 	store.now = func() time.Time { return now }
 	runner := RunnerDescriptor{ID: uuid.New(), PoolType: "standard", OS: "linux", Architecture: "amd64",
-		Executor: "docker", Labels: map[string]string{}, Capacity: 1, AvailableDiskBytes: 1 << 30}
+		Executor: "docker", Labels: map[string]string{}, Capacity: 1, AvailableDiskBytes: 1 << 30, ProtocolVersion: 1}
 	if _, err := store.RenewRunnerLeases(t.Context(), HeartbeatRequest{Runner: runner}); err != nil {
 		t.Fatal(err)
 	}

@@ -61,6 +61,16 @@ type Assignment struct {
 	LeaseToken   string           `json:"lease_token"`
 	LeaseExpires time.Time        `json:"lease_expires_at"`
 	Spec         pipeline.PlanJob `json:"spec"`
+	Source       *SourceCheckout  `json:"-"`
+}
+
+// SourceCheckout is trusted control-plane metadata for an immutable checkout.
+// Credentials are deliberately not part of this persistent assignment model.
+type SourceCheckout struct {
+	Provider     string
+	RepositoryID string
+	CloneURL     string
+	CommitSHA    string
 }
 
 type memoryJob struct {

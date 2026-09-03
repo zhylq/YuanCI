@@ -24,7 +24,9 @@ message RegisterRequest {
   RunnerCapabilities capabilities = 3;
   // csr_pem is at most 16 KiB. The Runner generates and retains the private key.
   bytes csr_pem = 4;
-  // protocol_version must currently be 1.
+  // Protocol 1 supports plan-only jobs. Protocol 2 adds authenticated source
+  // checkout fields. Servers continue to accept protocol 1 for source-free
+  // jobs during rolling upgrades.
   uint32 protocol_version = 5;
 }
 
@@ -111,6 +113,30 @@ message JobAssignment {
   google.protobuf.Timestamp lease_expires_at = 4;
   // execution_plan_json is at most 1 MiB.
   bytes execution_plan_json = 5;
+  // source is present only when the job requires an immutable repository
+  // checkout. It never contains credentials.
+  SourceCheckout source = 6;
+  // credential is present exactly when source is present. It is short-lived,
+  // write-only job material and must be cleared before user steps start.
+  EphemeralCredential credential = 7;
+}
+
+message SourceCheckout {
+  string provider = 1;
+  // repository_id is the provider's stable repository identifier.
+  string repository_id = 2;
+  // clone_url is a trusted HTTPS URL resolved from server-side repository
+  // state, never copied from a webhook payload.
+  string clone_url = 3;
+  // commit_sha is the exact 40-character commit to fetch and verify.
+  string commit_sha = 4;
+}
+
+message EphemeralCredential {
+  // token is at most 4 KiB and is delivered only over the authenticated mTLS
+  // work stream. It must never be logged, persisted, or placed in argv/env.
+  bytes token = 1;
+  google.protobuf.Timestamp expires_at = 2;
 }
 
 message JobAccepted {
