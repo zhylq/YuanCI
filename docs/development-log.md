@@ -799,3 +799,21 @@ the batch outcome and remaining work.
   Focused package tests, vet and `git diff --check` passed. GH-05 is not a phase
   gate, so no full repository suite, frontend build, Compose validation or
   deployment-image build was run.
+
+## 2026-09-03 — SRC-01 repository checkout credential issuance
+
+- Added a dedicated GitHub App service contract that issues an ephemeral
+  checkout token only when the trusted local repository UUID and GitHub
+  repository ID resolve to the same active imported binding.
+- Checkout credentials retain the provider-enforced single-repository
+  `contents:read` scope and are accepted only with a bounded token value and an
+  expiry more than 30 seconds but no more than 65 minutes in the future.
+- Decrypted GitHub App private-key buffers are cleared after every issuance
+  attempt. Rejected or partially returned provider token buffers are also
+  cleared; ownership of a successful token is explicitly transferred to the
+  caller for later delivery and cleanup.
+- Focused `internal/githubapp` and `internal/integration` tests cover binding,
+  lifetime, provider-failure and buffer-clearing behavior. Focused tests, vet
+  and `git diff --check` passed. SRC-01 is not a phase gate, so no full
+  repository suite, frontend build, Compose validation or deployment-image
+  build was run.

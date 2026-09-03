@@ -3,6 +3,7 @@
 package githubapp
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -57,6 +58,14 @@ type ValidationProof struct {
 	PipelineName string
 }
 
+// CheckoutCredential is an ephemeral token bound to one trusted GitHub
+// repository. The caller owns Token and must clear it after delivery or use.
+type CheckoutCredential struct {
+	RepositoryID string
+	Token        []byte
+	ExpiresAt    time.Time
+}
+
 type Service struct {
 	store    Store
 	cipher   *secrets.Cipher
@@ -73,6 +82,42 @@ func New(store Store, cipher *secrets.Cipher, provider Provider) (*Service, erro
 
 // KeyAAD is the stable associated-data contract for encrypted GitHub App keys.
 func KeyAAD(id uuid.UUID) []byte { return []byte("yuanci:github-app:" + id.String()) }
+
+// IssueCheckoutCredential mints a repository-scoped contents:read token for a
+// locally trusted repository binding. The local and provider identifiers must
+// both match the same active repository record.
+func (s *Service) IssueCheckoutCredential(ctx context.Context, repositoryID uuid.UUID, externalID string) (CheckoutCredential, error) {
+	fail := func(err error) (CheckoutCredential, error) { return CheckoutCredential{}, err }
+	if repositoryID == uuid.Nil || !identity.ValidGitHubSubject(externalID) {
+		return fail(ErrRepositoryUnavailable)
+	}
+	repository, err := s.store.ResolveGitHubRepository(ctx, externalID)
+	if err != nil {
+		return fail(err)
+	}
+	if repository.ID != repositoryID || repository.ExternalID != externalID {
+		return fail(ErrRepositoryUnavailable)
+	}
+	key, err := s.cipher.Open(repository.EncryptedKey, KeyAAD(repository.AppID))
+	if err != nil {
+		return fail(ErrCredentialUnavailable)
+	}
+	defer clear(key)
+	token, expiry, err := s.provider.InstallationToken(ctx, repository.AppClientID, key,
+		repository.InstallationID, repository.ExternalID)
+	if err != nil {
+		clear(token)
+		return fail(fmt.Errorf("mint GitHub checkout token: %w", err))
+	}
+	now := s.now()
+	if len(token) == 0 || len(token) > 8192 || bytes.IndexFunc(token, func(r rune) bool {
+		return r == ' ' || r == '\r' || r == '\n' || r == 0
+	}) >= 0 || !expiry.After(now.Add(30*time.Second)) || expiry.After(now.Add(65*time.Minute)) {
+		clear(token)
+		return fail(ErrCredentialUnavailable)
+	}
+	return CheckoutCredential{RepositoryID: repository.ExternalID, Token: token, ExpiresAt: expiry}, nil
+}
 
 // FetchPipeline reads only from the immutable event commit. The returned
 // repository is resolved from local trusted state, never from webhook URLs.
