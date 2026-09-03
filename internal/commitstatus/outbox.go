@@ -51,6 +51,9 @@ type Item struct {
 type RecoveryRepository interface {
 	ClaimCommitStatus(context.Context, time.Duration) (*Item, error)
 	RecoverCommitStatusLeases(context.Context, int) (int, error)
+	FinishCommitStatus(context.Context, uuid.UUID, uuid.UUID) error
+	RescheduleCommitStatus(context.Context, uuid.UUID, uuid.UUID, time.Time, string, bool) error
+	ReplayCommitStatus(context.Context, uuid.UUID, uuid.UUID) error
 }
 
 func (state State) Valid() bool {

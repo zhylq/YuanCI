@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yuanci/yuanci/internal/commitstatus"
 	"github.com/yuanci/yuanci/internal/config"
 	"github.com/yuanci/yuanci/internal/githubapp"
 	"github.com/yuanci/yuanci/internal/githubci"
@@ -117,6 +118,18 @@ func main() {
 		}
 		stopGitHubWorker := startGitHubWorker(worker)
 		defer stopGitHubWorker()
+		statusProvider, workerErr := commitstatus.NewGitHubProvider(githubPipeline)
+		if workerErr != nil {
+			logger.Error("GitHub status provider initialization failed")
+			os.Exit(2)
+		}
+		statusWorker, workerErr := commitstatus.NewWorker(database, statusProvider, logger)
+		if workerErr != nil {
+			logger.Error("commit status worker initialization failed")
+			os.Exit(2)
+		}
+		stopStatusWorker := startStatusWorker(statusWorker)
+		defer stopStatusWorker()
 	}
 
 	server := &http.Server{
@@ -247,6 +260,19 @@ func startLeaseRecovery(logger *slog.Logger, store runmodel.LeaseRecoveryStore) 
 }
 
 func startGitHubWorker(worker *githubci.Worker) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		worker.Run(ctx)
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+func startStatusWorker(worker *commitstatus.Worker) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {

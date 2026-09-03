@@ -959,3 +959,19 @@ the batch outcome and remaining work.
   and oversized responses. A PostgreSQL 17 claim test verifies external identity
   hydration; affected package tests, vet and `git diff --check` passed. STAT-03
   is not a phase gate.
+
+## 2026-09-03 — STAT-04 durable status worker and replay
+
+- Added the durable commit-status worker with startup/periodic lease and expiry
+  recovery, bounded claims, exponential transient retry, explicit rate-limit
+  scheduling, attempt/expiry dead letters and stable non-secret error codes.
+- Provider success is acknowledged only with the matching live claim lease. A
+  crash or database failure after the provider write leaves the item recoverable
+  for safe replay of the same SHA/context status. Server startup and shutdown
+  now own and await the worker alongside webhook processing.
+- Added a dead-only administrator replay service/repository operation that
+  requires actor identity, resets delivery bounds atomically and records an
+  audit event. PostgreSQL 17 tests cover conditional completion, replay, audit
+  and expiry sweep; worker tests cover the provider-success crash window,
+  rate-limit retry, dead letters and lifecycle shutdown. Affected package tests,
+  vet and `git diff --check` passed. STAT-04 is not a phase gate.

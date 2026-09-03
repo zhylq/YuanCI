@@ -94,9 +94,10 @@ func (s *Store) RecoverCommitStatusLeases(ctx context.Context, limit int) (int, 
 		return 0, commitstatus.ErrInvalid
 	}
 	command, err := s.pool.Exec(ctx, `WITH expired AS (
-		SELECT id FROM commit_status_outbox WHERE delivery_state='processing'
-		AND lease_expires_at<=clock_timestamp() ORDER BY lease_expires_at,id
-		FOR UPDATE SKIP LOCKED LIMIT $1
+		SELECT id FROM commit_status_outbox WHERE
+		(delivery_state='processing' AND lease_expires_at<=clock_timestamp()) OR
+		(delivery_state='queued' AND expires_at<=clock_timestamp())
+		ORDER BY COALESCE(lease_expires_at,expires_at),id FOR UPDATE SKIP LOCKED LIMIT $1
 	)
 	UPDATE commit_status_outbox o SET
 		delivery_state=CASE WHEN o.expires_at<=clock_timestamp() THEN 'dead' ELSE 'queued' END,
@@ -106,6 +107,72 @@ func (s *Store) RecoverCommitStatusLeases(ctx context.Context, limit int) (int, 
 		return 0, fmt.Errorf("recover commit status leases: %w", err)
 	}
 	return int(command.RowsAffected()), nil
+}
+
+func (s *Store) FinishCommitStatus(ctx context.Context, id, leaseOwner uuid.UUID) error {
+	if id == uuid.Nil || leaseOwner == uuid.Nil {
+		return commitstatus.ErrInvalid
+	}
+	command, err := s.pool.Exec(ctx, `UPDATE commit_status_outbox SET delivery_state='delivered',
+		delivered_at=clock_timestamp(),lease_owner=NULL,lease_expires_at=NULL,last_error_code=NULL,
+		updated_at=clock_timestamp() WHERE id=$1 AND delivery_state='processing' AND lease_owner=$2
+		AND lease_expires_at>clock_timestamp()`, id, leaseOwner)
+	if err != nil {
+		return fmt.Errorf("finish commit status: %w", err)
+	}
+	if command.RowsAffected() != 1 {
+		return commitstatus.ErrInvalid
+	}
+	return nil
+}
+
+func (s *Store) RescheduleCommitStatus(ctx context.Context, id, leaseOwner uuid.UUID, availableAt time.Time, errorCode string, dead bool) error {
+	if id == uuid.Nil || leaseOwner == uuid.Nil || availableAt.IsZero() || len(errorCode) < 1 || len(errorCode) > 64 {
+		return commitstatus.ErrInvalid
+	}
+	state := commitstatus.DeliveryQueued
+	if dead {
+		state = commitstatus.DeliveryDead
+	}
+	command, err := s.pool.Exec(ctx, `UPDATE commit_status_outbox SET delivery_state=$3,available_at=$4,
+		lease_owner=NULL,lease_expires_at=NULL,last_error_code=$5,updated_at=clock_timestamp()
+		WHERE id=$1 AND delivery_state='processing' AND lease_owner=$2`, id, leaseOwner, state, availableAt.UTC(), errorCode)
+	if err != nil {
+		return fmt.Errorf("reschedule commit status: %w", err)
+	}
+	if command.RowsAffected() != 1 {
+		return commitstatus.ErrInvalid
+	}
+	return nil
+}
+
+func (s *Store) ReplayCommitStatus(ctx context.Context, id, actorID uuid.UUID) error {
+	if id == uuid.Nil || actorID == uuid.Nil {
+		return commitstatus.ErrInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin commit status replay: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	command, err := tx.Exec(ctx, `UPDATE commit_status_outbox SET delivery_state='queued',attempt_count=0,
+		available_at=clock_timestamp(),expires_at=clock_timestamp()+interval '24 hours',last_error_code=NULL,
+		lease_owner=NULL,lease_expires_at=NULL,delivered_at=NULL,updated_at=clock_timestamp()
+		WHERE id=$1 AND delivery_state='dead'`, id)
+	if err != nil {
+		return fmt.Errorf("replay commit status: %w", err)
+	}
+	if command.RowsAffected() != 1 {
+		return commitstatus.ErrInvalid
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(actor_user_id,action,resource_type,resource_id)
+		VALUES($1,'commit_status.replayed','commit_status',$2)`, actorID, id.String()); err != nil {
+		return fmt.Errorf("audit commit status replay: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit status replay: %w", err)
+	}
+	return nil
 }
 
 var _ commitstatus.RecoveryRepository = (*Store)(nil)

@@ -71,6 +71,47 @@ func TestCommitStatusOutboxMigrationClaimAndRecovery(t *testing.T) {
 	if err != nil || reclaimed == nil || reclaimed.ID != itemID || reclaimed.AttemptCount != 2 {
 		t.Fatalf("reclaim item=%#v err=%v", reclaimed, err)
 	}
+	if err := store.RescheduleCommitStatus(t.Context(), reclaimed.ID, reclaimed.LeaseOwner, time.Now(), "attempts_exhausted", true); err != nil {
+		t.Fatal(err)
+	}
+	actorID := uuid.New()
+	if _, err := store.pool.Exec(t.Context(), `INSERT INTO users(id,display_name,is_instance_admin) VALUES($1,'Status Admin',true)`, actorID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplayCommitStatus(t.Context(), itemID, actorID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplayCommitStatus(t.Context(), itemID, actorID); err == nil {
+		t.Fatal("non-dead status was replayed twice")
+	}
+	replayed, err := store.ClaimCommitStatus(t.Context(), time.Minute)
+	if err != nil || replayed == nil || replayed.AttemptCount != 1 {
+		t.Fatalf("replayed item=%#v err=%v", replayed, err)
+	}
+	if err := store.FinishCommitStatus(t.Context(), replayed.ID, replayed.LeaseOwner); err != nil {
+		t.Fatal(err)
+	}
+	var audits int
+	if err := store.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events
+		WHERE actor_user_id=$1 AND action='commit_status.replayed' AND resource_id=$2`, actorID, itemID.String()).Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("replay audits=%d err=%v", audits, err)
+	}
+
+	expiredID := uuid.New()
+	if _, err := store.pool.Exec(t.Context(), `INSERT INTO commit_status_outbox
+		(id,repository_id,run_id,provider,commit_sha,context,commit_state,description,deterministic_key,
+		created_at,available_at,expires_at) VALUES($1,$2,$3,'github',$4,'YuanCI','pending','Expired',$5,
+		clock_timestamp()-interval '2 hours',clock_timestamp()-interval '2 hours',clock_timestamp()-interval '1 hour')`,
+		expiredID, repositoryID, runID, "0123456789abcdef0123456789abcdef01234567", "run:expired"); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := store.RecoverCommitStatusLeases(t.Context(), 10); err != nil || count != 1 {
+		t.Fatalf("expiry recovery count=%d err=%v", count, err)
+	}
+	var deliveryState commitstatus.DeliveryState
+	if err := store.pool.QueryRow(t.Context(), `SELECT delivery_state FROM commit_status_outbox WHERE id=$1`, expiredID).Scan(&deliveryState); err != nil || deliveryState != commitstatus.DeliveryDead {
+		t.Fatalf("expired delivery state=%q err=%v", deliveryState, err)
+	}
 }
 
 func TestCommitStatusOutboxMigrationConstraints(t *testing.T) {

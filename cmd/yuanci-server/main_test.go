@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/yuanci/yuanci/internal/commitstatus"
 	"github.com/yuanci/yuanci/internal/githubci"
 	"github.com/yuanci/yuanci/internal/githubhook"
 	"google.golang.org/grpc"
@@ -49,6 +51,43 @@ func TestGitHubWorkerLifecycleStopsWithServer(t *testing.T) {
 	}
 	stop()
 }
+
+func TestStatusWorkerLifecycleStopsWithServer(t *testing.T) {
+	store := &serverStatusStore{recovered: make(chan struct{}, 1)}
+	worker, err := commitstatus.NewWorker(store, serverStatusProvider{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := startStatusWorker(worker)
+	select {
+	case <-store.recovered:
+	case <-time.After(time.Second):
+		t.Fatal("server did not start commit status recovery")
+	}
+	stop()
+}
+
+type serverStatusProvider struct{}
+
+func (serverStatusProvider) Deliver(context.Context, commitstatus.Item) error { return nil }
+
+type serverStatusStore struct{ recovered chan struct{} }
+
+func (*serverStatusStore) ClaimCommitStatus(context.Context, time.Duration) (*commitstatus.Item, error) {
+	return nil, nil
+}
+func (store *serverStatusStore) RecoverCommitStatusLeases(context.Context, int) (int, error) {
+	select {
+	case store.recovered <- struct{}{}:
+	default:
+	}
+	return 0, nil
+}
+func (*serverStatusStore) FinishCommitStatus(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+func (*serverStatusStore) RescheduleCommitStatus(context.Context, uuid.UUID, uuid.UUID, time.Time, string, bool) error {
+	return nil
+}
+func (*serverStatusStore) ReplayCommitStatus(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 
 type serverProcessor struct{}
 

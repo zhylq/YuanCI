@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/yuanci/yuanci/internal/scm"
 	"github.com/yuanci/yuanci/internal/secrets"
 )
 
 var ErrConfig = errors.New("invalid App configuration")
 var ErrStale = errors.New("authorization expired or configuration changed")
 var ErrRemote = errors.New("GitHub request failed")
-var ErrRate = errors.New("GitHub rate limit reached")
+var ErrRate = scm.ErrRateLimited
 var ErrAccess = errors.New("GitHub access could not be verified")
 var ErrWebhookUnavailable = errors.New("GitHub webhook is not configured")
 
