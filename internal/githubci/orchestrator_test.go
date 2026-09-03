@@ -27,15 +27,18 @@ stages:
 `
 
 type orchestratorStore struct {
-	repositoryID uuid.UUID
-	settings     project.AutomationSettings
-	policyErr    error
-	policyCalls  int
-	finalized    []githubhook.Finalize
-	finalizeErr  error
-	commit       RunCommit
-	commitResult RunResult
-	commitErr    error
+	repositoryID       uuid.UUID
+	settings           project.AutomationSettings
+	policyErr          error
+	policyCalls        int
+	finalized          []githubhook.Finalize
+	finalizeErr        error
+	commit             RunCommit
+	commitResult       RunResult
+	commitErr          error
+	failedCommit       FailedRunCommit
+	failedCommitResult RunResult
+	failedCommitErr    error
 }
 
 func (s *orchestratorStore) RuntimeAutomationForGitHub(_ context.Context, externalID string) (uuid.UUID, project.AutomationSettings, error) {
@@ -52,6 +55,11 @@ func (s *orchestratorStore) RuntimeAutomationForGitHub(_ context.Context, extern
 func (s *orchestratorStore) CommitWebhookRun(_ context.Context, request RunCommit) (RunResult, error) {
 	s.commit = request
 	return s.commitResult, s.commitErr
+}
+
+func (s *orchestratorStore) CommitWebhookFailedRun(_ context.Context, request FailedRunCommit) (RunResult, error) {
+	s.failedCommit = request
+	return s.failedCommitResult, s.failedCommitErr
 }
 
 func (s *orchestratorStore) FinalizeWebhook(_ context.Context, request githubhook.Finalize) error {
@@ -219,17 +227,13 @@ func TestOrchestratorDeadLettersPermanentAndExhaustedErrorsWithRedactedSummaries
 		code    string
 		summary string
 	}{
-		{"missing pipeline", 1, &pipelineFetcher{err: errors.Join(scm.ErrNotFound, errors.New("Authorization: Bearer secret-token"))}, "pipeline_not_found", "Pipeline configuration was not found at the event commit"},
-		{"invalid pipeline", 1, &pipelineFetcher{repository: githubapp.Repository{ID: uuid.Nil}, source: []byte("password: hunter2")}, "pipeline_invalid", "Pipeline configuration is invalid"},
+		{"credential unavailable", 1, &pipelineFetcher{err: errors.Join(scm.ErrUnauthorized, errors.New("Authorization: Bearer secret-token"))}, "credential_unavailable", "GitHub repository credential is unavailable"},
 		{"retry exhausted", githubhook.MaxAttempts, &pipelineFetcher{err: errors.New("postgres password=database-secret")}, "retry_exhausted", "GitHub delivery processing failed after the retry limit"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			repositoryID := uuid.New()
 			store := &orchestratorStore{repositoryID: repositoryID, settings: settings}
-			if test.name == "invalid pipeline" {
-				test.fetcher.repository.ID = repositoryID
-			}
 			orchestrator, _ := NewOrchestrator(store, test.fetcher)
 			orchestrator.now = func() time.Time { return now }
 			item := workItem(webhookEvent(scm.EventPush))
@@ -242,6 +246,50 @@ func TestOrchestratorDeadLettersPermanentAndExhaustedErrorsWithRedactedSummaries
 			if final.State != githubhook.FinalDead || !final.NextAttempt.IsZero() ||
 				final.ErrorCode != test.code || final.ErrorSummary != test.summary {
 				t.Fatalf("unexpected dead-letter finalization: %#v", final)
+			}
+		})
+	}
+}
+
+func TestOrchestratorCommitsVisibleFailedRunForConfigurationErrors(t *testing.T) {
+	settings := project.DefaultAutomationSettings()
+	settings.Enabled = true
+	now := time.Date(2026, 9, 3, 9, 10, 11, 0, time.UTC)
+	tests := []struct {
+		name       string
+		fetcher    *pipelineFetcher
+		code       string
+		summary    string
+		configHash string
+	}{
+		{"missing pipeline", &pipelineFetcher{err: scm.ErrNotFound}, "pipeline_not_found",
+			"Pipeline configuration was not found at the event commit",
+			"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+		{"invalid pipeline", &pipelineFetcher{source: []byte("password: hunter2")}, "pipeline_invalid",
+			"Pipeline configuration is invalid",
+			"f8a178e0213a2d96850911cb2b43af702e04548f1dc8c0a210d79003f470d551"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repositoryID := uuid.New()
+			test.fetcher.repository.ID = repositoryID
+			store := &orchestratorStore{repositoryID: repositoryID, settings: settings,
+				failedCommitResult: RunResult{ID: uuid.New(), Created: true}}
+			orchestrator, _ := NewOrchestrator(store, test.fetcher)
+			orchestrator.now = func() time.Time { return now }
+			item := workItem(webhookEvent(scm.EventPush))
+			outcome, err := orchestrator.Process(t.Context(), item)
+			if err != nil || outcome != OutcomeFailedRunCreated {
+				t.Fatalf("process: outcome=%q err=%v", outcome, err)
+			}
+			if len(store.finalized) != 0 || store.commit.RepositoryID != uuid.Nil {
+				t.Fatalf("configuration failure used ordinary finalization: final=%#v commit=%#v", store.finalized, store.commit)
+			}
+			failed := store.failedCommit
+			if failed.Delivery.ID != item.ID || failed.RepositoryID != repositoryID ||
+				failed.PipelinePath != project.DefaultPipelinePath || failed.ConfigSHA256 != test.configHash ||
+				failed.ErrorCode != test.code || failed.ErrorSummary != test.summary || !failed.CreatedAt.Equal(now) {
+				t.Fatalf("unexpected failed Run commit: %#v", failed)
 			}
 		})
 	}

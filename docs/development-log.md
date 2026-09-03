@@ -763,3 +763,19 @@ the batch outcome and remaining work.
   and shutdown. Focused `go test`, `go vet` and `git diff --check` passed. GH-03
   is not a phase gate, so no full repository suite, frontend build, Compose
   validation or deployment-image build was run.
+
+## 2026-09-03 — GH-04 visible configuration-failure Runs
+
+- Enabled projects now convert a missing or invalid immutable pipeline file into
+  a terminal visible failed Run instead of only dead-lettering the webhook. The
+  Run retains the trusted repository, event ref and commit identity plus a hash
+  of the unavailable or invalid configuration, without persisting invalid source.
+- Failed configuration Runs use a valid empty compiled-plan envelope and create
+  no executable Jobs. Their delivery link, stable redacted error category,
+  terminal timestamp and audit event are committed in one transaction under the
+  existing delivery lease and webhook idempotency key.
+- Focused orchestration tests cover missing and invalid configuration behavior.
+  PostgreSQL 17 tests cover visibility, zero Jobs, idempotent replay and complete
+  rollback when audit persistence fails. Focused package tests, vet and
+  `git diff --check` passed. GH-04 is not a phase gate, so no full repository
+  suite, frontend build, Compose validation or deployment-image build was run.

@@ -25,6 +25,16 @@ type RunCommit struct {
 	CreatedAt      time.Time
 }
 
+type FailedRunCommit struct {
+	Delivery     githubhook.WorkItem
+	RepositoryID uuid.UUID
+	PipelinePath string
+	ConfigSHA256 string
+	ErrorCode    string
+	ErrorSummary string
+	CreatedAt    time.Time
+}
+
 type RunResult struct {
 	ID      uuid.UUID
 	Created bool
@@ -33,5 +43,6 @@ type RunResult struct {
 type Store interface {
 	RuntimeAutomationForGitHub(context.Context, string) (uuid.UUID, project.AutomationSettings, error)
 	CommitWebhookRun(context.Context, RunCommit) (RunResult, error)
+	CommitWebhookFailedRun(context.Context, FailedRunCommit) (RunResult, error)
 	FinalizeWebhook(context.Context, githubhook.Finalize) error
 }

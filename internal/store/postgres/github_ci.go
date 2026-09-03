@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -146,6 +148,94 @@ func (s *Store) CommitWebhookRun(ctx context.Context, request githubci.RunCommit
 	return result, nil
 }
 
+func (s *Store) CommitWebhookFailedRun(ctx context.Context, request githubci.FailedRunCommit) (githubci.RunResult, error) {
+	if err := validateWebhookFailedRunCommit(request); err != nil {
+		return githubci.RunResult{}, err
+	}
+	failedPlan := pipeline.Plan{
+		Version: pipeline.APIVersion, Name: request.PipelinePath, ConfigSHA256: request.ConfigSHA256,
+		CompiledAt: request.CreatedAt.UTC(), Stages: []pipeline.PlanStage{},
+	}
+	planJSON, err := json.Marshal(failedPlan)
+	if err != nil {
+		return githubci.RunResult{}, githubci.ErrInvalidCommit
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return githubci.RunResult{}, fmt.Errorf("begin failed GitHub run commit: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	var deliveryID string
+	err = tx.QueryRow(ctx, `SELECT delivery_id FROM webhook_deliveries
+		WHERE id=$1 AND status='processing' AND lease_owner=$2 AND lease_expires_at>clock_timestamp()
+		FOR UPDATE`, request.Delivery.ID, request.Delivery.LeaseID).Scan(&deliveryID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return githubci.RunResult{}, githubhook.ErrLeaseInvalid
+	}
+	if err != nil {
+		return githubci.RunResult{}, fmt.Errorf("lock failed GitHub delivery: %w", err)
+	}
+	event := request.Delivery.Event
+	idempotencyKey := "github-webhook:" + request.Delivery.ID.String()
+	result := githubci.RunResult{ID: uuid.New(), Created: true}
+	var existingRepositoryID *uuid.UUID
+	var existingCommitSHA, existingEvent, existingPipelineName, existingConfigSHA string
+	var existingStatus runmodel.Status
+	err = tx.QueryRow(ctx, `SELECT id,repository_id,COALESCE(commit_sha,''),event,pipeline_name,config_sha256,status
+		FROM runs WHERE idempotency_key=$1`, idempotencyKey).Scan(&result.ID, &existingRepositoryID,
+		&existingCommitSHA, &existingEvent, &existingPipelineName, &existingConfigSHA, &existingStatus)
+	if err == nil {
+		if existingRepositoryID == nil || *existingRepositoryID != request.RepositoryID ||
+			existingCommitSHA != event.AfterSHA || existingEvent != string(event.Type) ||
+			existingPipelineName != request.PipelinePath || existingConfigSHA != request.ConfigSHA256 ||
+			existingStatus != runmodel.StatusFailed {
+			return githubci.RunResult{}, githubci.ErrInvalidCommit
+		}
+		result.Created = false
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return githubci.RunResult{}, fmt.Errorf("read idempotent failed GitHub run: %w", err)
+	}
+	if result.Created {
+		projectID := request.RepositoryID
+		finishedAt := request.CreatedAt.UTC()
+		record := runmodel.Record{
+			ID: result.ID, ProjectID: &projectID, IdempotencyKey: idempotencyKey,
+			PipelineName: request.PipelinePath, Event: string(event.Type), Ref: event.Ref,
+			CommitSHA: event.AfterSHA, Status: runmodel.StatusFailed, ConfigSHA256: request.ConfigSHA256,
+			Plan: planJSON, CreatedAt: request.CreatedAt.UTC(), FinishedAt: &finishedAt,
+		}
+		if err := insertRun(ctx, tx, record); err != nil {
+			return githubci.RunResult{}, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE runs SET finished_at=$2 WHERE id=$1`, result.ID, finishedAt); err != nil {
+			return githubci.RunResult{}, fmt.Errorf("finish failed GitHub run: %w", err)
+		}
+	}
+	command, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET status='processed',processed_at=clock_timestamp(),
+		repository_id=$3,run_id=$4,lease_owner=NULL,lease_expires_at=NULL,error_code=$5,error_summary=$6
+		WHERE id=$1 AND status='processing' AND lease_owner=$2`, request.Delivery.ID, request.Delivery.LeaseID,
+		request.RepositoryID, result.ID, request.ErrorCode, request.ErrorSummary)
+	if err != nil {
+		return githubci.RunResult{}, fmt.Errorf("complete failed GitHub delivery: %w", err)
+	}
+	if command.RowsAffected() != 1 {
+		return githubci.RunResult{}, githubhook.ErrLeaseInvalid
+	}
+	if result.Created {
+		_, err = tx.Exec(ctx, `INSERT INTO audit_events(action,resource_type,resource_id,metadata)
+			VALUES('webhook.run_failed','run',$1,jsonb_build_object('delivery_id',$2::text,
+			'repository_id',$3::text,'commit_sha',$4::text,'error_code',$5::text))`, result.ID.String(),
+			deliveryID, request.RepositoryID.String(), event.AfterSHA, request.ErrorCode)
+		if err != nil {
+			return githubci.RunResult{}, fmt.Errorf("audit failed GitHub run creation: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return githubci.RunResult{}, fmt.Errorf("commit failed GitHub run: %w", err)
+	}
+	return result, nil
+}
+
 func finishWebhookRun(ctx context.Context, tx pgx.Tx, request githubci.RunCommit, runID uuid.UUID) error {
 	command, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET status='processed',processed_at=clock_timestamp(),
 		repository_id=$3,run_id=$4,lease_owner=NULL,lease_expires_at=NULL,error_code=NULL,error_summary=NULL
@@ -167,6 +257,22 @@ func validateWebhookRunCommit(request githubci.RunCommit) error {
 		request.Plan.Version != pipeline.APIVersion || request.Plan.Name == "" || len(request.Plan.ConfigSHA256) != 64 ||
 		len(request.PipelineSource) == 0 || len(request.PipelineSource) > 1<<20 || request.CreatedAt.IsZero() ||
 		project.ValidatePipelinePath(request.PipelinePath) != nil {
+		return githubci.ErrInvalidCommit
+	}
+	return nil
+}
+
+func validateWebhookFailedRunCommit(request githubci.FailedRunCommit) error {
+	event := request.Delivery.Event
+	if request.Delivery.ID == uuid.Nil || request.Delivery.LeaseID == uuid.Nil || request.RepositoryID == uuid.Nil ||
+		event.Provider != scm.GitHub || event.DeliveryID == "" || event.AfterSHA == "" ||
+		len(request.ConfigSHA256) != 64 || request.CreatedAt.IsZero() ||
+		(request.ErrorCode != "pipeline_not_found" && request.ErrorCode != "pipeline_invalid") ||
+		request.ErrorSummary == "" || len(request.ErrorSummary) > 1024 ||
+		project.ValidatePipelinePath(request.PipelinePath) != nil {
+		return githubci.ErrInvalidCommit
+	}
+	if decoded, err := hex.DecodeString(request.ConfigSHA256); err != nil || len(decoded) != sha256.Size {
 		return githubci.ErrInvalidCommit
 	}
 	return nil

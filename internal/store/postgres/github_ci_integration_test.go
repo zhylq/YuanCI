@@ -233,3 +233,110 @@ func TestCommitWebhookRunRejectsLeaseAndRollsBackAuditFailure(t *testing.T) {
 		t.Fatalf("transaction leaked rows: runs=%d definitions=%d", runs, definitions)
 	}
 }
+
+func TestCommitWebhookFailedRunIsVisibleAtomicAndIdempotent(t *testing.T) {
+	store, service, session, _ := importFixture(t)
+	authorizeImport(t, service, session.Token)
+	imported, err := service.Import(t.Context(), session.Token, "34", []string{"70"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := claimedGitHubDelivery(t, store, "70")
+	request := githubci.FailedRunCommit{
+		Delivery: item, RepositoryID: imported[0].ID, PipelinePath: ".yuanci.yml",
+		ConfigSHA256: strings.Repeat("a", 64), ErrorCode: "pipeline_invalid",
+		ErrorSummary: "Pipeline configuration is invalid", CreatedAt: item.Event.ReceivedAt,
+	}
+	result, err := store.CommitWebhookFailedRun(t.Context(), request)
+	if err != nil || !result.Created || result.ID == uuid.Nil {
+		t.Fatalf("commit failed Run: %#v %v", result, err)
+	}
+	var status, pipelineName, configSHA string
+	var finishedAt *time.Time
+	var compiled []byte
+	if err := store.pool.QueryRow(t.Context(), `SELECT status,pipeline_name,config_sha256,compiled_plan,finished_at
+		FROM runs WHERE id=$1`, result.ID).Scan(&status, &pipelineName, &configSHA, &compiled, &finishedAt); err != nil {
+		t.Fatal(err)
+	}
+	var plan pipeline.Plan
+	if err := json.Unmarshal(compiled, &plan); err != nil {
+		t.Fatal(err)
+	}
+	var jobs, audits int
+	if err := store.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs WHERE run_id=$1`, result.ID).Scan(&jobs); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events
+		WHERE action='webhook.run_failed' AND resource_id=$1`, result.ID.String()).Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	var deliveryStatus, errorCode, errorSummary string
+	var linkedRun, linkedRepository uuid.UUID
+	if err := store.pool.QueryRow(t.Context(), `SELECT status,error_code,error_summary,run_id,repository_id
+		FROM webhook_deliveries WHERE id=$1`, item.ID).Scan(&deliveryStatus, &errorCode, &errorSummary,
+		&linkedRun, &linkedRepository); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || pipelineName != request.PipelinePath || configSHA != request.ConfigSHA256 ||
+		finishedAt == nil || plan.Version != pipeline.APIVersion || plan.Name != request.PipelinePath ||
+		len(plan.Stages) != 0 || jobs != 0 || audits != 1 || deliveryStatus != "processed" ||
+		errorCode != request.ErrorCode || errorSummary != request.ErrorSummary || linkedRun != result.ID ||
+		linkedRepository != request.RepositoryID {
+		t.Fatalf("incomplete failed Run: status=%s pipeline=%s hash=%s finished=%v plan=%s/%s/%d jobs=%d audits=%d delivery=%s/%s/%s links=%s/%s",
+			status, pipelineName, configSHA, finishedAt, plan.Version, plan.Name, len(plan.Stages), jobs, audits,
+			deliveryStatus, errorCode, errorSummary, linkedRun, linkedRepository)
+	}
+
+	newLease := uuid.New()
+	if _, err := store.pool.Exec(t.Context(), `UPDATE webhook_deliveries SET status='processing',processed_at=NULL,
+		lease_owner=$2,lease_expires_at=clock_timestamp()+interval '1 minute' WHERE id=$1`, item.ID, newLease); err != nil {
+		t.Fatal(err)
+	}
+	request.Delivery.LeaseID = newLease
+	repeated, err := store.CommitWebhookFailedRun(t.Context(), request)
+	if err != nil || repeated.Created || repeated.ID != result.ID {
+		t.Fatalf("idempotent failed Run: %#v %v", repeated, err)
+	}
+	if err := store.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events
+		WHERE action='webhook.run_failed' AND resource_id=$1`, result.ID.String()).Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("duplicate failure audit: %d %v", audits, err)
+	}
+}
+
+func TestCommitWebhookFailedRunRollsBackAuditFailure(t *testing.T) {
+	store, service, session, _ := importFixture(t)
+	authorizeImport(t, service, session.Token)
+	imported, err := service.Import(t.Context(), session.Token, "34", []string{"70"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := claimedGitHubDelivery(t, store, "70")
+	rejectAudit(t, store)
+	request := githubci.FailedRunCommit{
+		Delivery: item, RepositoryID: imported[0].ID, PipelinePath: ".yuanci.yml",
+		ConfigSHA256: strings.Repeat("0", 64), ErrorCode: "pipeline_not_found",
+		ErrorSummary: "Pipeline configuration was not found at the event commit", CreatedAt: item.Event.ReceivedAt,
+	}
+	if _, err := store.CommitWebhookFailedRun(t.Context(), request); err == nil {
+		t.Fatal("audit failure committed failed Run")
+	}
+	var runs, jobs int
+	if err := store.pool.QueryRow(t.Context(), `SELECT count(*) FROM runs WHERE idempotency_key=$1`,
+		"github-webhook:"+item.ID.String()).Scan(&runs); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs j JOIN runs r ON r.id=j.run_id
+		WHERE r.idempotency_key=$1`, "github-webhook:"+item.ID.String()).Scan(&jobs); err != nil {
+		t.Fatal(err)
+	}
+	var deliveryStatus string
+	var linkedRun *uuid.UUID
+	if err := store.pool.QueryRow(t.Context(), `SELECT status,run_id FROM webhook_deliveries WHERE id=$1`, item.ID).
+		Scan(&deliveryStatus, &linkedRun); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 0 || jobs != 0 || deliveryStatus != "processing" || linkedRun != nil {
+		t.Fatalf("failed Run transaction leaked state: runs=%d jobs=%d delivery=%s linked=%v",
+			runs, jobs, deliveryStatus, linkedRun)
+	}
+}

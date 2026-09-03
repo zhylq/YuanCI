@@ -2,6 +2,8 @@ package githubci
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -25,13 +27,15 @@ const (
 type Outcome string
 
 const (
-	OutcomeIgnoredDisabled Outcome = "ignored_disabled"
-	OutcomeIgnoredFork     Outcome = "ignored_fork"
-	OutcomeIgnoredTrigger  Outcome = "ignored_trigger"
-	OutcomeRunCreated      Outcome = "run_created"
-	OutcomeRunReused       Outcome = "run_reused"
-	OutcomeRetryScheduled  Outcome = "retry_scheduled"
-	OutcomeDeadLettered    Outcome = "dead_lettered"
+	OutcomeIgnoredDisabled  Outcome = "ignored_disabled"
+	OutcomeIgnoredFork      Outcome = "ignored_fork"
+	OutcomeIgnoredTrigger   Outcome = "ignored_trigger"
+	OutcomeRunCreated       Outcome = "run_created"
+	OutcomeRunReused        Outcome = "run_reused"
+	OutcomeFailedRunCreated Outcome = "failed_run_created"
+	OutcomeFailedRunReused  Outcome = "failed_run_reused"
+	OutcomeRetryScheduled   Outcome = "retry_scheduled"
+	OutcomeDeadLettered     Outcome = "dead_lettered"
 )
 
 type PipelineFetcher interface {
@@ -84,6 +88,9 @@ func (o *Orchestrator) process(ctx context.Context, delivery githubhook.WorkItem
 	}
 	repository, source, err := o.fetcher.FetchPipeline(ctx, delivery.Event, settings.PipelinePath)
 	if err != nil {
+		if errors.Is(err, scm.ErrNotFound) {
+			return o.commitConfigurationFailure(ctx, delivery, repositoryID, settings.PipelinePath, nil, classifyFailure(err))
+		}
 		return "", err
 	}
 	if repository.ID != repositoryID {
@@ -92,7 +99,8 @@ func (o *Orchestrator) process(ctx context.Context, delivery githubhook.WorkItem
 	now := o.now().UTC()
 	plan, err := pipeline.Compile(source, now)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInvalidPipeline, err)
+		return o.commitConfigurationFailure(ctx, delivery, repositoryID, settings.PipelinePath, source,
+			classifyFailure(fmt.Errorf("%w: %v", ErrInvalidPipeline, err)))
 	}
 	result, err := o.store.CommitWebhookRun(ctx, RunCommit{
 		Delivery: delivery, RepositoryID: repositoryID, PipelinePath: settings.PipelinePath,
@@ -105,6 +113,23 @@ func (o *Orchestrator) process(ctx context.Context, delivery githubhook.WorkItem
 		return OutcomeRunCreated, nil
 	}
 	return OutcomeRunReused, nil
+}
+
+func (o *Orchestrator) commitConfigurationFailure(ctx context.Context, delivery githubhook.WorkItem,
+	repositoryID uuid.UUID, pipelinePath string, source []byte, failure failureClass) (Outcome, error) {
+	digest := sha256.Sum256(source)
+	result, err := o.store.CommitWebhookFailedRun(ctx, FailedRunCommit{
+		Delivery: delivery, RepositoryID: repositoryID, PipelinePath: pipelinePath,
+		ConfigSHA256: hex.EncodeToString(digest[:]), ErrorCode: failure.code,
+		ErrorSummary: failure.summary, CreatedAt: o.now().UTC(),
+	})
+	if err != nil {
+		return "", err
+	}
+	if result.Created {
+		return OutcomeFailedRunCreated, nil
+	}
+	return OutcomeFailedRunReused, nil
 }
 
 func (o *Orchestrator) finalizeFailure(ctx context.Context, delivery githubhook.WorkItem, processErr error) (Outcome, error) {
