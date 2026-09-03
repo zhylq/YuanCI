@@ -915,3 +915,16 @@ the batch outcome and remaining work.
   full `go vet ./...`, frontend tests and production build, validation of all
   six shipped Compose files, the Runner deployment-image build, and
   `git diff --check`. No real provider credential was used.
+
+## 2026-09-03 — STAT-01 provider-neutral commit-status outbox
+
+- Added a provider-neutral commit-status outbox migration with separate commit
+  and delivery states, deterministic-key uniqueness, bounded payload fields,
+  expiry, attempt counters, paired claim leases and delivered-time constraints.
+- Added the shared status model plus PostgreSQL `SKIP LOCKED` claiming and
+  bounded expired-lease recovery. Recoverable work returns to the queue while
+  already expired work is dead-lettered.
+- Focused model and PostgreSQL 17 migration/concurrency tests cover state
+  validation, single-claim behavior under eight concurrent claimers, lease
+  recovery/reclaim and database constraint rejection. Focused package tests,
+  vet and `git diff --check` passed. STAT-01 is not a phase gate.
