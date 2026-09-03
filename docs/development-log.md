@@ -855,3 +855,19 @@ the batch outcome and remaining work.
   regressions. Focused `go vet` and `git diff --check` passed. SRC-03 is not a
   phase gate, so no full repository suite, frontend build, Compose validation
   or deployment-image build was run.
+
+## 2026-09-03 — SRC-04 strict source descriptor validation
+
+- Runner assignment decoding now accepts only the GitHub provider with a
+  canonical positive numeric repository ID and an exact 40-character
+  hexadecimal commit SHA.
+- Clone URLs must exactly match the trusted
+  `https://github.com/<owner>/<repository>.git` form. User information, query,
+  fragment, ports, alternate or local hosts, encoded paths, extra path segments
+  and non-canonical GitHub identities are rejected before credential copying.
+- Rejected descriptors retain the protocol-v2 buffer-clearing guarantee, so
+  malformed source metadata cannot leave protobuf credential bytes behind.
+  Focused `internal/runner` unit and fuzz tests passed together with focused
+  `go vet` and `git diff --check`. SRC-04 is not a phase gate, so no full
+  repository suite, frontend build, Compose validation or deployment-image
+  build was run.

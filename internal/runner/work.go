@@ -354,7 +354,8 @@ func decodeAssignment(assignment *runnerv1.JobAssignment) (*localJob, error) {
 	}
 	if assignment.Source != nil {
 		credential := assignment.Credential
-		if len(credential.Token) == 0 || len(credential.Token) > maximumCheckoutToken || credential.ExpiresAt == nil ||
+		if validateSourceDescriptor(assignment.Source) != nil || len(credential.Token) == 0 ||
+			len(credential.Token) > maximumCheckoutToken || credential.ExpiresAt == nil ||
 			!credential.ExpiresAt.IsValid() || !time.Now().Before(credential.ExpiresAt.AsTime()) {
 			return nil, errors.New("invalid Runner source credential")
 		}

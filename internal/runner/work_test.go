@@ -172,6 +172,10 @@ func TestDecodeAssignmentValidatesSourceCredentialPairAndClearsProtobufToken(t *
 	for _, mutate := range []func(*runnerv1.JobAssignment){
 		func(value *runnerv1.JobAssignment) { value.Source = nil },
 		func(value *runnerv1.JobAssignment) { value.Credential = nil },
+		func(value *runnerv1.JobAssignment) { value.Source.Provider = "gitlab" },
+		func(value *runnerv1.JobAssignment) { value.Source.RepositoryId = "070" },
+		func(value *runnerv1.JobAssignment) { value.Source.CloneUrl = "https://127.0.0.1/repository.git" },
+		func(value *runnerv1.JobAssignment) { value.Source.CommitSha = "main" },
 		func(value *runnerv1.JobAssignment) {
 			value.Credential.ExpiresAt = timestamppb.New(time.Now().Add(-time.Second))
 		},
