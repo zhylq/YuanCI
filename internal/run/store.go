@@ -15,19 +15,21 @@ import (
 )
 
 type Record struct {
-	ID           uuid.UUID       `json:"id"`
-	ProjectID    *uuid.UUID      `json:"project_id,omitempty"`
-	CreatedBy    *uuid.UUID      `json:"created_by,omitempty"`
-	PipelineName string          `json:"pipeline_name"`
-	Event        string          `json:"event"`
-	Ref          string          `json:"ref,omitempty"`
-	CommitSHA    string          `json:"commit_sha,omitempty"`
-	Status       Status          `json:"status"`
-	ConfigSHA256 string          `json:"config_sha256"`
-	Plan         json.RawMessage `json:"plan,omitempty"`
-	CreatedAt    time.Time       `json:"created_at"`
-	StartedAt    *time.Time      `json:"started_at,omitempty"`
-	FinishedAt   *time.Time      `json:"finished_at,omitempty"`
+	ID                uuid.UUID       `json:"id"`
+	ProjectID         *uuid.UUID      `json:"project_id,omitempty"`
+	CreatedBy         *uuid.UUID      `json:"created_by,omitempty"`
+	PipelineVersionID *uuid.UUID      `json:"-"`
+	IdempotencyKey    string          `json:"-"`
+	PipelineName      string          `json:"pipeline_name"`
+	Event             string          `json:"event"`
+	Ref               string          `json:"ref,omitempty"`
+	CommitSHA         string          `json:"commit_sha,omitempty"`
+	Status            Status          `json:"status"`
+	ConfigSHA256      string          `json:"config_sha256"`
+	Plan              json.RawMessage `json:"plan,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
+	StartedAt         *time.Time      `json:"started_at,omitempty"`
+	FinishedAt        *time.Time      `json:"finished_at,omitempty"`
 }
 
 type Store interface {
@@ -292,6 +294,10 @@ func cloneRecord(record Record) Record {
 	if record.CreatedBy != nil {
 		value := *record.CreatedBy
 		record.CreatedBy = &value
+	}
+	if record.PipelineVersionID != nil {
+		value := *record.PipelineVersionID
+		record.PipelineVersionID = &value
 	}
 	record.Plan = append(json.RawMessage(nil), record.Plan...)
 	if record.StartedAt != nil {

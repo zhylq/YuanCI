@@ -66,10 +66,12 @@ func (s *Store) Create(ctx context.Context, record runmodel.Record) (runmodel.Re
 
 func insertRun(ctx context.Context, tx pgx.Tx, record runmodel.Record) error {
 	const query = `INSERT INTO runs
-        (id, pipeline_name, event, ref, commit_sha, status, config_sha256, compiled_plan, created_at, repository_id, created_by)
-        VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,$7,$8,$9,$10,$11)`
-	_, err := tx.Exec(ctx, query, record.ID, record.PipelineName, record.Event, record.Ref,
-		record.CommitSHA, record.Status, record.ConfigSHA256, record.Plan, record.CreatedAt, record.ProjectID, record.CreatedBy)
+		(id, pipeline_version_id, pipeline_name, event, ref, commit_sha, status, config_sha256,
+		 compiled_plan, idempotency_key, created_at, repository_id, created_by)
+		VALUES ($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),$7,$8,$9,NULLIF($10,''),$11,$12,$13)`
+	_, err := tx.Exec(ctx, query, record.ID, record.PipelineVersionID, record.PipelineName, record.Event, record.Ref,
+		record.CommitSHA, record.Status, record.ConfigSHA256, record.Plan, record.IdempotencyKey,
+		record.CreatedAt, record.ProjectID, record.CreatedBy)
 	if err != nil {
 		return fmt.Errorf("create run: %w", err)
 	}

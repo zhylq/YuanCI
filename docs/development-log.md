@@ -655,3 +655,25 @@ the batch outcome and remaining work.
   inactive imported repositories. The isolated Linux/PostgreSQL 17 suite passed
   `go test -race -count=1 -timeout=120s ./...` and `go vet ./...` after one
   transient Alpine package-download retry.
+
+## 2026-09-03 — atomic GitHub webhook run persistence
+
+- Added the transaction boundary that persists a Pipeline definition and
+  immutable version, creates the Run and complete Job dependency graph, links
+  the claimed webhook delivery, clears its lease, and writes the audit event as
+  one PostgreSQL commit.
+- Run records can now carry internal Pipeline-version and idempotency identities
+  without exposing them in the existing public JSON shape. Manual Run creation
+  continues to use the same graph-writing path.
+- The trigger key is derived from YuanCI's immutable delivery UUID. Replays
+  verify repository, commit SHA, event, Pipeline name and configuration hash
+  before reusing an existing Run, and perform no Pipeline or Job writes when
+  those values conflict.
+- Runtime automation lookup now requires an active repository and synthesizes
+  disabled defaults only for a repository that actually exists. Integration
+  tests cover the full committed graph, inactive repositories, valid replay,
+  conflicting replay, wrong leases and rollback when audit persistence fails.
+- The clean Linux/PostgreSQL 17 verification passed `go test -race -count=1
+  -timeout=120s ./...` and `go vet ./...`. The first image build was canceled
+  after an Alpine package download stopped producing output; the clean retry
+  completed with exit code 0.
