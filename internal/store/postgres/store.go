@@ -121,6 +121,9 @@ func insertRun(ctx context.Context, tx pgx.Tx, record runmodel.Record) error {
 			}
 		}
 	}
+	if err := enqueueCommitStatusForRun(ctx, tx, record.ID, record.Status); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -297,6 +300,9 @@ func (s *Store) CompleteJob(ctx context.Context, id uuid.UUID, token string, sta
 			finalStatus = runmodel.StatusCanceled
 		}
 		if _, err := tx.Exec(ctx, `UPDATE runs SET status=$2, finished_at=now() WHERE id=$1`, runID, finalStatus); err != nil {
+			return err
+		}
+		if err := enqueueCommitStatusForRun(ctx, tx, runID, finalStatus); err != nil {
 			return err
 		}
 	}

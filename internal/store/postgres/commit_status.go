@@ -6,9 +6,60 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/yuanci/yuanci/internal/commitstatus"
+	runmodel "github.com/yuanci/yuanci/internal/run"
 )
+
+func enqueueCommitStatusForRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID, status runmodel.Status) error {
+	if status != runmodel.StatusQueued && !status.Terminal() {
+		return nil
+	}
+	var repositoryID uuid.UUID
+	var provider, commitSHA string
+	err := tx.QueryRow(ctx, `SELECT r.repository_id,p.provider,COALESCE(r.commit_sha,'')
+		FROM runs r JOIN repositories p ON p.id=r.repository_id WHERE r.id=$1`, runID).
+		Scan(&repositoryID, &provider, &commitSHA)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read run for commit status: %w", err)
+	}
+	if len(commitSHA) != 40 {
+		return nil
+	}
+	state, suffix, description := commitstatus.StatePending, "pending", "Run queued"
+	if status.Terminal() {
+		suffix = "final"
+		switch status {
+		case runmodel.StatusSucceeded:
+			state, description = commitstatus.StateSuccess, "Run succeeded"
+		case runmodel.StatusFailed:
+			state, description = commitstatus.StateFailure, "Run failed"
+		case runmodel.StatusCanceled:
+			state, description = commitstatus.StateError, "Run canceled"
+		}
+	}
+	key := "run:" + runID.String() + ":" + suffix
+	command, err := tx.Exec(ctx, `INSERT INTO commit_status_outbox
+		(repository_id,run_id,provider,commit_sha,context,commit_state,description,deterministic_key,expires_at)
+		VALUES($1,$2,$3,$4,'YuanCI',$5,$6,$7,clock_timestamp()+interval '24 hours')
+		ON CONFLICT(deterministic_key) DO NOTHING`, repositoryID, runID, provider, commitSHA, state, description, key)
+	if err != nil {
+		return fmt.Errorf("enqueue %s commit status: %w", suffix, err)
+	}
+	if command.RowsAffected() == 0 {
+		var existingRun uuid.UUID
+		var existingState commitstatus.State
+		if err := tx.QueryRow(ctx, `SELECT run_id,commit_state FROM commit_status_outbox WHERE deterministic_key=$1`, key).
+			Scan(&existingRun, &existingState); err != nil || existingRun != runID || existingState != state {
+			return commitstatus.ErrInvalid
+		}
+	}
+	return nil
+}
 
 func (s *Store) ClaimCommitStatus(ctx context.Context, leaseDuration time.Duration) (*commitstatus.Item, error) {
 	if leaseDuration <= 0 || leaseDuration > 15*time.Minute {

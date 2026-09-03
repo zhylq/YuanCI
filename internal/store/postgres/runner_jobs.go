@@ -311,6 +311,9 @@ func finalizeRunJobs(ctx context.Context, tx pgx.Tx, runID uuid.UUID, status run
 	if _, err := tx.Exec(ctx, `UPDATE runs SET status=$2,finished_at=clock_timestamp() WHERE id=$1`, runID, finalStatus); err != nil {
 		return fmt.Errorf("finalize run: %w", err)
 	}
+	if err := enqueueCommitStatusForRun(ctx, tx, runID, finalStatus); err != nil {
+		return err
+	}
 	return nil
 }
 

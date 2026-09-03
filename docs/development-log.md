@@ -928,3 +928,18 @@ the batch outcome and remaining work.
   validation, single-claim behavior under eight concurrent claimers, lease
   recovery/reclaim and database constraint rejection. Focused package tests,
   vet and `git diff --check` passed. STAT-01 is not a phase gate.
+
+## 2026-09-03 — STAT-02 transactional Run status enqueue
+
+- Source-backed Run creation now enqueues one deterministic pending commit
+  status in the same transaction. A terminal Run transition enqueues one final
+  status in that transition's transaction, including normal completion, Runner
+  gRPC completion and unrecoverable lease-loss convergence.
+- Deterministic `run:<id>:pending` and `run:<id>:final` keys make replay a
+  verified no-op. Provider state maps succeeded to success, failed to failure
+  and canceled to error; non-repository and non-commit Runs remain internal.
+- PostgreSQL 17 fault-injection tests prove pending enqueue failure rolls back
+  Run creation and final enqueue failure rolls back Job/Run completion, then
+  verify safe retry creates exactly one record of each kind. The full affected
+  PostgreSQL package tests, focused vet and `git diff --check` passed. STAT-02
+  is not a phase gate.

@@ -1,12 +1,15 @@
 package postgres
 
 import (
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/yuanci/yuanci/internal/commitstatus"
+	"github.com/yuanci/yuanci/internal/pipeline"
+	runmodel "github.com/yuanci/yuanci/internal/run"
 )
 
 func TestCommitStatusOutboxMigrationClaimAndRecovery(t *testing.T) {
@@ -84,6 +87,111 @@ func TestCommitStatusOutboxMigrationConstraints(t *testing.T) {
 		repositoryID, runID, "0123456789abcdef0123456789abcdef01234567", time.Now().Add(time.Hour), uuid.New())
 	if err == nil {
 		t.Fatal("unpaired queued lease passed migration constraints")
+	}
+}
+
+func TestRunStatusOutboxIsAtomicAndReplaySafe(t *testing.T) {
+	store, err := Open(t.Context(), newTestDatabase(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	repositoryID, obsoleteRun := insertCommitStatusParents(t, store)
+	if _, err := store.pool.Exec(t.Context(), `DELETE FROM runs WHERE id=$1`, obsoleteRun); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := pipeline.Compile([]byte(githubCIPipeline), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := uuid.New()
+	record := runmodel.Record{ID: runID, ProjectID: &repositoryID, PipelineName: plan.Name, Event: "push",
+		CommitSHA: "0123456789abcdef0123456789abcdef01234567", Status: runmodel.StatusQueued,
+		ConfigSHA256: plan.ConfigSHA256, Plan: encoded, CreatedAt: time.Now().UTC()}
+
+	installStatusRejectTrigger(t, store, "true")
+	if _, err := store.Create(t.Context(), record); err == nil {
+		t.Fatal("Run creation survived pending-status enqueue failure")
+	}
+	var runCount int
+	if err := store.pool.QueryRow(t.Context(), `SELECT count(*) FROM runs WHERE id=$1`, runID).Scan(&runCount); err != nil || runCount != 0 {
+		t.Fatalf("rolled-back Run count=%d err=%v", runCount, err)
+	}
+	dropStatusRejectTrigger(t, store)
+	if _, err := store.Create(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	assertRunStatusRows(t, store, runID, 1, commitstatus.StatePending)
+
+	assignment, err := store.ClaimJob(t.Context(), runmodel.ClaimRequest{})
+	if err != nil || assignment == nil || assignment.RunID != runID {
+		t.Fatalf("claim=%#v err=%v", assignment, err)
+	}
+	if err := store.StartJob(t.Context(), assignment.JobID, assignment.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	installStatusRejectTrigger(t, store, "NEW.deterministic_key LIKE '%:final'")
+	if err := store.CompleteJob(t.Context(), assignment.JobID, assignment.LeaseToken, runmodel.JobSucceeded); err == nil {
+		t.Fatal("terminal transition survived final-status enqueue failure")
+	}
+	var runStatus runmodel.Status
+	if err := store.pool.QueryRow(t.Context(), `SELECT status FROM runs WHERE id=$1`, runID).Scan(&runStatus); err != nil || runStatus != runmodel.StatusRunning {
+		t.Fatalf("rolled-back terminal status=%q err=%v", runStatus, err)
+	}
+	dropStatusRejectTrigger(t, store)
+	if err := store.CompleteJob(t.Context(), assignment.JobID, assignment.LeaseToken, runmodel.JobSucceeded); err != nil {
+		t.Fatal(err)
+	}
+	assertRunStatusRows(t, store, runID, 2, commitstatus.StateSuccess)
+
+	tx, err := store.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := enqueueCommitStatusForRun(t.Context(), tx, runID, runmodel.StatusQueued); err != nil {
+		t.Fatal(err)
+	}
+	if err := enqueueCommitStatusForRun(t.Context(), tx, runID, runmodel.StatusSucceeded); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assertRunStatusRows(t, store, runID, 2, commitstatus.StateSuccess)
+}
+
+func installStatusRejectTrigger(t *testing.T, store *Store, condition string) {
+	t.Helper()
+	statement := `CREATE OR REPLACE FUNCTION reject_test_status() RETURNS trigger LANGUAGE plpgsql AS $$
+	BEGIN IF ` + condition + ` THEN RAISE EXCEPTION 'status rejected'; END IF; RETURN NEW; END $$;
+	CREATE TRIGGER reject_test_status BEFORE INSERT ON commit_status_outbox
+	FOR EACH ROW EXECUTE FUNCTION reject_test_status()`
+	if _, err := store.pool.Exec(t.Context(), statement); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func dropStatusRejectTrigger(t *testing.T, store *Store) {
+	t.Helper()
+	if _, err := store.pool.Exec(t.Context(), `DROP TRIGGER reject_test_status ON commit_status_outbox`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertRunStatusRows(t *testing.T, store *Store, runID uuid.UUID, want int, final commitstatus.State) {
+	t.Helper()
+	var count int
+	var finalCount int
+	if err := store.pool.QueryRow(t.Context(), `SELECT count(*),count(*) FILTER (WHERE commit_state=$2)
+		FROM commit_status_outbox WHERE run_id=$1`, runID, final).Scan(&count, &finalCount); err != nil {
+		t.Fatal(err)
+	}
+	if count != want || finalCount != 1 {
+		t.Fatalf("status rows=%d final %q rows=%d", count, final, finalCount)
 	}
 }
 

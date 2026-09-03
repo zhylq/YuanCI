@@ -127,6 +127,9 @@ func (s *Store) RecoverExpiredRunnerLeases(ctx context.Context, limit int) (runm
                 WHERE id=$1`, runID); err != nil {
 				return runmodel.RecoveryResult{}, fmt.Errorf("fail run after Runner loss: %w", err)
 			}
+			if err := enqueueCommitStatusForRun(ctx, tx, runID, runmodel.StatusFailed); err != nil {
+				return runmodel.RecoveryResult{}, err
+			}
 		} else if len(jobs) > 0 {
 			if _, err := tx.Exec(ctx, `UPDATE runs SET status='queued',started_at=NULL,finished_at=NULL
                 WHERE id=$1 AND NOT EXISTS (SELECT 1 FROM jobs WHERE run_id=$1
