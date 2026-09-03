@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -37,7 +38,10 @@ func (e *DockerExecutor) Check(ctx context.Context) error {
 	return nil
 }
 
-func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipeline.PlanJob) error {
+func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipeline.PlanJob, source *localSource) error {
+	if source != nil {
+		defer clear(source.credential)
+	}
 	if len(spec.Services) > 0 {
 		return errors.New("service containers are declared but not implemented by the milestone-0 executor")
 	}
@@ -57,6 +61,11 @@ func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipe
 	defer e.cleanup(jobID, len(spec.Steps), volume, network)
 	if err := e.run(jobCtx, "network", "create", "--driver", "bridge", network); err != nil {
 		return err
+	}
+	if source != nil {
+		if err := e.checkout(jobCtx, jobID, volume, network, source); err != nil {
+			return fmt.Errorf("source checkout failed: %w", err)
+		}
 	}
 	for index, step := range spec.Steps {
 		if err := jobCtx.Err(); err != nil {
@@ -86,6 +95,19 @@ func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipe
 		}
 	}
 	return nil
+}
+
+func (e *DockerExecutor) checkout(ctx context.Context, jobID uuid.UUID, volume, network string, source *localSource) error {
+	commandSpec, input, err := buildCheckoutCommand(volume, network, dockerCheckoutContainerName(jobID), source)
+	if err != nil {
+		return err
+	}
+	defer clear(input)
+	command := e.commandFor(ctx, e.Binary, commandSpec.args...)
+	command.Stdin = bytes.NewReader(input)
+	command.Stdout = e.Stdout
+	command.Stderr = e.Stderr
+	return command.Run()
 }
 
 func buildDockerArgs(volume, network string, jobID uuid.UUID, index int, image string, job pipeline.PlanJob, step pipeline.Step) []string {
@@ -139,13 +161,11 @@ func (e *DockerExecutor) cleanup(jobID uuid.UUID, steps int, volume, network str
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	containerArgs := []string{"container", "rm", "-f"}
+	containerArgs := []string{"container", "rm", "-f", dockerCheckoutContainerName(jobID)}
 	for index := 0; index < steps; index++ {
 		containerArgs = append(containerArgs, dockerContainerName(jobID, index))
 	}
-	if steps > 0 {
-		e.runQuiet(ctx, containerArgs...)
-	}
+	e.runQuiet(ctx, containerArgs...)
 	var cleanup sync.WaitGroup
 	cleanup.Add(2)
 	go func() {
@@ -180,6 +200,10 @@ func dockerResourceNames(jobID uuid.UUID) (string, string) {
 
 func dockerContainerName(jobID uuid.UUID, index int) string {
 	return fmt.Sprintf("yuanci-%s-%d", strings.ReplaceAll(jobID.String(), "-", ""), index)
+}
+
+func dockerCheckoutContainerName(jobID uuid.UUID) string {
+	return fmt.Sprintf("yuanci-%s-checkout", strings.ReplaceAll(jobID.String(), "-", ""))
 }
 
 var resourcePattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?(?:[kmgtKMGT]i?[bB]?)?$`)

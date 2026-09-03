@@ -34,7 +34,7 @@ const (
 // Executor runs one immutable job plan. Lease cancellation is delivered through
 // the context; the Docker implementation performs the actual isolation.
 type Executor interface {
-	Execute(context.Context, uuid.UUID, pipeline.PlanJob) error
+	Execute(context.Context, uuid.UUID, pipeline.PlanJob, *localSource) error
 }
 
 type WorkConfig struct {
@@ -396,7 +396,7 @@ func executeJob(ctx context.Context, executor Executor, job *localJob, results c
 	started := time.Now()
 	conclusion := runnerv1.JobConclusion_JOB_CONCLUSION_SUCCEEDED
 	detail := ""
-	if err := executor.Execute(ctx, job.id, job.plan); err != nil {
+	if err := executor.Execute(ctx, job.id, job.plan, job.source); err != nil {
 		conclusion = runnerv1.JobConclusion_JOB_CONCLUSION_FAILED
 		detail = "job execution failed"
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {

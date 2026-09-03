@@ -818,21 +818,6 @@ the batch outcome and remaining work.
   repository suite, frontend build, Compose validation or deployment-image
   build was run.
 
-## 2026-09-03 — SRC-05 one-shot secure Git checkout helper
-
-- Added a single-use Git helper container command that receives the checkout
-  credential only through stdin and keeps it out of process arguments and
-  environment variables. Its transient Git configuration lives on a bounded
-  tmpfs and is removed on every helper exit.
-- Checkout policy disables interactive prompting, credential helpers and
-  persistence, hooks, redirects, non-HTTPS protocols, LFS filters and recursive
-  submodules. The helper fetches only the assigned commit and checks it out in
-  detached mode in the Docker workspace.
-- Focused Runner command-construction tests prove the token does not enter argv
-  or environment and cover the hardened Git/Docker settings plus unsafe token
-  rejection. Focused package tests, vet and `git diff --check` passed. SRC-05 is
-  not a phase gate, so no full repository suite was run.
-
 ## 2026-09-03 — SRC-02 non-persistent Runner assignment credentials
 
 - Runner gRPC now requests a GitHub checkout credential only after a
@@ -886,3 +871,33 @@ the batch outcome and remaining work.
   `go vet` and `git diff --check`. SRC-04 is not a phase gate, so no full
   repository suite, frontend build, Compose validation or deployment-image
   build was run.
+
+## 2026-09-03 — SRC-05 one-shot secure Git checkout helper
+
+- Added a single-use Git helper container command that receives the checkout
+  credential only through stdin and keeps it out of process arguments and
+  environment variables. Its transient Git configuration lives on a bounded
+  tmpfs and is removed on every helper exit.
+- Checkout policy disables interactive prompting, credential helpers and
+  persistence, hooks, redirects, non-HTTPS protocols, LFS filters and recursive
+  submodules. The helper fetches only the assigned commit and checks it out in
+  detached mode in the Docker workspace.
+- Focused Runner command-construction tests prove the token does not enter argv
+  or environment and cover the hardened Git/Docker settings plus unsafe token
+  rejection. Focused package tests, vet and `git diff --check` passed. SRC-05 is
+  not a phase gate, so no full repository suite was run.
+
+## 2026-09-03 — SRC-06 checkout-backed Docker workspaces
+
+- Runner execution now performs the hardened one-shot checkout after creating
+  the isolated workspace volume and network and before starting any user step.
+  The helper verifies the detached workspace `HEAD` exactly matches the
+  assigned 40-hex commit SHA.
+- Checkout failure, SHA mismatch and cancellation prevent user steps from
+  starting. Helper and step containers, the network and the workspace volume
+  are removed through the existing bounded cleanup path, and the Runner-owned
+  credential buffer is cleared immediately after checkout returns.
+- Focused Docker/Runner integration tests cover successful ordering, mismatch,
+  cancellation, resource cleanup and credential clearing. Focused package tests,
+  vet and `git diff --check` passed. SRC-06 is not a phase gate, so no full
+  repository suite was run.

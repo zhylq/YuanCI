@@ -19,6 +19,7 @@ git -c include.path="$config" init --quiet /workspace
 git -C /workspace -c include.path="$config" remote add origin "$1"
 git -C /workspace -c include.path="$config" fetch --quiet --no-tags --depth=1 origin "$2"
 git -C /workspace -c include.path="$config" checkout --quiet --detach FETCH_HEAD
+test "$(git -C /workspace -c include.path="$config" rev-parse HEAD)" = "$2"
 `
 
 type checkoutCommand struct {

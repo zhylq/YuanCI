@@ -279,7 +279,7 @@ type recordingExecutor struct {
 
 type executorFunc func(context.Context, uuid.UUID, pipeline.PlanJob) error
 
-func (function executorFunc) Execute(ctx context.Context, jobID uuid.UUID, plan pipeline.PlanJob) error {
+func (function executorFunc) Execute(ctx context.Context, jobID uuid.UUID, plan pipeline.PlanJob, _ *localSource) error {
 	return function(ctx, jobID, plan)
 }
 
@@ -299,7 +299,7 @@ func (*fakeWorkStream) Context() context.Context              { return context.B
 func (*fakeWorkStream) SendMsg(any) error                     { return nil }
 func (*fakeWorkStream) RecvMsg(any) error                     { return context.Canceled }
 
-func (executor *recordingExecutor) Execute(_ context.Context, jobID uuid.UUID, _ pipeline.PlanJob) error {
+func (executor *recordingExecutor) Execute(_ context.Context, jobID uuid.UUID, _ pipeline.PlanJob, _ *localSource) error {
 	executor.started <- jobID
 	return nil
 }
