@@ -695,3 +695,16 @@ the batch outcome and remaining work.
 - Focused protocol, scheduler and PostgreSQL tests passed. A real PostgreSQL 17
   integration test verifies v1 rejection and v2 source metadata, followed by
   `go test ./...` and `go vet ./...` in the pinned Go container.
+
+## 2026-09-03 — token-efficient v1 task sequencing
+
+- Replaced open-ended "continue development" sessions with an approved atomic
+  task contract: normally one 20–45 minute capability, focused tests, one
+  commit, one push, and a clean handoff to a new conversation.
+- Cataloged the remaining GitHub Alpha, complete CI, Secret, SCM, console, CD,
+  operations and qualification work with stable task IDs, dependencies, model
+  guidance and exit tests. Full repository verification is reserved for named
+  phase gates to avoid repeated builds while retaining release rigor.
+- Added a reusable Chinese trigger prompt so repository documents and Git state,
+  rather than accumulated chat history, carry context between tasks. The next
+  implementation task is `GH-01`.

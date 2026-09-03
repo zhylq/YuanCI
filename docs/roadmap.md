@@ -22,6 +22,10 @@ webhook-to-build/status vertical slice; run logs and console detail; complete
 console; remaining SCM/CI capabilities; protected CD; release qualification.
 Do not remove the insecure-evaluation gate merely because the policy tests pass.
 
+The remaining v1 work is split into manually triggered, context-bounded tasks in
+[the atomic task plan](plans/2026-09-03-v1-atomic-task-plan.md). Execute one task
+per Codex conversation; the next task is `GH-01`.
+
 ## Milestone 0 — architecture baseline
 
 - ADRs, threat model, RBAC matrix, state machines, OpenAPI and Pipeline v1 schema
