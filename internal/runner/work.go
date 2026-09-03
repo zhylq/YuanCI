@@ -27,6 +27,8 @@ const (
 	workReconnectMinimum  = time.Second
 	workReconnectMaximum  = 30 * time.Second
 	workMessageLimit      = 2 << 20
+	runnerProtocolVersion = 2
+	maximumCheckoutToken  = 4 << 10
 )
 
 // Executor runs one immutable job plan. Lease cancellation is delivered through
@@ -70,6 +72,16 @@ type localJob struct {
 	result        *executionResult
 	leaseTimer    *time.Timer
 	authorityLost atomic.Bool
+	source        *localSource
+}
+
+type localSource struct {
+	provider     string
+	repositoryID string
+	cloneURL     string
+	commitSHA    string
+	credential   []byte
+	expiresAt    time.Time
 }
 
 type executionResult struct {
@@ -230,18 +242,21 @@ func (client *WorkClient) handleResponse(ctx context.Context,
 			return err
 		}
 		if existing := active[job.id]; existing != nil {
+			clearJobSource(job)
 			if existing.leaseToken != job.leaseToken {
 				return errors.New("conflicting Runner assignment")
 			}
 			return resendTransition(stream, existing)
 		}
 		if len(active) >= int(client.config.Capabilities.Capacity) {
+			clearJobSource(job)
 			return errors.New("Runner local capacity exceeded")
 		}
 		jobCtx, cancel := context.WithCancel(ctx)
 		job.ctx = jobCtx
 		job.cancel = cancel
 		if !armLeaseDeadline(job, leaseLosses) {
+			clearJobSource(job)
 			return errors.New("Runner assignment lease expired before acceptance")
 		}
 		active[job.id] = job
@@ -313,6 +328,9 @@ func (client *WorkClient) handleResponse(ctx context.Context,
 }
 
 func decodeAssignment(assignment *runnerv1.JobAssignment) (*localJob, error) {
+	if assignment != nil && assignment.Credential != nil {
+		defer clear(assignment.Credential.Token)
+	}
 	if assignment == nil || assignment.LeaseToken == "" || len(assignment.LeaseToken) > 512 ||
 		len(assignment.ExecutionPlanJson) == 0 || len(assignment.ExecutionPlanJson) > 1<<20 ||
 		assignment.LeaseExpiresAt == nil || !assignment.LeaseExpiresAt.IsValid() {
@@ -329,8 +347,22 @@ func decodeAssignment(assignment *runnerv1.JobAssignment) (*localJob, error) {
 	if err := decoder.Decode(&plan); err != nil || decoder.Decode(&struct{}{}) != io.EOF || plan.Name == "" {
 		return nil, errors.New("invalid Runner execution plan")
 	}
-	return &localJob{id: jobID, leaseToken: assignment.LeaseToken, leaseExpires: assignment.LeaseExpiresAt.AsTime(),
-		plan: plan, phase: jobAwaitingAcceptance}, nil
+	job := &localJob{id: jobID, leaseToken: assignment.LeaseToken, leaseExpires: assignment.LeaseExpiresAt.AsTime(),
+		plan: plan, phase: jobAwaitingAcceptance}
+	if (assignment.Source == nil) != (assignment.Credential == nil) {
+		return nil, errors.New("invalid Runner source credential")
+	}
+	if assignment.Source != nil {
+		credential := assignment.Credential
+		if len(credential.Token) == 0 || len(credential.Token) > maximumCheckoutToken || credential.ExpiresAt == nil ||
+			!credential.ExpiresAt.IsValid() || !time.Now().Before(credential.ExpiresAt.AsTime()) {
+			return nil, errors.New("invalid Runner source credential")
+		}
+		job.source = &localSource{provider: assignment.Source.Provider, repositoryID: assignment.Source.RepositoryId,
+			cloneURL: assignment.Source.CloneUrl, commitSHA: assignment.Source.CommitSha,
+			credential: append([]byte(nil), credential.Token...), expiresAt: credential.ExpiresAt.AsTime()}
+	}
+	return job, nil
 }
 
 func resendTransition(stream grpc.BidiStreamingClient[runnerv1.WorkRequest, runnerv1.WorkResponse], job *localJob) error {
@@ -356,7 +388,7 @@ func sendHeartbeat(stream grpc.BidiStreamingClient[runnerv1.WorkRequest, runnerv
 			State: runnerv1.LocalJobState_LOCAL_JOB_STATE_RUNNING})
 	}
 	return stream.Send(&runnerv1.WorkRequest{Body: &runnerv1.WorkRequest_Heartbeat{Heartbeat: &runnerv1.Heartbeat{
-		Capabilities: capabilities, ActiveLeases: leases, ProtocolVersion: 1}}})
+		Capabilities: capabilities, ActiveLeases: leases, ProtocolVersion: runnerProtocolVersion}}})
 }
 
 func executeJob(ctx context.Context, executor Executor, job *localJob, results chan<- executionResult) {
@@ -410,6 +442,7 @@ func cancelJobs(active map[uuid.UUID]*localJob) {
 		}
 		job.authorityLost.Store(true)
 		job.cancel()
+		clearJobSource(job)
 	}
 }
 
@@ -450,7 +483,14 @@ func forgetJob(active map[uuid.UUID]*localJob, job *localJob) {
 	}
 	job.authorityLost.Store(true)
 	job.cancel()
+	clearJobSource(job)
 	delete(active, job.id)
+}
+
+func clearJobSource(job *localJob) {
+	if job != nil && job.source != nil {
+		clear(job.source.credential)
+	}
 }
 
 func waitExecutors(executors *sync.WaitGroup, maximum time.Duration) {

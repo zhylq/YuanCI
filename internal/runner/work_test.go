@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
 	"sync"
@@ -139,6 +140,72 @@ func TestDecodeAssignmentRejectsExpiredAndUnknownPlans(t *testing.T) {
 	if _, err := decodeAssignment(base); err == nil {
 		t.Fatal("expired assignment accepted")
 	}
+}
+
+func TestDecodeAssignmentValidatesSourceCredentialPairAndClearsProtobufToken(t *testing.T) {
+	valid := func() *runnerv1.JobAssignment {
+		return &runnerv1.JobAssignment{JobId: uuid.NewString(), RunId: uuid.NewString(), LeaseToken: "lease",
+			LeaseExpiresAt: timestamppb.New(time.Now().Add(time.Minute)), ExecutionPlanJson: []byte(`{"name":"job"}`),
+			Source: &runnerv1.SourceCheckout{Provider: "github", RepositoryId: "70",
+				CloneUrl: "https://github.com/example/repository.git", CommitSha: "0123456789012345678901234567890123456789"},
+			Credential: &runnerv1.EphemeralCredential{Token: []byte("checkout-token"),
+				ExpiresAt: timestamppb.New(time.Now().Add(time.Minute))}}
+	}
+
+	assignment := valid()
+	original := append([]byte(nil), assignment.Credential.Token...)
+	job, err := decodeAssignment(assignment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.source == nil || !bytes.Equal(job.source.credential, original) {
+		t.Fatal("bounded credential copy was not retained by the local job")
+	}
+	if bytes.Equal(job.source.credential, assignment.Credential.Token) || !allZero(assignment.Credential.Token) {
+		t.Fatal("protobuf credential buffer was retained or aliased")
+	}
+	clearJobSource(job)
+	if !allZero(job.source.credential) {
+		t.Fatal("local credential buffer was not cleared")
+	}
+
+	for _, mutate := range []func(*runnerv1.JobAssignment){
+		func(value *runnerv1.JobAssignment) { value.Source = nil },
+		func(value *runnerv1.JobAssignment) { value.Credential = nil },
+		func(value *runnerv1.JobAssignment) {
+			value.Credential.ExpiresAt = timestamppb.New(time.Now().Add(-time.Second))
+		},
+		func(value *runnerv1.JobAssignment) { value.Credential.Token = make([]byte, (4<<10)+1) },
+	} {
+		assignment = valid()
+		mutate(assignment)
+		credential := assignment.Credential
+		if _, err := decodeAssignment(assignment); err == nil {
+			t.Fatal("invalid source credential assignment accepted")
+		}
+		if credential != nil && !allZero(credential.Token) {
+			t.Fatal("rejected protobuf credential buffer was not cleared")
+		}
+	}
+}
+
+func TestShippedRunnerUsesProtocolV2(t *testing.T) {
+	stream := &fakeWorkStream{}
+	if err := sendHeartbeat(stream, credentialCapabilities(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := stream.sent[0].GetHeartbeat().GetProtocolVersion(); got != 2 {
+		t.Fatalf("heartbeat protocol version = %d, want 2", got)
+	}
+}
+
+func allZero(value []byte) bool {
+	for _, item := range value {
+		if item != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func TestReconnectJitterIsBounded(t *testing.T) {

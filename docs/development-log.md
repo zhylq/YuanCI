@@ -836,3 +836,22 @@ the batch outcome and remaining work.
   tests passed, together with focused `go vet` and `git diff --check`. SRC-02 is
   not a phase gate, so no full repository suite, frontend build, Compose
   validation or deployment-image build was run.
+
+## 2026-09-03 — SRC-03 Runner protocol-v2 credential handling
+
+- The shipped Runner now uses protocol v2 consistently for enrollment,
+  certificate rotation and Work heartbeats, so source-backed Jobs remain
+  unavailable to protocol-v1 Runner identities.
+- Assignment decoding requires source metadata and its ephemeral credential to
+  be paired. Credential timestamps must be valid and unexpired, and token bytes
+  must be non-empty and no larger than 4 KiB before the Runner makes its single
+  owned copy.
+- Incoming protobuf token buffers are cleared on every successful or rejected
+  decode. Runner-owned copies are also cleared when an assignment is discarded,
+  canceled or forgotten; duplicate and capacity-rejected assignments do not
+  retain credential material.
+- Focused `internal/runner` and `cmd/yuanci-runner` tests passed, including
+  protocol-v2 negotiation, pairing, expiry, size-bound and buffer-clearing
+  regressions. Focused `go vet` and `git diff --check` passed. SRC-03 is not a
+  phase gate, so no full repository suite, frontend build, Compose validation
+  or deployment-image build was run.

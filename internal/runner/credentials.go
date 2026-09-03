@@ -105,7 +105,7 @@ func LoadOrEnroll(ctx context.Context, config EnrollmentConfig) (Credentials, er
 	}
 	defer connection.Close()
 	response, err := runnerv1.NewRunnerServiceClient(connection).Register(ctx, &runnerv1.RegisterRequest{
-		OneTimeToken: token, Name: config.Name, Capabilities: config.Capabilities, CsrPem: csrPEM, ProtocolVersion: 1})
+		OneTimeToken: token, Name: config.Name, Capabilities: config.Capabilities, CsrPem: csrPEM, ProtocolVersion: runnerProtocolVersion})
 	if err != nil {
 		return Credentials{}, errors.New("Runner enrollment failed")
 	}
@@ -196,7 +196,7 @@ func RotateCredentials(ctx context.Context, config RotationConfig) (Credentials,
 	}
 	defer connection.Close()
 	response, err := runnerv1.NewRunnerServiceClient(connection).RotateCertificate(ctx, &runnerv1.RotateCertificateRequest{
-		CsrPem: csrPEM, ProtocolVersion: 1})
+		CsrPem: csrPEM, ProtocolVersion: runnerProtocolVersion})
 	if err != nil {
 		return Credentials{}, errors.New("Runner certificate rotation failed")
 	}
