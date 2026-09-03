@@ -901,3 +901,17 @@ the batch outcome and remaining work.
   cancellation, resource cleanup and credential clearing. Focused package tests,
   vet and `git diff --check` passed. SRC-06 is not a phase gate, so no full
   repository suite was run.
+
+## 2026-09-03 — SRC-07 secure-checkout cleanup gate
+
+- Added fault-injection coverage for lease loss during a running user container
+  and for an abruptly failing user process after checkout. Both paths require
+  bounded removal of the checkout helper, user containers, isolated network and
+  workspace volume, with the checkout credential buffer cleared.
+- Credential leak assertions scan Docker argv records and captured process
+  output for the unique test credentials. Existing construction tests continue
+  to prove credentials never enter argv or environment.
+- The secure-checkout phase gate passed: containerized `go test -race ./...`,
+  full `go vet ./...`, frontend tests and production build, validation of all
+  six shipped Compose files, the Runner deployment-image build, and
+  `git diff --check`. No real provider credential was used.

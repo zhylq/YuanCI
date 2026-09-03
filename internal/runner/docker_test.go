@@ -158,6 +158,9 @@ func TestDockerHelperProcess(t *testing.T) {
 	if strings.Contains(joined, "-checkout") && os.Getenv("DOCKER_HELPER_FAIL_CHECKOUT") == "1" {
 		os.Exit(42)
 	}
+	if len(arguments) > 1 && arguments[1] == "run" && !strings.Contains(joined, "-checkout") && os.Getenv("DOCKER_HELPER_FAIL_STEP") == "1" {
+		os.Exit(43)
+	}
 	if len(arguments) > 1 && arguments[1] == "run" && !strings.Contains(joined, "-checkout") &&
 		os.Getenv("DOCKER_HELPER_NO_SLEEP") != "1" {
 		time.Sleep(30 * time.Second)
