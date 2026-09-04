@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { ApiError, request } from '../lib/api'
 import { navigateToAuthorization, post, useAuthStatus, useSession, type Session } from '../lib/auth'
 import { buttonClass, linkClass, Pending } from '../components/auth-boundary'
+import { GiteeRepositorySettings } from './gitee-repositories'
 
 export type ImportSettings = {
   app: { id: string; app_id: string; client_id: string; slug: string; webhook_enabled?: boolean } | null
@@ -41,6 +42,7 @@ export function RepositorySettingsPage() {
   if (status.data.mode !== 'managed') return <section className={panel}><h1 className="text-balance text-2xl font-semibold">仓库接入需要受保护配置模式</h1><p className="mt-3 text-pretty leading-7 text-slate-600">免登录 Quickstart 和文件登录模式不允许在网页保存 App 私钥。请按 docs/managed-setup.zh-CN.md 启动独立的 managed Compose；不需要安装 Go。</p><Link className={`${linkClass} mt-4 inline-flex min-h-11 items-center`} to="/settings/auth">查看登录设置</Link></section>
   if (session.isPending) return <Pending label="正在验证管理员会话…" />
   if (session.isError || !session.data) return <ReadError error={session.error ?? new ApiError('', 401)} retry={() => void session.refetch()} />
+  if (status.data.provider === 'gitee') return <GiteeRepositorySettings key={session.data.user_id} session={session.data} />
   return <ManagedImport key={session.data.user_id} session={session.data} />
 }
 function ManagedImport({ session }: { session: Session }) {
@@ -52,7 +54,7 @@ function ManagedImport({ session }: { session: Session }) {
       <AppForm key={settings.data.app?.id ?? 'new'} settings={settings.data} csrf={session.csrf_token} onSaved={() => void settings.refetch()} />
       {settings.data.app && !settings.data.needs_verification ? <Discovery key={`${settings.data.app.id}:${settings.data.authorized_until ?? 'pending'}`} settings={settings.data} session={session} /> : <p className="text-pretty text-sm leading-6 text-slate-600">完成私钥验证后，将出现安装应用与授权发现入口。</p>}
     </>}
-    <p className="text-pretty text-sm leading-6 text-slate-600">Gitee、GitLab、Gitea 仍待接入；登录和导入都不会自动给其他成员授予项目权限。<Link className={linkClass} to="/projects">查看已导入项目</Link></p>
+    <p className="text-pretty text-sm leading-6 text-slate-600">GitLab、Gitea 仍待接入；登录和导入都不会自动给其他成员授予项目权限。<Link className={linkClass} to="/projects">查看已导入项目</Link></p>
   </div>
 }
 function Instructions({ settings }: { settings: ImportSettings }) {

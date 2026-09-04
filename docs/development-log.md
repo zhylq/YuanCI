@@ -1299,3 +1299,13 @@ the batch outcome and remaining work.
   sufficient. It never creates or replaces the login session.
 - Focused HTTP/PostgreSQL/Gitee/server race tests passed, including missing
   session/CSRF, shared callback routing and replay. GE-01F console follows.
+
+## 2026-09-04 — GE-01F Gitee repository console; GE-01 implemented
+
+- Added configured-provider repository settings, independent Gitee authorization
+  and local revoke, paginated selection/import and links to imported projects.
+  Gitee-only instances never call the GitHub integration endpoints.
+- Nine focused repository React tests, TypeScript and focused ESLint passed;
+  import identity/CSRF payloads and denied-access controls are covered. GE-01A
+  through GE-01F are implemented; real-provider evidence belongs to GE-04.
+- Next: GE-02 webhook trust, normalization and immutable configuration.
