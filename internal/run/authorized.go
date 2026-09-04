@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 )
@@ -16,4 +17,10 @@ type AuthorizedStore interface {
 
 type CancellationStore interface {
 	CancelAuthorizedRun(context.Context, string, uuid.UUID, uuid.UUID) (Status, error)
+}
+
+var ErrRunConflict = errors.New("Run cannot be rerun in this state")
+
+type RerunStore interface {
+	RerunAuthorizedRun(context.Context, string, uuid.UUID, uuid.UUID, string, uuid.UUID) (Record, error)
 }

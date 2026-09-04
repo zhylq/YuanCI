@@ -140,3 +140,121 @@ func TestCancelRunHTTPAuthenticationCSRFAndRBAC(t *testing.T) {
 		t.Fatalf("cancel: %d", code)
 	}
 }
+
+func TestRerunImmutableIdentityIdempotencyAndDAG(t *testing.T) {
+	f := newAccessFixture(t)
+	grantProject(t, f, authorization.Developer)
+	input := storetest.Record(t, 2, true)
+	input.CommitSHA = "0123456789abcdef0123456789abcdef01234567"
+	original, err := f.store.CreateAuthorizedRun(t.Context(), f.memberSession.Token, f.project, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.RerunAuthorizedRun(t.Context(), f.memberSession.Token, f.project, original.ID, "full", uuid.New()); !errors.Is(err, runmodel.ErrRunConflict) {
+		t.Fatalf("active rerun: %v", err)
+	}
+	first, err := f.store.ClaimJob(t.Context(), runmodel.ClaimRequest{RunnerName: "rerun"})
+	if err != nil || first == nil {
+		t.Fatal(err)
+	}
+	if err := f.store.CompleteJob(t.Context(), first.JobID, first.LeaseToken, runmodel.JobSucceeded); err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.store.ClaimJob(t.Context(), runmodel.ClaimRequest{RunnerName: "rerun"})
+	if err != nil || second == nil {
+		t.Fatal(err)
+	}
+	if err := f.store.CompleteJob(t.Context(), second.JobID, second.LeaseToken, runmodel.JobFailed); err != nil {
+		t.Fatal(err)
+	}
+	requestID := uuid.New()
+	retry, err := f.store.RerunAuthorizedRun(t.Context(), f.memberSession.Token, f.project, original.ID, "failed", requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.ID == original.ID || retry.CommitSHA != original.CommitSHA || retry.ConfigSHA256 != original.ConfigSHA256 {
+		t.Fatal("immutable identity changed")
+	}
+	var identical bool
+	if err := f.store.pool.QueryRow(t.Context(), `SELECT r.compiled_plan=o.compiled_plan AND r.pipeline_version_id IS NOT DISTINCT FROM o.pipeline_version_id FROM runs r,runs o WHERE r.id=$1 AND o.id=$2`, retry.ID, original.ID).Scan(&identical); err != nil || !identical {
+		t.Fatal("plan identity changed")
+	}
+	replay, err := f.store.RerunAuthorizedRun(t.Context(), f.memberSession.Token, f.project, original.ID, "failed", requestID)
+	if err != nil || replay.ID != retry.ID {
+		t.Fatalf("idempotency: %v", err)
+	}
+	var reused, queued int
+	if err := f.store.pool.QueryRow(t.Context(), `SELECT count(*) FILTER (WHERE reused_from_job_id IS NOT NULL AND status='succeeded'),count(*) FILTER (WHERE status='queued') FROM jobs WHERE run_id=$1`, retry.ID).Scan(&reused, &queued); err != nil || reused != 1 || queued != 1 {
+		t.Fatalf("DAG reused=%d queued=%d err=%v", reused, queued, err)
+	}
+	next, err := f.store.ClaimJob(t.Context(), runmodel.ClaimRequest{RunnerName: "rerun"})
+	if err != nil || next == nil || next.JobName != second.JobName {
+		t.Fatalf("wrong failed job: %+v %v", next, err)
+	}
+	if err := f.store.CompleteJob(t.Context(), next.JobID, next.LeaseToken, runmodel.JobSucceeded); err != nil {
+		t.Fatal(err)
+	}
+	join, err := f.store.ClaimJob(t.Context(), runmodel.ClaimRequest{RunnerName: "rerun"})
+	if err != nil || join == nil || join.JobName != "join" {
+		t.Fatalf("downstream DAG: %+v %v", join, err)
+	}
+	if err := f.store.CompleteJob(t.Context(), join.JobID, join.LeaseToken, runmodel.JobSucceeded); err != nil {
+		t.Fatal(err)
+	}
+	full, err := f.store.RerunAuthorizedRun(t.Context(), f.memberSession.Token, f.project, original.ID, "full", uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs WHERE run_id=$1 AND reused_from_job_id IS NOT NULL`, full.ID).Scan(&reused); err != nil || reused != 0 {
+		t.Fatal("full rerun reused results")
+	}
+	if _, err := f.store.RerunAuthorizedRun(t.Context(), f.memberSession.Token, f.otherProject, original.ID, "full", uuid.New()); !errors.Is(err, authorization.ErrForbidden) {
+		t.Fatal("cross-project rerun")
+	}
+}
+
+func TestRerunConcurrentReplayAndAuditRollback(t *testing.T) {
+	f := newAccessFixture(t)
+	grantProject(t, f, authorization.Developer)
+	original, err := f.store.CreateAuthorizedRun(t.Context(), f.memberSession.Token, f.project, storetest.Record(t, 1, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.CancelAuthorizedRun(t.Context(), f.memberSession.Token, f.project, original.ID); err != nil {
+		t.Fatal(err)
+	}
+	key := uuid.New()
+	ids := make(chan uuid.UUID, 8)
+	failures := make(chan error, 8)
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			r, err := f.store.RerunAuthorizedRun(t.Context(), f.memberSession.Token, f.project, original.ID, "full", key)
+			ids <- r.ID
+			failures <- err
+		})
+	}
+	wg.Wait()
+	close(ids)
+	close(failures)
+	for err := range failures {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	unique := map[uuid.UUID]bool{}
+	for id := range ids {
+		unique[id] = true
+	}
+	if len(unique) != 1 {
+		t.Fatal("duplicate reruns")
+	}
+	rejectAudit(t, f.store)
+	if _, err := f.store.RerunAuthorizedRun(t.Context(), f.memberSession.Token, f.project, original.ID, "full", uuid.New()); err == nil {
+		t.Fatal("ignored audit failure")
+	}
+	var count int
+	if err := f.store.pool.QueryRow(t.Context(), `SELECT count(*) FROM runs WHERE rerun_of=$1`, original.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("rollback: %d %v", count, err)
+	}
+}

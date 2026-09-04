@@ -1029,3 +1029,17 @@ the batch outcome and remaining work.
   Runner completion, heartbeat cancellation and audit rollback tests passed.
   Affected PostgreSQL, HTTP and run packages passed Linux race tests and vet.
   No full repository suite was run.
+
+## 2026-09-04 — RUN-02 immutable full and failed-Job reruns
+
+- Added authenticated, CSRF-protected rerun creation with a UUID request key
+  scoped to actor, original Run and mode. Parent locking makes concurrent
+  retries return one new Run; active or non-executable Runs are rejected.
+- Reruns preserve repository, commit, event/ref, configuration digest, compiled
+  plan and pipeline-version identity. New Runs record their parent and mode.
+  Failed mode explicitly references successful predecessor Jobs and schedules
+  failed/skipped Jobs through the original DAG; full mode executes every Job.
+- Immutable identity, downstream DAG convergence, cross-project denial,
+  eight-way request replay, audit rollback and migration preservation passed.
+  Affected PostgreSQL/HTTP/run packages passed Linux race tests and vet.
+  No full repository suite was run.
