@@ -1321,3 +1321,12 @@ the batch outcome and remaining work.
   passwords and raw payloads are excluded from normalized events.
 - Focused Gitee race tests passed. Durable inbox/automation wiring follows
   within GE-02; no real-provider gate is claimed.
+
+## 2026-09-04 — GE-02 durable Gitee webhook and validation service
+
+- Added per-project encrypted webhook passwords/revisions, authenticated service
+  receipt into the shared inbox and immutable pipeline validation records.
+  Password replacement invalidates stale queued event trust and validation.
+- Gitee/provider/PostgreSQL race tests passed for semantic replay deduplication,
+  secret exclusion, revision conflicts, immutable fetch and key replacement.
+  Shared worker/Run transaction and project HTTP/UI integration follows.

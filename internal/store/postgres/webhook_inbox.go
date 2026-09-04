@@ -10,10 +10,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/yuanci/yuanci/internal/githubhook"
+	"github.com/yuanci/yuanci/internal/identity"
 )
 
 func (s *Store) ReceiveWebhook(ctx context.Context, delivery githubhook.Delivery) (githubhook.Receipt, error) {
-	if delivery.Provider != "github" || delivery.ProviderInstance == "" || delivery.DeliveryID == "" ||
+	if !identity.ValidProviderInstance(delivery.Provider, delivery.ProviderInstance) || delivery.DeliveryID == "" ||
 		delivery.EventType == "" || len(delivery.PayloadSHA256) != 64 || len(delivery.NormalizedEvent) == 0 || delivery.ReceivedAt.IsZero() {
 		return githubhook.Receipt{}, githubhook.ErrInvalidRequest
 	}

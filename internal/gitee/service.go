@@ -44,6 +44,7 @@ type Store interface {
 	RevokeGiteeGrant(context.Context, string) error
 }
 type Service struct {
+	hooks    hookLimiter
 	Store    Store
 	Provider OAuthProvider
 	cipher   *secrets.Cipher
