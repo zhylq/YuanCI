@@ -18,7 +18,7 @@ func TestCheckRunDeliveryContract(t *testing.T) {
 			item := commitstatus.Item{RunID: uuid.New(), CommitSHA: strings.Repeat("a", 40), State: state, Description: "Run result"}
 			c.http.Transport = transport(func(r *http.Request) (*http.Response, error) {
 				calls++
-				if r.Header.Get("Authorization") != "Bearer private-token" || r.URL.Query().Has("access_token") {
+				if r.Header.Get("Authorization") != "" || r.URL.Query().Get("access_token") != "private-token" {
 					t.Fatal("credential transport")
 				}
 				if calls == 1 {

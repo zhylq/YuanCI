@@ -126,7 +126,9 @@ func (c *Client) get(ctx context.Context, path, token string, target any, limit 
 	if err != nil {
 		return ErrRemote
 	}
-	r.Header.Set("Authorization", "Bearer "+token)
+	values := r.URL.Query()
+	values.Set("access_token", token)
+	r.URL.RawQuery = values.Encode()
 	return c.request(r, target, limit)
 }
 func (c *Client) request(r *http.Request, target any, limit int64) error {

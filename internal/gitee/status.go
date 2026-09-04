@@ -125,7 +125,9 @@ func (c *Client) DeliverCheck(ctx context.Context, token string, repo Repository
 	if err != nil {
 		return ErrRemote
 	}
-	request.Header.Set("Authorization", "Bearer "+token)
+	query := request.URL.Query()
+	query.Set("access_token", token)
+	request.URL.RawQuery = query.Encode()
 	request.Header.Set("Content-Type", "application/json")
 	return c.request(request, nil, 1<<20)
 }

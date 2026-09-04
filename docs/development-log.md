@@ -1477,3 +1477,15 @@ the batch outcome and remaining work.
   `/api/v1/auth/gitee/callback` callback. No provider secret, setup code, token
   or legacy data was exposed. Real OAuth/repository/webhook/checkout/Checks
   acceptance remains the GE-04 next step.
+
+## 2026-09-04 — GE-04 Gitee repository discovery credential transport
+
+- Confirmed the active Gitee OAuth grant has the required `user_info` and
+  `projects` scopes, but repository discovery requests could not complete.
+  Gitee's official OpenAPI defines `access_token` as the authenticated
+  `/v5/user/repos` query parameter while YuanCI used only a Bearer header.
+- Changed only authenticated Gitee REST calls to use that documented query
+  parameter, including Check Runs writes. OAuth exchanges and Runner checkout
+  capabilities are unchanged; tokens remain excluded from logs and all browser
+  and Runner-facing data. Focused client and status contract tests cover the
+  transport representation.

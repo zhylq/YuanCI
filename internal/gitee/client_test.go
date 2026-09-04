@@ -76,7 +76,7 @@ func TestOAuthRejectsScopeAndRateAndRedirect(t *testing.T) {
 func TestRepositoryIdentityAndPermissionContract(t *testing.T) {
 	c := NewClient()
 	c.http.Transport = transport(func(r *http.Request) (*http.Response, error) {
-		if r.Header.Get("Authorization") != "Bearer access" || r.URL.Query().Has("access_token") {
+		if r.Header.Get("Authorization") != "" || r.URL.Query().Get("access_token") != "access" {
 			t.Fatal("incorrect credential transport")
 		}
 		return response(r, 200, `{"id":42,"path":"repo","namespace":{"id":7,"path":"owner"},"private":true,"default_branch":"main","html_url":"https://gitee.com/owner/repo","permission":{"admin":true}}`), nil
