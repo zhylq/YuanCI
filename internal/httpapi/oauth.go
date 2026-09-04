@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/yuanci/yuanci/internal/gitee"
 	"github.com/yuanci/yuanci/internal/githubapp"
 	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/integration"
@@ -21,6 +22,7 @@ type AutomationPipeline interface {
 
 // GitHubLogin is installed only on the authenticated surface, never evaluation.
 type GitHubLogin struct {
+	Gitee        *gitee.Service
 	Store        identity.OAuthStore
 	Provider     identity.OAuthProvider
 	Managed      *provisioning.Service
@@ -65,6 +67,10 @@ func (a *API) beginLogin(w http.ResponseWriter, r *http.Request, linkToken strin
 }
 
 func (a *API) finishLogin(w http.ResponseWriter, r *http.Request) {
+	if a.oauth.Gitee != nil && loginProvider(r) == "gitee" && len(r.CookiesNamed(identity.FlowCookieName)) == 0 && len(r.CookiesNamed(giteeCookieName)) > 0 {
+		a.finishGitee(w, r)
+		return
+	}
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", "GET")

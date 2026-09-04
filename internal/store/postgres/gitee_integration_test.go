@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -11,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/yuanci/yuanci/internal/gitee"
+	"github.com/yuanci/yuanci/internal/httpapi"
 	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/provisioning"
 	"github.com/yuanci/yuanci/internal/scm"
@@ -248,5 +253,66 @@ func TestGiteeRepositoryImportBindingAndRevocation(t *testing.T) {
 	}
 	if err := s.CheckGiteeContext(t.Context(), session.Token, grant.ID, grant.Revision); err == nil {
 		t.Fatal("revoked discovery proof accepted")
+	}
+}
+
+func TestGiteeIntegrationHTTPRequiresSessionAndCSRF(t *testing.T) {
+	s, service, session, _ := giteeFixture(t)
+	cipher, _ := secrets.NewCipher([]byte(strings.Repeat("k", 32)))
+	handler, err := httpapi.NewAuthenticated(slog.New(slog.NewTextHandler(io.Discard, nil)), s, s, 1<<20, "https://ci.example.test", httpapi.GitHubLogin{Store: s, Managed: provisioning.New(s, cipher, "https://ci.example.test"), Gitee: service})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		session, csrf bool
+		want          int
+	}{{false, false, 401}, {true, false, 403}, {true, true, 200}} {
+		r := httptest.NewRequest("POST", "https://ci.example.test/api/v1/integrations/gitee/authorize", nil)
+		if tc.session {
+			r.AddCookie(identity.SessionCookie(session))
+		}
+		if tc.csrf {
+			r.Header.Set("Origin", "https://ci.example.test")
+			r.Header.Set("X-CSRF-Token", identity.CSRFToken(session.Token))
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != tc.want {
+			t.Fatalf("status=%d want=%d body=%s", w.Code, tc.want, w.Body.String())
+		}
+		if tc.want == 200 {
+			var reply struct {
+				URL string `json:"authorization_url"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil {
+				t.Fatal(err)
+			}
+			u, _ := url.Parse(reply.URL)
+			if u.Query().Get("redirect_uri") != "https://ci.example.test/api/v1/auth/gitee/callback" {
+				t.Fatal("requires a second callback")
+			}
+			callback := httptest.NewRequest("GET", "https://ci.example.test/api/v1/auth/gitee/callback?state="+u.Query().Get("state")+"&code=code", nil)
+			callback.AddCookie(identity.SessionCookie(session))
+			for _, cookie := range w.Result().Cookies() {
+				if cookie.MaxAge >= 0 {
+					callback.AddCookie(cookie)
+				}
+			}
+			finished := httptest.NewRecorder()
+			handler.ServeHTTP(finished, callback)
+			if finished.Code != 303 {
+				t.Fatalf("callback: %d %s", finished.Code, finished.Body.String())
+			}
+			for _, cookie := range finished.Result().Cookies() {
+				if cookie.Name == identity.CookieName {
+					t.Fatal("repository authorization changed login session")
+				}
+			}
+			replay := httptest.NewRecorder()
+			handler.ServeHTTP(replay, callback)
+			if replay.Code != 400 {
+				t.Fatal("callback replay accepted")
+			}
+		}
 	}
 }

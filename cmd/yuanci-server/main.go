@@ -13,6 +13,7 @@ import (
 
 	"github.com/yuanci/yuanci/internal/commitstatus"
 	"github.com/yuanci/yuanci/internal/config"
+	"github.com/yuanci/yuanci/internal/gitee"
 	"github.com/yuanci/yuanci/internal/githubapp"
 	"github.com/yuanci/yuanci/internal/githubci"
 	"github.com/yuanci/yuanci/internal/httpapi"
@@ -81,7 +82,7 @@ func main() {
 				logger.Error("GitHub pipeline service initialization failed")
 				os.Exit(2)
 			}
-			login = httpapi.GitHubLogin{Store: database, Managed: provisioning.New(database, cipher, cfg.PublicOrigin), Integrations: integrations, Pipeline: githubPipeline}
+			login = httpapi.GitHubLogin{Store: database, Managed: provisioning.New(database, cipher, cfg.PublicOrigin), Integrations: integrations, Pipeline: githubPipeline, Gitee: gitee.New(database, cipher, cfg.PublicOrigin)}
 			stopCleanup := startIntegrationCleanup(logger, database)
 			defer stopCleanup()
 		} else {

@@ -53,7 +53,10 @@ type Service struct {
 func New(store Store, cipher *secrets.Cipher, origin string) *Service {
 	return &Service{Store: store, Provider: NewClient(), cipher: cipher, Origin: origin}
 }
-func (s *Service) CallbackURL() string { return s.Origin + "/api/v1/integrations/gitee/callback" }
+
+// Reuse the registered login callback; Gitee applications need only one URI.
+// Repository authorization still has its own session-bound flow and cookie.
+func (s *Service) CallbackURL() string { return s.Origin + "/api/v1/auth/gitee/callback" }
 func (s *Service) Start(ctx context.Context, session, state, nonce string) (string, error) {
 	snap, err := s.Store.GiteeContext(ctx, session, true)
 	if err != nil {

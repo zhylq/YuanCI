@@ -1288,3 +1288,14 @@ the batch outcome and remaining work.
   project. Grant row locking closes renewal/revocation races during persistence.
 - Focused Gitee/provider/PostgreSQL race and migration tests passed. This is
   the independently testable repository core; GE-01F HTTP/UI wiring follows.
+
+## 2026-09-04 — GE-01F protected repository endpoints
+
+- Wired managed-server Gitee authorization, settings, revoke, repository paging
+  and import endpoints. Writes require session, origin and CSRF checks; upstream
+  authorization also requires recent administrator authentication.
+- Repository authorization reuses the registered Gitee login callback with a
+  distinct, session-bound one-use flow, so a single configured callback URI is
+  sufficient. It never creates or replaces the login session.
+- Focused HTTP/PostgreSQL/Gitee/server race tests passed, including missing
+  session/CSRF, shared callback routing and replay. GE-01F console follows.
