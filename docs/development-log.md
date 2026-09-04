@@ -1125,3 +1125,24 @@ the batch outcome and remaining work.
   Quickstart instance as the real GitHub sandbox. A separate managed instance
   with a trusted, GitHub-reachable HTTPS origin and an operator-configured App
   is still required. E2E-GH-02 remains open, with no real GitHub evidence.
+
+## 2026-09-04 — E2E-GH-02 protected cloud sandbox and Nginx
+
+- Used the operator-authorized existing SSH connection to deploy a dedicated
+  `yuanci-sandbox` stack and `ci.uyii.cn` Nginx virtual host. Existing sites and
+  local Quickstart were preserved. Reused the validated b436ab0 application
+  images, with independent database, master key, PKI and capacity-one Runner.
+- PostgreSQL 17 Alpine initialization failed with EPERM on the host's Linux
+  3.10 kernel; the official Bookworm variant initialized with the same security
+  restrictions. No privileged container or seccomp bypass was used. Retained
+  the failure as deployment evidence rather than claiming full compatibility.
+- Nginx before/after syntax checks, HTTPS health/readiness and setup page,
+  HTTP redirect, managed authentication status, anonymous project denial and
+  online Runner checks passed. Database and gRPC have no public port mapping.
+  The first request immediately after graceful reload briefly reached the old
+  route; subsequent checks confirmed the new route. System info correctly
+  requires authentication. No full suite or image rebuild was repeated.
+- Generated an operator-only setup code and secured a master-key backup;
+  plaintext credentials are excluded from Git and chat. Real GitHub App login,
+  exact test repository and signed-webhook/checkout/status evidence are still
+  pending. E2E-GH-02 remains the next task and the Alpha gate stays open.

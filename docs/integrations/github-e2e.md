@@ -31,12 +31,41 @@ as specified in the atomic task plan.
 
 ## E2E-GH-02: operator-owned real GitHub App sandbox
 
-Status on 2026-09-04: **NOT EXECUTED / BLOCKED ON SANDBOX DETAILS**.
-The operator supplied `huiyuan1986`; whether this is the GitHub owner is not
-confirmed. No complete repository name, protected YuanCI HTTPS origin, or
-online Runner has been supplied. No real App, webhook, private checkout or
-GitHub status result is claimed. Local E2E and repository Actions results do
-not satisfy this gate.
+Status on 2026-09-04: **DEPLOYED / AWAITING OPERATOR GITHUB APP SETUP**.
+The protected sandbox is available at `https://ci.uyii.cn`, with its dedicated
+Runner online. Managed authentication is not yet configured or initialized;
+the operator must redeem the setup code and authorize their GitHub App.
+The supplied `huiyuan1986` remains an unconfirmed GitHub owner, and the complete
+test repository is still missing. No real App, webhook, private checkout or
+GitHub status result is claimed. Deployment readiness and repository Actions
+results do not satisfy the real acceptance gate.
+
+### Cloud deployment checkpoint
+
+- Dedicated Compose project `yuanci-sandbox`, under
+  `/home/deploy/yuanci-sandbox`, uses independent database, master-key, PKI and
+  Runner-state volumes. Runtime code is b436ab0. Server image ID:
+  `sha256:c7e1f5c1229a06a119e4bd78d2543354a63cd478bb9c582d5f4321aef6fd1b81`;
+  Runner image ID:
+  `sha256:371ad435b54caa7efcd3ccbd72d1cf06291ca74af22fa495fe3a8aa4aa84afdf`.
+- PostgreSQL 17 Alpine failed initialization with file-write EPERM on this
+  Linux 3.10 host. PostgreSQL 17 Bookworm initialized successfully with the
+  existing security restrictions; no privileged mode or seccomp bypass was
+  introduced. Database and Runner gRPC ports are not published to the Internet.
+- Existing Nginx has a separate `ci.uyii.cn.conf` virtual host, redirects HTTP
+  to HTTPS and forwards through `yuanci-sandbox-edge` to the authenticated
+  server. Other virtual hosts were preserved. This site's access/error logs
+  are disabled so OAuth query strings and setup material are not logged there.
+  After recreating the existing Nginx container, reconnect it to this external
+  network before loading this site's configuration.
+- The existing certificate covers `*.uyii.cn` and currently expires on
+  2026-09-19. Its existing renewal mechanism was not modified or verified.
+- Focused checks: Nginx configuration before/after addition, trusted HTTPS,
+  health/readiness 200, setup page 200, HTTP-to-HTTPS 301, managed/unconfigured
+  auth status, unauthenticated project API 401 and online Runner all passed.
+  The setup code and master-key backup are kept in restricted operator files,
+  never in this repository. Codes expire after 15 minutes; an authorized
+  operator can issue a replacement with `yuancictl setup-code` in the server.
 
 ### Prerequisites and setup
 
@@ -136,11 +165,11 @@ stages:
 | --- | --- |
 | Date / operator | Pending |
 | GitHub owner candidate | `huiyuan1986` (unconfirmed) |
-| Protected origin / deployed SHA / image digests | Pending |
+| Protected origin / deployed SHA / image digests | `https://ci.uyii.cn`; b436ab0; image IDs above |
 | Exact private repository / repository ID | Pending |
 | App ID / installation ID / webhook version | Pending |
-| Runner ID / pool / online and Docker readiness | Pending |
-| Authentication and project isolation | Not executed |
+| Runner ID / pool / online and Docker readiness | `e991d33c-bd64-4a0c-b250-fce2a6037e87`; `standard`; online; actual sandbox Job execution pending |
+| Authentication and project isolation | Managed mode; unauthenticated API denied; operator login and cross-project check pending |
 | Success: delivery ID / event SHA / config digest / Run URL / status | Not executed |
 | Moving branch and duplicate delivery | Not executed |
 | Failure and full/failed-Job reruns | Not executed |
