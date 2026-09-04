@@ -1434,3 +1434,21 @@ the batch outcome and remaining work.
   by overwriting the GitHub config or editing its database. GE-04 requires a new
   isolated Gitee managed stack and HTTPS origin, then OAuth/repository/webhook
   acceptance using the separate Gitee application.
+
+## 2026-09-04 — GE-04 isolated Gitee sandbox prepared
+
+- Added a reviewed Compose profile and Nginx template for a disposable Gitee
+  acceptance stack. The profile pins the verified image version, uses separate
+  PostgreSQL/master-key/Runner-PKI/Runner-state volumes, and has no data path to
+  the existing GitHub sandbox.
+- Validated the profile locally, then started `yuanci-gitee-sandbox` on the
+  existing cloud host. Its Server and capacity-one Runner are healthy; local
+  readiness passed and managed auth reports unconfigured/uninitialized with the
+  intended Gitee callback origin. The first key-init attempt exposed a root-owned
+  fresh-volume permission issue; the profile now initializes and chowns only its
+  new key file. No existing volume was touched.
+- DNS for `gitee-ci.uyii.cn` currently resolves elsewhere and the deployment SSH
+  account lacks root permission for the Nginx configuration directory. Those two
+  host-admin actions are documented exactly in the GE-04 checklist. No OAuth
+  secret, setup code or provider token was requested, read or logged. Real Gitee
+  acceptance remains open pending public routing and operator configuration.

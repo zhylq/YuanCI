@@ -13,6 +13,44 @@ on 2026-09-04, but its persisted active provider is GitHub. It remains a GitHub
 sandbox. Do not replace that configuration or database with a Gitee application:
 create an isolated Gitee managed stack and use its own HTTPS origin/callback.
 
+`deploy/compose.gitee-sandbox.yml` supplies that isolated stack. It has its own
+PostgreSQL, master key, Runner PKI, Runner state and localhost port. It never
+shares volumes with `yuanci-sandbox`; use the matching environment and Nginx
+examples only after DNS and TLS are assigned to the new hostname.
+
+### Current cloud sandbox handoff (2026-09-04)
+
+The isolated `yuanci-gitee-sandbox` Stack is running on the existing cloud host
+with the verified `d1c2b1e` Server and Runner images. Its local readiness and
+uninitialized managed-auth status passed on `127.0.0.1:8083`. Its configured
+origin is `https://gitee-ci.uyii.cn`; it deliberately has distinct Docker
+volumes, database, master key, PKI and Runner identity from `ci.uyii.cn`.
+
+Before public OAuth setup, a host/DNS administrator must complete these two
+external changes (the deployment SSH account has no root or DNS authority):
+
+1. Point the `A`/`AAAA` records for `gitee-ci.uyii.cn` to the cloud host that
+   currently serves `ci.uyii.cn` (`117.72.110.61`). It currently resolves to a
+   different address, so Gitee callbacks would not reach YuanCI.
+2. Install the rendered version of `deploy/nginx.gitee-sandbox.conf.example`
+   in the root-owned Nginx `conf.d` directory, replacing the example hostname
+   with `gitee-ci.uyii.cn` and `wildcard.pem`/`wildcard.key` with the existing
+   `_.uyii.cn.pem`/`_.uyii.cn.key` certificate pair. Run `nginx -t` and reload
+   only if syntax validation passes. The existing wildcard certificate is the
+   intended TLS asset; do not copy private keys or configuration secrets here.
+
+After DNS propagates, verify `https://gitee-ci.uyii.cn/readyz`, then configure
+the third-party application with this exact callback URL:
+
+```
+https://gitee-ci.uyii.cn/api/v1/auth/gitee/callback
+```
+
+Open `https://gitee-ci.uyii.cn/setup`, use a freshly issued one-time setup code
+from the isolated Stack, choose Gitee, and enter Client ID, Client Secret and
+the first administrator's immutable numeric Gitee user ID. Do not provide the
+secret or setup code in chat.
+
 ## Deterministic evidence
 
 - Gitee OAuth tests and PostgreSQL fixtures exercise independent initialization,

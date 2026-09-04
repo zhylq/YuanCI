@@ -1,0 +1,30 @@
+# Activate only after the selected DNS name resolves to this host and TLS covers it.
+server {
+    listen 80;
+    server_name gitee-ci.example.com;
+    access_log off;
+    error_log /dev/null;
+    return 301 https://gitee-ci.example.com$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name gitee-ci.example.com;
+    ssl_certificate /ssl/wildcard.pem;
+    ssl_certificate_key /ssl/wildcard.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    access_log off;
+    error_log /dev/null;
+    client_max_body_size 2m;
+
+    location / {
+        proxy_pass http://gitee-sandbox-server:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host gitee-ci.example.com;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 65s;
+    }
+}

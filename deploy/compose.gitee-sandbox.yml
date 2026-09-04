@@ -1,0 +1,144 @@
+# Disposable Gitee GE-04 sandbox. It never shares state with the GitHub sandbox.
+name: yuanci-gitee-sandbox
+
+services:
+  key-init:
+    profiles: [tools]
+    image: yuanci-quickstart-server:${YUANCI_VERSION:?pin the verified server image}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        yuancictl master-key -file /keys/master-key
+        chown 10001:10001 /keys/master-key
+    volumes: ["master-key:/keys"]
+    network_mode: none
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+
+  pki-init:
+    image: yuanci-quickstart-server:${YUANCI_VERSION:?pin the verified server image}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ ! -f /pki/identity/server/server-chain.pem ]; then
+          yuancictl runner-pki init -dir /pki/identity -server-name gitee-server -server-name 127.0.0.1
+        fi
+        chmod 711 /pki/identity
+        chown -R 10001:10001 /pki/identity/server
+        mkdir -p /runner-state /bootstrap
+        chown 10001:10001 /runner-state /bootstrap
+    volumes:
+      - runner-pki:/pki
+      - runner-state:/runner-state
+      - runner-bootstrap:/bootstrap
+    network_mode: none
+    security_opt: ["no-new-privileges:true"]
+
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: yuanci_gitee
+      POSTGRES_USER: yuanci
+      POSTGRES_PASSWORD: ${YUANCI_POSTGRES_PASSWORD:?set a dedicated random password}
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yuanci -d yuanci_gitee"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt: ["no-new-privileges:true"]
+
+  server:
+    image: yuanci-quickstart-server:${YUANCI_VERSION:?pin the verified server image}
+    restart: unless-stopped
+    environment:
+      YUANCI_DATABASE_URL: postgres://yuanci:${YUANCI_POSTGRES_PASSWORD}@postgres:5432/yuanci_gitee?sslmode=disable
+      YUANCI_MILESTONE0_INSECURE_API: "false"
+      YUANCI_AUTHENTICATED_PREVIEW: "true"
+      YUANCI_AUTH_MANAGED_SETUP: "true"
+      YUANCI_PUBLIC_ORIGIN: ${YUANCI_PUBLIC_ORIGIN:?set the dedicated HTTPS origin}
+      YUANCI_MASTER_KEY_FILE: /run/yuanci-keys/master-key
+      YUANCI_RUNNER_GRPC_ADDR: ":9443"
+      YUANCI_RUNNER_SERVER_CERT_FILE: /run/yuanci-pki/identity/server/server-chain.pem
+      YUANCI_RUNNER_SERVER_KEY_FILE: /run/yuanci-pki/identity/server/server-key.pem
+      YUANCI_RUNNER_CLIENT_CA_FILE: /run/yuanci-pki/identity/server/root-cert.pem
+      YUANCI_RUNNER_ISSUER_CERT_FILE: /run/yuanci-pki/identity/server/intermediate-cert.pem
+      YUANCI_RUNNER_ISSUER_KEY_FILE: /run/yuanci-pki/identity/server/intermediate-key.pem
+    ports: ["127.0.0.1:${YUANCI_HTTP_PORT:-8083}:8080"]
+    user: "10001:10001"
+    volumes: ["runner-pki:/run/yuanci-pki:ro", "master-key:/run/yuanci-keys:ro"]
+    networks:
+      default:
+      edge:
+        aliases: [gitee-sandbox-server]
+    depends_on:
+      postgres: { condition: service_healthy }
+      pki-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=64m"]
+
+  token-init:
+    image: yuanci-quickstart-server:${YUANCI_VERSION:?pin the verified server image}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    environment:
+      YUANCI_DATABASE_URL: postgres://yuanci:${YUANCI_POSTGRES_PASSWORD}@postgres:5432/yuanci_gitee?sslmode=disable
+    command:
+      - |
+        if [ ! -f /runner-state/identity/identity.json ]; then
+          rm -f /bootstrap/registration-token
+          yuancictl runner-token issue -pool standard -file /bootstrap/registration-token -ttl 30m
+          chown 10001:10001 /bootstrap/registration-token
+        fi
+    volumes:
+      - runner-state:/runner-state:ro
+      - runner-bootstrap:/bootstrap
+    depends_on:
+      server: { condition: service_healthy }
+    security_opt: ["no-new-privileges:true"]
+
+  runner:
+    image: yuanci-quickstart-runner:${YUANCI_VERSION:?pin the verified runner image}
+    restart: unless-stopped
+    environment:
+      YUANCI_RUNNER_GRPC_ADDRESS: gitee-server:9443
+      YUANCI_RUNNER_GRPC_SERVER_NAME: gitee-server
+      YUANCI_RUNNER_ROOT_CA_FILE: /run/yuanci-pki/identity/server/root-cert.pem
+      YUANCI_RUNNER_STATE_DIR: /var/lib/yuanci-runner/identity
+      YUANCI_RUNNER_REGISTRATION_TOKEN_FILE: /run/yuanci-bootstrap/registration-token
+      YUANCI_RUNNER_NAME: gitee-sandbox-docker
+      YUANCI_RUNNER_CAPACITY: "1"
+      YUANCI_RUNNER_AVAILABLE_DISK_BYTES: ${YUANCI_RUNNER_AVAILABLE_DISK_BYTES:-10737418240}
+    user: "10001:10001"
+    group_add: ["${YUANCI_DOCKER_GID:?set host Docker socket group id}"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - runner-pki:/run/yuanci-pki:ro
+      - runner-state:/var/lib/yuanci-runner
+      - runner-bootstrap:/run/yuanci-bootstrap
+    depends_on:
+      token-init: { condition: service_completed_successfully }
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=64m"]
+
+volumes:
+  master-key:
+  postgres-data:
+  runner-pki:
+  runner-state:
+  runner-bootstrap:
+
+networks:
+  edge:
+    external: true
+    name: yuanci-sandbox-edge
