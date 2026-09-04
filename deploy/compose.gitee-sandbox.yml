@@ -72,6 +72,7 @@ services:
     volumes: ["runner-pki:/run/yuanci-pki:ro", "master-key:/run/yuanci-keys:ro"]
     networks:
       default:
+        aliases: [gitee-server]
       edge:
         aliases: [gitee-sandbox-server]
     depends_on:

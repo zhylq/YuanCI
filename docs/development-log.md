@@ -1452,3 +1452,12 @@ the batch outcome and remaining work.
   host-admin actions are documented exactly in the GE-04 checklist. No OAuth
   secret, setup code or provider token was requested, read or logged. Real Gitee
   acceptance remains open pending public routing and operator configuration.
+
+## 2026-09-04 — Gitee sandbox Runner network correction
+
+- Post-start inspection found the isolated Runner retrying enrollment while its
+  one-use token remained unused. The gRPC TLS name `gitee-server` was only an
+  alias on the external Nginx network, not the Stack's Runner network. Added the
+  same alias to the Server's default network, retaining the certificate name and
+  avoiding any token/database reset. The corrected Stack is revalidated before
+  OAuth setup proceeds.
