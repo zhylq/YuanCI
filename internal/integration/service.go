@@ -34,6 +34,7 @@ type Settings struct {
 	AuthorizedUntil         *time.Time `json:"authorized_until,omitempty"`
 	WebhookURL              string     `json:"webhook_url"`
 	WebhookSecretConfigured bool       `json:"webhook_secret_configured"`
+	WebhookSecretVersion    int64      `json:"webhook_secret_version"`
 }
 
 func (s *Service) Settings(ctx context.Context, token string) (Settings, error) {
@@ -45,6 +46,7 @@ func (s *Service) Settings(ctx context.Context, token string) (Settings, error) 
 	if snap.App != nil {
 		result.InstallURL = "https://github.com/apps/" + snap.App.Slug + "/installations/new"
 		result.WebhookSecretConfigured = snap.App.WebhookSecretPresent
+		result.WebhookSecretVersion = snap.App.WebhookSecretVersion
 	}
 	if snap.Proof != nil {
 		result.AuthorizedUntil = &snap.Proof.ExpiresAt

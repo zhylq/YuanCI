@@ -166,7 +166,7 @@ func TestGitHubWebhookSecretIsEncryptedWriteOnlyAndPreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings, err := service.Settings(t.Context(), session.Token)
-	if err != nil || !settings.WebhookSecretConfigured || settings.WebhookURL != "https://ci.example.test/api/v1/webhooks/github" || settings.App == nil || !settings.App.WebhookEnabled {
+	if err != nil || !settings.WebhookSecretConfigured || settings.WebhookSecretVersion != 1 || settings.WebhookURL != "https://ci.example.test/api/v1/webhooks/github" || settings.App == nil || !settings.App.WebhookEnabled {
 		t.Fatalf("unexpected settings: %#v %v", settings, err)
 	}
 	encoded, _ := json.Marshal(settings)

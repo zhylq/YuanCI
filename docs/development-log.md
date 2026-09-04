@@ -1043,3 +1043,16 @@ the batch outcome and remaining work.
   eight-way request replay, audit rollback and migration preservation passed.
   Affected PostgreSQL/HTTP/run packages passed Linux race tests and vet.
   No full repository suite was run.
+
+## 2026-09-04 — UIA-01 GitHub CI setup and automation controls
+
+- Repository setup now shows local App/Webhook readiness, the trusted webhook
+  URL and non-secret replacement version, with Contents/Commit-status/event
+  setup instructions. Secret replacement clears input before the request and
+  never stores plaintext in React state or query caches.
+- GitHub project pages now provide revision-bound automation settings and the
+  save/validate/enable flow, verified commit proof, disable action, inline errors
+  and CSRF headers. Local readiness is not presented as real-provider evidence.
+- 18 focused React tests, TypeScript, focused ESLint and related GitHub,
+  automation and encrypted-secret API tests passed. No full frontend build or
+  full repository suite was run for this ordinary task.

@@ -6,7 +6,10 @@ import { navigateToAuthorization, post, useAuthStatus, useSession, type Session 
 import { buttonClass, linkClass, Pending } from '../components/auth-boundary'
 
 export type ImportSettings = {
-  app: { id: string; app_id: string; client_id: string; slug: string } | null
+  app: { id: string; app_id: string; client_id: string; slug: string; webhook_enabled?: boolean } | null
+  webhook_url?: string
+  webhook_secret_configured?: boolean
+  webhook_secret_version?: number
   needs_verification: boolean
   callback_url: string
   setup_url: string
@@ -42,10 +45,10 @@ export function RepositorySettingsPage() {
 }
 function ManagedImport({ session }: { session: Session }) {
   const settings = useQuery({ ...fresh, queryKey: ['import-settings', session.user_id], queryFn: ({ signal }) => request<ImportSettings>(base, { signal }), refetchInterval: 30_000 })
-  return <div className="space-y-6"><header><p className="text-sm font-medium text-blue-700">设置 / 仓库接入</p><h1 className="mt-2 text-balance text-3xl font-semibold">把 GitHub 仓库接入 YuanCI</h1><p className="mt-3 max-w-3xl text-pretty leading-7 text-slate-600">使用已配置登录的同一个 GitHub App。先验证应用，再安装并授权，最后选择仓库。本阶段只导入仓库资料，不会开始构建或部署。</p></header>
+  return <div className="space-y-6"><header><p className="text-sm font-medium text-blue-700">设置 / 仓库接入</p><h1 className="mt-2 text-balance text-3xl font-semibold">把 GitHub 仓库接入 YuanCI</h1><p className="mt-3 max-w-3xl text-pretty leading-7 text-slate-600">使用已配置登录的同一个 GitHub App。先验证应用，再安装并授权，最后选择仓库。导入仓库后，在项目页验证配置并启用自动构建。</p></header>
     <ol aria-label="仓库接入步骤" className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm sm:grid-cols-3"><li>1. 验证 App 私钥</li><li>2. 安装并授权发现</li><li>3. 选择并导入仓库</li></ol>
     {settings.isPending ? <Pending /> : settings.isError ? <ReadError error={settings.error} retry={() => void settings.refetch()} /> : <>
-      <Instructions settings={settings.data} />
+      <Instructions settings={settings.data} /><WebhookHealth settings={settings.data} />
       <AppForm key={settings.data.app?.id ?? 'new'} settings={settings.data} csrf={session.csrf_token} onSaved={() => void settings.refetch()} />
       {settings.data.app && !settings.data.needs_verification ? <Discovery key={`${settings.data.app.id}:${settings.data.authorized_until ?? 'pending'}`} settings={settings.data} session={session} /> : <p className="text-pretty text-sm leading-6 text-slate-600">完成私钥验证后，将出现安装应用与授权发现入口。</p>}
     </>}
@@ -56,7 +59,7 @@ function Instructions({ settings }: { settings: ImportSettings }) {
   return <section className={panel}><h2 className="text-balance text-xl font-semibold">先在 GitHub 中完成这些设置</h2><ol className="mt-4 list-decimal space-y-3 pl-5 text-pretty leading-7 text-slate-700">
     <li>打开 GitHub → Settings → Developer settings → GitHub Apps，编辑已用于 YuanCI 登录的应用。无需创建第二个应用。</li>
     <li>在 Callback URL 列表中保留原登录回调，并新增下方“仓库授权回调”。Setup URL 可填下方地址；不要开启“Redirect on update”。</li>
-    <li>Repository permissions 本轮只需 Metadata: Read-only。关闭 Webhook 的 Active，保留用户 Token 过期设置，不申请仓库写入或组织管理权限。</li>
+    <li>Repository permissions 设置 Metadata: Read-only、Contents: Read-only、Commit statuses: Read and write。启用 Webhook Active，订阅 Push 与 Pull request；保留用户 Token 过期设置。</li>
     <li>在 General 中复制 App ID，使用 Generate a private key 生成 PEM 私钥。私钥不能提交到 Git 仓库，也不要发给其他成员。</li>
   </ol><div className="mt-5 grid min-w-0 gap-4"><label className="text-sm font-semibold" htmlFor="import-callback">仓库授权回调（新增 Callback URL）<input id="import-callback" className={`${field} font-mono text-sm`} value={settings.callback_url} readOnly /></label><label className="text-sm font-semibold" htmlFor="import-setup">安装后返回地址（Setup URL，可选）<input id="import-setup" className={`${field} font-mono text-sm`} value={settings.setup_url} readOnly /></label></div><p className="mt-3 text-pretty text-sm leading-6 text-slate-600">安装回调中的 installation_id 不作为授权依据；返回后仍须主动授权发现仓库。</p><a className={`${linkClass} mt-3 inline-flex min-h-11 items-center`} href="https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app" target="_blank" rel="noreferrer">GitHub App 官方设置教程</a></section>
 }
@@ -69,18 +72,21 @@ function AppForm({ settings, csrf, onSaved }: { settings: ImportSettings; csrf: 
     const form = event.currentTarget
     const app = form.elements.namedItem('app_id') as HTMLInputElement
     const key = form.elements.namedItem('private_key') as HTMLTextAreaElement
+    const secretInput = form.elements.namedItem('webhook_secret') as HTMLInputElement
+    const enabledInput = form.elements.namedItem('webhook_enabled') as HTMLInputElement
+    const secret = secretInput.value
     const id = app.value.trim(); const privateKey = key.value
-    const invalid = !/^[1-9][0-9]{0,18}$/.test(id) || !privateKey.trim()
+    const invalid = !/^[1-9][0-9]{0,18}$/.test(id) || !privateKey.trim() || (secret !== '' && (new TextEncoder().encode(secret).length < 16 || new TextEncoder().encode(secret).length > 4096 || /[\r\n\0]/.test(secret))) || (enabledInput.checked && !secret && !settings.webhook_secret_configured)
     setInvalid(invalid); setError('')
-    if (invalid) { setError('请填写正整数 App ID 和完整 PEM 私钥。'); return }
+    if (invalid) { setError('请检查 App ID、完整 PEM 私钥和 Webhook Secret；启用接收前必须配置 Secret。'); return }
     // Do not retain the key in React state, query cache or browser storage.
-    key.value = ''; setBusy(true)
-    try { await post(base, { app_id: id, private_key: privateKey, expected_revision: settings.app?.id ?? null }, csrf); onSaved() }
+    key.value = ''; secretInput.value = ''; setBusy(true)
+    try { await post(base, { app_id: id, private_key: privateKey, expected_revision: settings.app?.id ?? null, webhook_enabled: enabledInput.checked, ...(secret ? { webhook_secret: secret } : {}) }, csrf); onSaved() }
     catch (error) { setError(importError(error)) }
     finally { setBusy(false) }
   }
   return <section className={panel}><h2 id="app-form-title" className="text-balance text-xl font-semibold">1. {settings.app ? 'App 已配置 · 可重新验证私钥' : '验证 App 私钥'}</h2>{settings.app ? <p className="mt-3 break-all text-pretty text-sm leading-6 text-slate-600">应用：{settings.app.slug} · Client ID：{settings.app.client_id} · 私钥已加密，不回显。重新保存会让已有仓库发现授权失效，不删除项目。</p> : null}{settings.needs_verification ? <p role="alert" className="mt-3 text-pretty text-sm text-red-800">登录配置已更换，请重新验证私钥后再授权发现仓库。</p> : null}
-    <form onSubmit={event => void save(event)} aria-labelledby="app-form-title" aria-busy={busy} noValidate className="mt-5"><fieldset disabled={busy} className="space-y-4"><div><label htmlFor="app-id" className="text-sm font-semibold">App ID</label><input id="app-id" name="app_id" defaultValue={settings.app?.app_id ?? ''} required inputMode="numeric" autoComplete="off" maxLength={19} className={field} aria-invalid={invalid} aria-describedby="app-key-help app-error" /></div><div><label htmlFor="app-key" className="text-sm font-semibold">RSA 私钥（PEM）</label><textarea id="app-key" name="private_key" required rows={5} maxLength={16384} autoComplete="off" spellCheck={false} className={`${field} font-mono text-sm`} aria-invalid={invalid} aria-describedby="app-key-help app-error" /></div><p id="app-key-help" className="text-pretty text-sm leading-6 text-slate-600">支持 2048–4096 位 RSA。提交后输入框清空；验证失败重试需重新粘贴。要求最近 10 分钟内登录。</p><p id="app-error" role={error ? 'alert' : undefined} className="text-pretty text-sm leading-6 text-red-800">{error}</p><button className={buttonClass} disabled={busy}>{busy ? '正在向 GitHub 验证…' : '验证并加密保存'}</button></fieldset></form>
+    <form onSubmit={event => void save(event)} aria-labelledby="app-form-title" aria-busy={busy} noValidate className="mt-5"><fieldset disabled={busy} className="space-y-4"><div><label htmlFor="app-id" className="text-sm font-semibold">App ID</label><input id="app-id" name="app_id" defaultValue={settings.app?.app_id ?? ''} required inputMode="numeric" autoComplete="off" maxLength={19} className={field} aria-invalid={invalid} aria-describedby="app-key-help app-error" /></div><div><label htmlFor="app-key" className="text-sm font-semibold">RSA 私钥（PEM）</label><textarea id="app-key" name="private_key" required rows={5} maxLength={16384} autoComplete="off" spellCheck={false} className={`${field} font-mono text-sm`} aria-invalid={invalid} aria-describedby="app-key-help app-error" /></div><div><label htmlFor="webhook-secret" className="text-sm font-semibold">Webhook Secret（留空保留原值）</label><input id="webhook-secret" name="webhook_secret" type="password" autoComplete="new-password" maxLength={4096} className={field} aria-invalid={invalid} aria-describedby="webhook-help app-error" /><p id="webhook-help" className="mt-2 text-pretty text-sm text-slate-600">16–4096 字节。更换后请同步更新 GitHub App 的 Secret；输入不会回显或缓存。</p></div><label className="flex min-h-11 items-center gap-2"><input name="webhook_enabled" type="checkbox" defaultChecked={settings.app?.webhook_enabled ?? false} />启用 Webhook 接收</label><p id="app-key-help" className="text-pretty text-sm leading-6 text-slate-600">支持 2048–4096 位 RSA。提交后输入框清空；验证失败重试需重新粘贴。要求最近 10 分钟内登录。</p><p id="app-error" role={error ? 'alert' : undefined} className="text-pretty text-sm leading-6 text-red-800">{error}</p><button className={buttonClass} disabled={busy}>{busy ? '正在向 GitHub 验证…' : '验证并加密保存'}</button></fieldset></form>
   </section>
 }
 function Discovery({ settings, session }: { settings: ImportSettings; session: Session }) {
@@ -132,4 +138,14 @@ function Selection({ items, installation, csrf }: { items: Repository[]; install
     {error ? <p role="alert" className="mt-3 text-pretty text-sm leading-6 text-red-800">{error}</p> : null}
     {result.length ? <div className="mt-4 rounded-lg bg-blue-50 p-4"><p role="status" className="text-pretty text-sm text-blue-900">导入完成。仅登记仓库资料，Webhook 与自动构建尚未接入。</p><ul className="mt-3 space-y-2">{result.map(item => <li key={item.id} className="break-all text-sm"><Link className={linkClass} to={`/projects/${item.id}`}>{item.name}</Link> · {item.created ? '已创建' : '已存在，保留原项目'}</li>)}</ul></div> : null}
   </div>
+}
+
+function WebhookHealth({ settings }: { settings: ImportSettings }) {
+ const ready = settings.app && !settings.needs_verification && settings.app.webhook_enabled && settings.webhook_secret_configured
+ return <section className={panel}><h2 className="text-balance text-xl font-semibold">GitHub CI 配置状态</h2>
+ <p className="mt-3 text-pretty leading-7">{ready ? '本地配置就绪，仍需真实 Webhook 验证。' : '配置未就绪，请检查 App 验证、Webhook 开关与 Secret。'}</p>
+ <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-3"><div><dt>App 验证</dt><dd>{settings.app && !settings.needs_verification ? '已验证' : '待验证'}</dd></div><div><dt>Webhook 接收</dt><dd>{settings.app?.webhook_enabled ? '已启用' : '已停用'}</dd></div><div><dt>Secret 替换状态</dt><dd className="tabular-nums">{settings.webhook_secret_configured ? `已配置 · 版本 ${settings.webhook_secret_version ?? '未知'}` : '尚未配置'}</dd></div></dl>
+ <label className="mt-4 block text-sm font-semibold">Webhook URL<input className={`${field} font-mono text-sm`} readOnly value={settings.webhook_url ?? ''} /></label>
+ <p className="mt-3 text-pretty text-sm text-slate-600">在 GitHub 填写此 URL 和相同 Secret。更换 Secret 后旧签名立即失效；GitHub 的保存状态须由管理员核对。</p>
+ </section>
 }

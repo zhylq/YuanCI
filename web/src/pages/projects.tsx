@@ -5,6 +5,7 @@ import { ApiError, request, type Run } from '../lib/api'
 import { useAuthStatus, useSession } from '../lib/auth'
 import { buttonClass, linkClass, Pending } from '../components/auth-boundary'
 import { StatusBadge } from '../components/status-badge'
+import { ProjectAutomation } from './project-automation'
 
 export type Project = {
   id: string
@@ -89,11 +90,11 @@ function ProjectList({ userID }: { userID: string }) {
       {projects.data.items.length === 0 ? <section className={panel}><h2 className="text-balance text-xl font-semibold">{search ? '没有匹配的项目' : after ? '没有更多项目' : '还没有可见项目'}</h2><p className="mt-3 text-pretty leading-7 text-slate-600">{search ? '尝试其他名称；搜索结果仅限当前授权范围。' : '可能尚未导入仓库，或管理员还未授予你项目权限。实例管理员可在受保护配置模式中接入 GitHub 仓库；不会自动创建演示项目。'}</p>{search || after ? <button className={`${buttonClass} mt-4`} onClick={() => navigate('', '')}>清除筛选并回到首页</button> : <Link className={`${linkClass} mt-4 inline-flex min-h-11 items-center`} to="/settings/repositories">查看仓库接入</Link>}</section>
         : <ul aria-label="可访问项目" className="grid min-w-0 gap-4 md:grid-cols-2">{projects.data.items.map(item => <li key={item.id} className={`${panel} min-w-0`}>
           <p className="break-words text-sm text-slate-600">{item.organization.name} · {item.provider}</p><h2 className="mt-3 break-all text-balance text-xl font-semibold"><Link className={linkClass} to={`/projects/${item.id}`}>{item.owner}/{item.name}</Link></h2>
-          <p className="mt-3 break-all text-sm text-slate-600">默认分支：{item.default_branch}</p><p className="mt-4 text-sm text-slate-700">{item.connection_status === 'metadata_verified' ? '导入时已验证仓库资料 · 自动构建待接入' : '仓库连接待接入'}</p>
+          <p className="mt-3 break-all text-sm text-slate-600">默认分支：{item.default_branch}</p><p className="mt-4 text-sm text-slate-700">{item.connection_status === 'metadata_verified' ? '导入时已验证仓库资料' : '仓库连接待接入'}</p>
         </li>)}</ul>}
       <Pager after={after} next={projects.data.next_cursor} navigate={navigate} />
     </>}
-    <p className="text-pretty text-sm leading-6 text-slate-600">项目登记与自动构建相互独立。导入时验证过权限不代表持续授权同步；Webhook、私有拉取与自动构建仍待接入。</p>
+    <p className="text-pretty text-sm leading-6 text-slate-600">项目登记与自动构建相互独立。导入时验证过权限不代表持续授权同步；自动构建需在项目页单独验证和启用。</p>
   </div>
 }
 
@@ -119,8 +120,9 @@ function ProjectDetail({ userID, projectID }: { userID: string; projectID: strin
   const item = detail.data
   return <div className="space-y-6">
     <Link className={`${linkClass} inline-flex min-h-11 items-center`} to="/projects">返回项目列表</Link>
-    <header><p className="break-words text-sm text-slate-600">{item.organization.name} / {item.provider}</p><h1 className="mt-2 break-all text-balance text-3xl font-semibold">{item.owner}/{item.name}</h1><p className="mt-3 text-pretty leading-7 text-slate-600">仓库资料与运行摘要 · 只读预览</p></header>
-    <section className={panel}><h2 className="text-balance text-xl font-semibold">仓库信息</h2><dl className="mt-4 grid gap-5 sm:grid-cols-2"><div><dt className="text-sm text-slate-600">默认分支</dt><dd className="mt-1 break-all font-medium">{item.default_branch}</dd></div><div><dt className="text-sm text-slate-600">连接状态</dt><dd className="mt-1 font-medium">{item.connection_status === 'metadata_verified' ? '导入时已验证仓库资料' : '仓库连接待接入'}</dd></div></dl><p className="mt-4 text-pretty text-sm leading-6 text-slate-600">Webhook 和持续授权同步尚未接入。当前不提供拉取、触发构建或发布操作。</p></section>
+    <header><p className="break-words text-sm text-slate-600">{item.organization.name} / {item.provider}</p><h1 className="mt-2 break-all text-balance text-3xl font-semibold">{item.owner}/{item.name}</h1><p className="mt-3 text-pretty leading-7 text-slate-600">仓库资料、自动构建与运行记录</p></header>
+    <section className={panel}><h2 className="text-balance text-xl font-semibold">仓库信息</h2><dl className="mt-4 grid gap-5 sm:grid-cols-2"><div><dt className="text-sm text-slate-600">默认分支</dt><dd className="mt-1 break-all font-medium">{item.default_branch}</dd></div><div><dt className="text-sm text-slate-600">连接状态</dt><dd className="mt-1 font-medium">{item.connection_status === 'metadata_verified' ? '导入时已验证仓库资料' : '仓库连接待接入'}</dd></div></dl><p className="mt-4 text-pretty text-sm leading-6 text-slate-600">在下方验证 Pipeline 配置并启用 GitHub 自动构建。</p></section>
+    {item.provider === 'github' ? <ProjectAutomation projectID={projectID} userID={userID} /> : null}
     <section aria-labelledby="project-runs-title" className={panel}><h2 id="project-runs-title" className="text-balance text-xl font-semibold">运行记录</h2>
       {runs.data.items.length === 0 ? <div className="mt-4"><p role="status" className="text-pretty leading-7 text-slate-600">{after ? '没有更多运行记录。' : '暂无运行记录。仓库触发与受保护 Runner 接入后，这里会显示实际运行结果。'}</p><Link className={`${linkClass} mt-3 inline-flex min-h-11 items-center`} to="/pipelines/new">先校验 Pipeline 配置</Link></div>
         : <ul aria-label="项目运行记录" className="mt-4 divide-y divide-slate-200">{runs.data.items.map(run => <li key={run.id} className="min-w-0 py-4 first:pt-0">
