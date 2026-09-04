@@ -1350,3 +1350,13 @@ the batch outcome and remaining work.
   and CSRF. Gitee routes function without a GitHub service instance.
 - Focused project, HTTP and PostgreSQL race tests passed, including real handler
   validation and authenticated receipt. GE-02 console controls follow.
+
+## 2026-09-04 — GE-02 Gitee project automation console complete
+
+- Added write-only, revision-bound project webhook password controls and Gitee
+  pipeline save/validate/enable actions. Password replacement clears the local
+  validation proof. Project pages expose the controls for Gitee repositories.
+- Fourteen focused React tests, TypeScript and focused ESLint passed. GE-02
+  normalization, fork policy, durable idempotency and immutable config paths are
+  implemented; real webhook delivery remains a GE-04 acceptance check.
+- Next: GE-03 scoped Runner checkout and Gitee Check Runs status delivery.

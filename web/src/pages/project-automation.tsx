@@ -3,17 +3,19 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { request } from '../lib/api'
 import { post, useSession } from '../lib/auth'
 import { buttonClass, Pending } from '../components/auth-boundary'
+import { GiteeWebhookControls } from './gitee-webhook'
 
 type Settings = { enabled: boolean; pipeline_path: string; trigger_push: boolean; trigger_tag: boolean; trigger_pull_request: boolean; cancel_older_commits: boolean; revision: number }
 const panel = 'rounded-xl border border-slate-200 bg-white p-5 sm:p-6'
-export function ProjectAutomation({ projectID, userID }: { projectID: string; userID: string }) {
+export function ProjectAutomation({ projectID, userID, provider = 'github' }: { projectID: string; userID: string; provider?: string }) {
+ const [hookRevision, setHookRevision] = useState(0)
  const session = useSession(true)
  const settings = useQuery({ queryKey: ['automation', userID, projectID], queryFn: ({ signal }) => request<Settings>(`/api/v1/projects/${projectID}/automation`, { signal }), retry: false, gcTime: 0 })
  if (settings.isPending || session.isPending) return <Pending label="正在读取自动构建设置…" />
  if (settings.isError || session.isError || !session.data) return <p role="alert">{settings.error?.message ?? '无法读取自动构建设置，请重新登录或刷新。'}</p>
- return <AutomationForm key={settings.data.revision} settings={settings.data} csrf={session.data.csrf_token} projectID={projectID} userID={userID} />
+ return <>{provider === 'gitee' ? <GiteeWebhookControls projectID={projectID} csrf={session.data.csrf_token} onSaved={() => setHookRevision(value => value + 1)} /> : null}<AutomationForm key={`${settings.data.revision}:${hookRevision}`} provider={provider} settings={settings.data} csrf={session.data.csrf_token} projectID={projectID} userID={userID} /></>
 }
-function AutomationForm({ settings, csrf, projectID, userID }: { settings: Settings; csrf: string; projectID: string; userID: string }) {
+function AutomationForm({ settings, csrf, projectID, userID, provider }: { settings: Settings; csrf: string; projectID: string; userID: string; provider: string }) {
  const [draft, setDraft] = useState(settings)
  const [proof, setProof] = useState('')
  const [busy, setBusy] = useState(false)
@@ -38,7 +40,7 @@ function AutomationForm({ settings, csrf, projectID, userID }: { settings: Setti
   finally { setBusy(false) }
  }
  return <section className={panel} aria-labelledby="automation-title" aria-busy={busy}>
-  <h2 id="automation-title" className="text-balance text-xl font-semibold">GitHub 自动构建</h2>
+  <h2 id="automation-title" className="text-balance text-xl font-semibold">{provider === 'gitee' ? 'Gitee' : 'GitHub'} 自动构建</h2>
   <p className="mt-3 text-pretty text-sm leading-6">{settings.enabled ? '已启用' : '已停用'} · 修改需要项目维护权限。保存修改会停用自动构建，重新验证后才能启用。</p>
   <fieldset disabled={busy} className="mt-4 space-y-4">
    <label className="block text-sm font-semibold">配置文件路径<input className="mt-2 min-h-11 w-full rounded-md border border-slate-300 px-3" value={draft.pipeline_path} maxLength={256} onChange={e => change({ ...draft, pipeline_path: e.target.value })} aria-describedby="automation-error" /></label>
