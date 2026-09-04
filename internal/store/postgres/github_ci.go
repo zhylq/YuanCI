@@ -35,6 +35,15 @@ func (s *Store) RuntimeAutomation(ctx context.Context, repositoryID uuid.UUID) (
 }
 
 func (s *Store) RuntimeAutomationForGitHub(ctx context.Context, externalID string) (uuid.UUID, project.AutomationSettings, error) {
+	return s.RuntimeAutomationForProvider(ctx, scm.GitHub, externalID)
+}
+func (s *Store) RuntimeAutomationForProvider(ctx context.Context, provider scm.Provider, externalID string) (uuid.UUID, project.AutomationSettings, error) {
+	instance := identity.GitHubInstance
+	if provider == scm.Gitee {
+		instance = identity.GiteeInstance
+	} else if provider != scm.GitHub {
+		return uuid.Nil, project.AutomationSettings{}, githubci.ErrRepositoryUnavailable
+	}
 	if !identity.ValidGitHubSubject(externalID) {
 		return uuid.Nil, project.AutomationSettings{}, githubci.ErrRepositoryUnavailable
 	}
@@ -44,8 +53,8 @@ func (s *Store) RuntimeAutomationForGitHub(ctx context.Context, externalID strin
 		COALESCE(s.pipeline_path,'.yuanci.yml'),COALESCE(s.trigger_push,true),COALESCE(s.trigger_tag,true),
 		COALESCE(s.trigger_pull_request,true),COALESCE(s.cancel_older_commits,true),COALESCE(s.revision,0)
 		FROM repositories r LEFT JOIN repository_automation_settings s ON s.repository_id=r.id
-		WHERE r.provider='github' AND r.provider_instance=$1 AND r.external_id=$2 AND r.active`,
-		identity.GitHubInstance, externalID).Scan(&repositoryID, &settings.Enabled, &settings.PipelinePath,
+		WHERE r.provider=$3 AND r.provider_instance=$1 AND r.external_id=$2 AND r.active`,
+		instance, externalID, provider).Scan(&repositoryID, &settings.Enabled, &settings.PipelinePath,
 		&settings.TriggerPush, &settings.TriggerTag, &settings.TriggerPullRequest,
 		&settings.CancelOlderCommits, &settings.Revision)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -78,7 +87,12 @@ func (s *Store) CommitWebhookRun(ctx context.Context, request githubci.RunCommit
 		return githubci.RunResult{}, fmt.Errorf("lock GitHub delivery: %w", err)
 	}
 	event := request.Delivery.Event
-	idempotencyKey := "github-webhook:" + request.Delivery.ID.String()
+	if event.Provider == scm.Gitee {
+		if err := lockGiteeDelivery(ctx, tx, request.Delivery, request.RepositoryID, request.PipelinePath); err != nil {
+			return githubci.RunResult{}, err
+		}
+	}
+	idempotencyKey := string(event.Provider) + "-webhook:" + request.Delivery.ID.String()
 	result := githubci.RunResult{ID: uuid.New(), Created: true}
 	var existingRepositoryID *uuid.UUID
 	var existingCommitSHA, existingEvent, existingPipelineName, existingConfigSHA string
@@ -176,7 +190,12 @@ func (s *Store) CommitWebhookFailedRun(ctx context.Context, request githubci.Fai
 		return githubci.RunResult{}, fmt.Errorf("lock failed GitHub delivery: %w", err)
 	}
 	event := request.Delivery.Event
-	idempotencyKey := "github-webhook:" + request.Delivery.ID.String()
+	if event.Provider == scm.Gitee {
+		if err := lockGiteeDelivery(ctx, tx, request.Delivery, request.RepositoryID, request.PipelinePath); err != nil {
+			return githubci.RunResult{}, err
+		}
+	}
+	idempotencyKey := string(event.Provider) + "-webhook:" + request.Delivery.ID.String()
 	result := githubci.RunResult{ID: uuid.New(), Created: true}
 	var existingRepositoryID *uuid.UUID
 	var existingCommitSHA, existingEvent, existingPipelineName, existingConfigSHA string
@@ -253,7 +272,7 @@ func finishWebhookRun(ctx context.Context, tx pgx.Tx, request githubci.RunCommit
 func validateWebhookRunCommit(request githubci.RunCommit) error {
 	event := request.Delivery.Event
 	if request.Delivery.ID == uuid.Nil || request.Delivery.LeaseID == uuid.Nil || request.RepositoryID == uuid.Nil ||
-		event.Provider != scm.GitHub || event.DeliveryID == "" || event.AfterSHA == "" ||
+		(event.Provider != scm.GitHub && event.Provider != scm.Gitee) || event.DeliveryID == "" || event.AfterSHA == "" ||
 		request.Plan.Version != pipeline.APIVersion || request.Plan.Name == "" || len(request.Plan.ConfigSHA256) != 64 ||
 		len(request.PipelineSource) == 0 || len(request.PipelineSource) > 1<<20 || request.CreatedAt.IsZero() ||
 		project.ValidatePipelinePath(request.PipelinePath) != nil {
@@ -265,7 +284,7 @@ func validateWebhookRunCommit(request githubci.RunCommit) error {
 func validateWebhookFailedRunCommit(request githubci.FailedRunCommit) error {
 	event := request.Delivery.Event
 	if request.Delivery.ID == uuid.Nil || request.Delivery.LeaseID == uuid.Nil || request.RepositoryID == uuid.Nil ||
-		event.Provider != scm.GitHub || event.DeliveryID == "" || event.AfterSHA == "" ||
+		(event.Provider != scm.GitHub && event.Provider != scm.Gitee) || event.DeliveryID == "" || event.AfterSHA == "" ||
 		len(request.ConfigSHA256) != 64 || request.CreatedAt.IsZero() ||
 		(request.ErrorCode != "pipeline_not_found" && request.ErrorCode != "pipeline_invalid") ||
 		request.ErrorSummary == "" || len(request.ErrorSummary) > 1024 ||

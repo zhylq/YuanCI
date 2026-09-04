@@ -1330,3 +1330,15 @@ the batch outcome and remaining work.
 - Gitee/provider/PostgreSQL race tests passed for semantic replay deduplication,
   secret exclusion, revision conflicts, immutable fetch and key replacement.
   Shared worker/Run transaction and project HTTP/UI integration follows.
+
+## 2026-09-04 — GE-02 shared Gitee execution orchestration
+
+- Routed Gitee through the existing leased inbox worker and immutable Run
+  transaction, retaining provider-qualified idempotency and transactional status
+  outbox insertion. Run commit rechecks persisted event, repository, webhook
+  revision, live grant and enabled trigger under locks.
+- Added revision-bound Gitee automation enablement. Fork/disabled events create
+  no Jobs; missing/invalid configuration creates a visible failed Run. Event
+  substitution is rejected before any executable persistence.
+- Affected PostgreSQL, orchestrator and server race suites passed, plus focused
+  policy/failure tests. GE-02 project HTTP/UI wiring remains next.

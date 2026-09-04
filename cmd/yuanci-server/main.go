@@ -60,6 +60,7 @@ func main() {
 	var handler http.Handler
 	var database *postgres.Store
 	var githubPipeline *githubapp.Service
+	var giteePipeline *gitee.Service
 	if cfg.AuthenticatedPreview {
 		database = store.(*postgres.Store) // Config forbids memory storage in preview.
 		var login httpapi.GitHubLogin
@@ -82,7 +83,8 @@ func main() {
 				logger.Error("GitHub pipeline service initialization failed")
 				os.Exit(2)
 			}
-			login = httpapi.GitHubLogin{Store: database, Managed: provisioning.New(database, cipher, cfg.PublicOrigin), Integrations: integrations, Pipeline: githubPipeline, Gitee: gitee.New(database, cipher, cfg.PublicOrigin)}
+			giteePipeline = gitee.New(database, cipher, cfg.PublicOrigin)
+			login = httpapi.GitHubLogin{Store: database, Managed: provisioning.New(database, cipher, cfg.PublicOrigin), Integrations: integrations, Pipeline: githubPipeline, Gitee: giteePipeline}
 			stopCleanup := startIntegrationCleanup(logger, database)
 			defer stopCleanup()
 		} else {
@@ -107,7 +109,7 @@ func main() {
 		handler = httpapi.NewEvaluation(logger, store, cfg.RequestBodyLimit)
 	}
 	if githubPipeline != nil {
-		orchestrator, workerErr := githubci.NewOrchestrator(database, githubPipeline)
+		orchestrator, workerErr := githubci.NewOrchestrator(database, pipelineRouter{github: githubPipeline, gitee: giteePipeline})
 		if workerErr != nil {
 			logger.Error("GitHub delivery orchestrator initialization failed")
 			os.Exit(2)

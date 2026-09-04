@@ -69,11 +69,24 @@ func (o *Orchestrator) Process(ctx context.Context, delivery githubhook.WorkItem
 }
 
 func (o *Orchestrator) process(ctx context.Context, delivery githubhook.WorkItem) (Outcome, error) {
-	if delivery.ID == uuid.Nil || delivery.LeaseID == uuid.Nil || delivery.Event.Provider != scm.GitHub ||
+	if delivery.ID == uuid.Nil || delivery.LeaseID == uuid.Nil || (delivery.Event.Provider != scm.GitHub && delivery.Event.Provider != scm.Gitee) ||
 		delivery.Event.Repository.ExternalID == "" || delivery.Attempt < 1 {
 		return "", ErrInvalidDelivery
 	}
-	repositoryID, settings, err := o.store.RuntimeAutomationForGitHub(ctx, delivery.Event.Repository.ExternalID)
+	var repositoryID uuid.UUID
+	var settings project.AutomationSettings
+	var err error
+	if delivery.Event.Provider == scm.Gitee {
+		store, ok := o.store.(interface {
+			RuntimeAutomationForProvider(context.Context, scm.Provider, string) (uuid.UUID, project.AutomationSettings, error)
+		})
+		if !ok {
+			return "", ErrInvalidDelivery
+		}
+		repositoryID, settings, err = store.RuntimeAutomationForProvider(ctx, scm.Gitee, delivery.Event.Repository.ExternalID)
+	} else {
+		repositoryID, settings, err = o.store.RuntimeAutomationForGitHub(ctx, delivery.Event.Repository.ExternalID)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -178,7 +191,7 @@ func classifyFailure(err error) failureClass {
 		return failureClass{false, "repository_mismatch", "GitHub repository identity changed during delivery processing"}
 	case errors.Is(err, ErrRepositoryUnavailable), errors.Is(err, githubapp.ErrRepositoryUnavailable):
 		return failureClass{false, "repository_unavailable", "GitHub repository is unavailable for automation"}
-	case errors.Is(err, ErrInvalidDelivery), errors.Is(err, ErrInvalidCommit),
+	case errors.Is(err, scm.ErrInvalidHook), errors.Is(err, ErrInvalidDelivery), errors.Is(err, ErrInvalidCommit),
 		errors.Is(err, githubapp.ErrInvalidEvent), errors.Is(err, githubapp.ErrExternalFork),
 		errors.Is(err, project.ErrAutomationInvalid), errors.Is(err, project.ErrAutomationNotReady):
 		return failureClass{false, "delivery_invalid", "GitHub delivery cannot be processed safely"}

@@ -10,8 +10,11 @@ import (
 	"github.com/yuanci/yuanci/internal/authorization"
 	"github.com/yuanci/yuanci/internal/gitee"
 	"github.com/yuanci/yuanci/internal/githubapp"
+	"github.com/yuanci/yuanci/internal/githubci"
+	"github.com/yuanci/yuanci/internal/githubhook"
 	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/project"
+	"github.com/yuanci/yuanci/internal/scm"
 	"github.com/yuanci/yuanci/internal/secrets"
 )
 
@@ -143,3 +146,28 @@ func (s *Store) RecordGiteeValidation(ctx context.Context, token string, expecte
 }
 
 var _ gitee.AutomationStore = (*Store)(nil)
+
+func lockGiteeDelivery(ctx context.Context, tx pgx.Tx, delivery githubhook.WorkItem, id uuid.UUID, path string) error {
+	if delivery.Event.Type == scm.EventPullRequest && delivery.Event.Metadata["fork"] != "false" {
+		return githubci.ErrInvalidCommit
+	}
+	normalized, err := json.Marshal(delivery.Event)
+	if err != nil {
+		return githubci.ErrInvalidCommit
+	}
+	var found uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT r.id FROM repositories r
+	JOIN gitee_webhook_configs h ON h.repository_id=r.id
+	JOIN gitee_authorizations g ON g.id=r.gitee_authorization_id AND g.status='active' AND g.expires_at>clock_timestamp()
+	JOIN repository_automation_settings s ON s.repository_id=r.id AND s.enabled
+	JOIN webhook_deliveries d ON d.id=$2 AND d.provider='gitee' AND d.normalized_event=$3
+	WHERE r.id=$1 AND r.active AND r.provider='gitee' AND r.provider_instance='https://gitee.com'
+	AND r.external_id=d.normalized_event->'repository'->>'external_id'
+	AND h.revision::text=d.normalized_event->'metadata'->>'webhook_revision' AND s.pipeline_path=$4
+	AND ((d.event_type='push' AND s.trigger_push) OR (d.event_type='tag' AND s.trigger_tag) OR (d.event_type='pull_request' AND s.trigger_pull_request))
+	AND `+liveGiteeGrant+` FOR UPDATE OF r,h,g,s`, id, delivery.ID, normalized, path).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return githubci.ErrInvalidCommit
+	}
+	return err
+}

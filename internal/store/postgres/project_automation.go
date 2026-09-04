@@ -92,6 +92,15 @@ func (s *Store) UpdateProjectAutomation(ctx context.Context, token string, id uu
 			return project.AutomationSettings{}, err
 		}
 		if !ready {
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM gitee_automation_validations v
+			JOIN repositories r ON r.id=v.repository_id AND r.provider='gitee' AND r.active
+			JOIN gitee_webhook_configs h ON h.repository_id=r.id AND h.revision=v.webhook_revision
+			JOIN gitee_authorizations g ON g.id=r.gitee_authorization_id AND g.revision=v.grant_revision AND g.status='active' AND g.expires_at>clock_timestamp()
+			WHERE v.repository_id=$1 AND v.settings_revision=$2 AND v.pipeline_path=$3 AND `+liveGiteeGrant+`)`, id, current, update.PipelinePath).Scan(&ready); err != nil {
+				return project.AutomationSettings{}, err
+			}
+		}
+		if !ready {
 			return project.AutomationSettings{}, project.ErrAutomationNotReady
 		}
 	}
