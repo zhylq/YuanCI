@@ -1177,3 +1177,21 @@ the batch outcome and remaining work.
   installation/import and Webhook enablement must precede actual Run testing.
   Public-repository preparation does not prove private checkout. E2E-GH-02 is
   still open; no execution/log/status success is claimed for the fixture push.
+
+## 2026-09-04 — E2E-GH-02 recurrent GitHub OAuth egress failure
+
+- Reauthentication again returned the provider-unavailable 502. Confirmed
+  connection timeouts to the previously mapped GitHub address. Alternate
+  current public DNS answers and normal resolution were intermittent: some
+  verified HTTPS probes responded, then subsequent TCP connections timed out.
+  GitHub API access remained available. No real authorization code or secret
+  was used in connectivity probes or requested from the operator.
+- Removed the stale server-only hosts override after backing up Compose and
+  restored normal DNS. Nginx validation/reload, site readiness, configured and
+  initialized managed auth, and online Runner checks passed afterward.
+  Existing App credentials, TLS validation and recent-login enforcement remain
+  unchanged. No full tests or image builds were repeated for this diagnosis.
+- Reliable GitHub OAuth egress now blocks reauthentication and App repository
+  setup. Requires an operator-provided working egress route or suitable test
+  host; repeated fixed-IP substitutions are not treated as a durable fix.
+  E2E-GH-02 remains incomplete and is still the next task ID.

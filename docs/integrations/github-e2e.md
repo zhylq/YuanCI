@@ -83,6 +83,17 @@ repository Actions results do not satisfy the real acceptance gate.
   override when normal resolution is reachable, or revalidate if it changes.
   The consumed OAuth flow cannot be replayed; operator authorization must be
   started again before login can be marked passed.
+- Later reauthentication returned 502 again. The temporary mapped address
+  became unreachable. Current public DNS answers in several regions also
+  alternated between verified HTTPS responses and TCP timeouts; even the
+  ordinary resolver route failed a consecutive-check attempt. Removed the
+  stale `extra_hosts` override, restored normal DNS and retained
+  `compose.before-remove-stale-github-route.yml` as the deployment backup.
+  Nginx validation, site readiness, initialized managed auth and online Runner
+  checks pass. Reliable GitHub OAuth egress is still an operator/network
+  prerequisite; no durable connectivity recovery is claimed. Credentials,
+  TLS checks and the ten-minute sensitive-operation reauthentication rule
+  were not changed.
 
 ### Prerequisites and setup
 
