@@ -137,6 +137,19 @@ func (a *API) validateProjectAutomation(w http.ResponseWriter, r *http.Request) 
 		automationError(w, err)
 		return
 	}
+	if target.Provider == "gitee" {
+		if a.oauth.Gitee == nil {
+			automationError(w, project.ErrAutomationNotReady)
+			return
+		}
+		proof, err := a.oauth.Gitee.ValidateProject(r.Context(), browserFrom(r).token, id, request.ExpectedRevision)
+		if err != nil {
+			automationError(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"valid": true, "settings_revision": target.SettingsRevision, "commit_sha": proof.CommitSHA, "config_sha256": proof.ConfigSHA256, "pipeline_name": proof.PipelineName, "errors": []any{}})
+		return
+	}
 	proof, err := a.oauth.Pipeline.ValidateDefaultPipeline(r.Context(), target.RepositoryExternalID, target.PipelinePath)
 	if err != nil {
 		automationError(w, err)

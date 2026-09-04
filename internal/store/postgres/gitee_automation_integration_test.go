@@ -3,7 +3,10 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -11,9 +14,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/yuanci/yuanci/internal/gitee"
 	"github.com/yuanci/yuanci/internal/githubci"
+	"github.com/yuanci/yuanci/internal/httpapi"
 	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/project"
+	"github.com/yuanci/yuanci/internal/provisioning"
 	"github.com/yuanci/yuanci/internal/scm"
+	"github.com/yuanci/yuanci/internal/secrets"
 )
 
 func (p *giteeProviderFixture) Commit(context.Context, string, gitee.Repository, string) (string, error) {
@@ -191,5 +197,38 @@ func TestGiteeSharedRunPolicyAndConfigurationFailure(t *testing.T) {
 				t.Fatal("unsafe executable jobs created")
 			}
 		})
+	}
+}
+
+func TestGiteeAutomationHTTPWithoutGitHubService(t *testing.T) {
+	s, service, session, id := giteeProjectFixture(t)
+	secret := []byte(strings.Repeat("s", 32))
+	if err := service.SaveWebhook(t.Context(), session.Token, id, 0, secret); err != nil {
+		t.Fatal(err)
+	}
+	cipher, _ := secrets.NewCipher([]byte(strings.Repeat("k", 32)))
+	handler, err := httpapi.NewAuthenticated(slog.New(slog.NewTextHandler(io.Discard, nil)), s, s, 1<<20, "https://ci.example.test", httpapi.GitHubLogin{Store: s, Managed: provisioning.New(s, cipher, "https://ci.example.test"), Gitee: service})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "https://ci.example.test/api/v1/projects/"+id.String()+"/pipeline/validate", strings.NewReader(`{"expected_revision":0}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "https://ci.example.test")
+	r.Header.Set("X-CSRF-Token", identity.CSRFToken(session.Token))
+	r.AddCookie(identity.SessionCookie(session))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("validate: %d %s", w.Code, w.Body.String())
+	}
+	hook := httptest.NewRequest("POST", "https://ci.example.test/api/v1/webhooks/gitee/42", strings.NewReader(`{"ref":"refs/heads/main","after":"`+strings.Repeat("a", 40)+`","repository":{"id":42}}`))
+	hook.Header.Set("Content-Type", "application/json")
+	hook.Header.Set("X-Gitee-Token", string(secret))
+	hook.Header.Set("X-Gitee-Timestamp", fmt.Sprint(time.Now().UnixMilli()))
+	hook.Header.Set("X-Gitee-Event", "Push Hook")
+	accepted := httptest.NewRecorder()
+	handler.ServeHTTP(accepted, hook)
+	if accepted.Code != 202 {
+		t.Fatalf("hook: %d %s", accepted.Code, accepted.Body.String())
 	}
 }

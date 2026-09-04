@@ -1342,3 +1342,11 @@ the batch outcome and remaining work.
   substitution is rejected before any executable persistence.
 - Affected PostgreSQL, orchestrator and server race suites passed, plus focused
   policy/failure tests. GE-02 project HTTP/UI wiring remains next.
+
+## 2026-09-04 — GE-02 protected project webhook/validation API
+
+- Exposed bounded Gitee JSON webhook receipt, revision-bound write-only webhook
+  settings and provider-aware immutable validation behind existing project RBAC
+  and CSRF. Gitee routes function without a GitHub service instance.
+- Focused project, HTTP and PostgreSQL race tests passed, including real handler
+  validation and authenticated receipt. GE-02 console controls follow.

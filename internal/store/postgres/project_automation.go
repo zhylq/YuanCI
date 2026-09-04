@@ -152,10 +152,10 @@ func (s *Store) GetProjectAutomationValidationTarget(ctx context.Context, token 
 		return project.AutomationValidationTarget{}, err
 	}
 	var target project.AutomationValidationTarget
-	err = tx.QueryRow(ctx, `SELECT r.external_id,COALESCE(s.pipeline_path,$2),COALESCE(s.revision,0)
+	err = tx.QueryRow(ctx, `SELECT r.provider,r.external_id,COALESCE(s.pipeline_path,$2),COALESCE(s.revision,0)
 		FROM repositories r LEFT JOIN repository_automation_settings s ON s.repository_id=r.id
-		WHERE r.id=$1 AND r.active AND r.provider='github'`, id, project.DefaultPipelinePath).
-		Scan(&target.RepositoryExternalID, &target.PipelinePath, &target.SettingsRevision)
+		WHERE r.id=$1 AND r.active AND r.provider IN ('github','gitee')`, id, project.DefaultPipelinePath).
+		Scan(&target.Provider, &target.RepositoryExternalID, &target.PipelinePath, &target.SettingsRevision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return project.AutomationValidationTarget{}, authorization.ErrForbidden
 	}

@@ -55,6 +55,7 @@ type AutomationUpdate struct {
 }
 
 type AutomationValidationTarget struct {
+	Provider             string
 	RepositoryExternalID string
 	PipelinePath         string
 	SettingsRevision     int64

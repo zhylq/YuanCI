@@ -41,7 +41,7 @@ func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend Browser
 	mux := http.NewServeMux()
 	if len(login) == 1 {
 		a.oauth = &login[0]
-		if a.oauth.Pipeline != nil && a.automation == nil {
+		if (a.oauth.Pipeline != nil || a.oauth.Gitee != nil) && a.automation == nil {
 			return nil, errors.New("GitHub automation validation requires an automation store")
 		}
 		mux.HandleFunc("GET /api/v1/auth/github/start", a.startLogin)
@@ -49,6 +49,9 @@ func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend Browser
 		mux.HandleFunc("POST /api/v1/auth/github/link", a.browserAuth(a.linkIdentity))
 		if a.oauth.Managed != nil {
 			if a.oauth.Gitee != nil {
+				mux.HandleFunc("POST /api/v1/webhooks/gitee/{repositoryID}", a.receiveGiteeWebhook)
+				mux.HandleFunc("GET /api/v1/projects/{projectID}/gitee/webhook", a.browserAuth(a.giteeWebhookSettings))
+				mux.HandleFunc("PUT /api/v1/projects/{projectID}/gitee/webhook", a.browserAuth(a.saveGiteeWebhook))
 				mux.HandleFunc("GET /api/v1/integrations/gitee", a.browserAuth(a.giteeSettings))
 				mux.HandleFunc("DELETE /api/v1/integrations/gitee", a.browserAuth(a.revokeGitee))
 				mux.HandleFunc("POST /api/v1/integrations/gitee/authorize", a.browserAuth(a.authorizeGitee))
@@ -102,7 +105,7 @@ func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend Browser
 	if a.automation != nil {
 		mux.HandleFunc("GET /api/v1/projects/{projectID}/automation", a.browserAuth(a.projectAutomation))
 		mux.HandleFunc("PUT /api/v1/projects/{projectID}/automation", a.browserAuth(a.updateProjectAutomation))
-		if a.oauth != nil && a.oauth.Pipeline != nil {
+		if a.oauth != nil && (a.oauth.Pipeline != nil || a.oauth.Gitee != nil) {
 			mux.HandleFunc("POST /api/v1/projects/{projectID}/pipeline/validate", a.browserAuth(a.validateProjectAutomation))
 		}
 	}
