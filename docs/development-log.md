@@ -1162,3 +1162,18 @@ the batch outcome and remaining work.
   No application code or credentials changed, and no full suite was repeated.
   Actual OAuth completion still needs a new operator authorization flow; the
   failed flow was already consumed. E2E-GH-02 remains open.
+
+## 2026-09-04 — E2E-GH-02 real login verified and test repository prepared
+
+- Operator completed GitHub authorization after connectivity recovery. Public
+  auth status now confirms managed mode, configured=true and initialized=true.
+- Operator designated the new zhylq/yuanci-test repository (1356634073). It was
+  empty and public. Added the already-approved acceptance pipeline, proof marker
+  and README as test-repository commit 24f56ef8aa28193870e313d04ad1b4bf8c4819e3.
+  The gate-built yuancictl compiled the pipeline successfully, and the focused
+  whitespace check passed before pushing main. No full suite was repeated.
+- Read-only cloud checks found no github_app_configs or imported repository
+  rows, while github-sandbox-docker remains online. App key configuration,
+  installation/import and Webhook enablement must precede actual Run testing.
+  Public-repository preparation does not prove private checkout. E2E-GH-02 is
+  still open; no execution/log/status success is claimed for the fixture push.

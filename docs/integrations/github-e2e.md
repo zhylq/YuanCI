@@ -31,14 +31,19 @@ as specified in the atomic task plan.
 
 ## E2E-GH-02: operator-owned real GitHub App sandbox
 
-Status on 2026-09-04: **DEPLOYED / AWAITING OPERATOR GITHUB APP SETUP**.
+Status on 2026-09-04: **LOGIN VERIFIED / AWAITING APP REPOSITORY INTEGRATION**.
 The protected sandbox is available at `https://ci.uyii.cn`, with its dedicated
-Runner online. Managed authentication is not yet configured or initialized;
-the operator must redeem the setup code and authorize their GitHub App.
-The operator confirmed GitHub user `zhylq` (numeric ID `55230820`); the complete
-test repository is still missing. No real App, webhook, private checkout or
-GitHub status result is claimed. Deployment readiness and repository Actions
-results do not satisfy the real acceptance gate.
+Runner online. The operator completed GitHub login: auth status now reports
+configured/initialized managed mode. GitHub user is `zhylq` (ID `55230820`).
+The operator supplied `zhylq/yuanci-test` (repository ID `1356634073`), currently
+public. Its initial fixture commit is
+`24f56ef8aa28193870e313d04ad1b4bf8c4819e3`, containing the pipeline below,
+`proof.txt` and a short README. The pipeline compiled with configuration digest
+`d6fdc3cfab02bc5a13c8ff000175a48b969b8de838f51eff37ec3389afd94387`.
+No App private-key configuration or repository import exists in the sandbox
+yet. Real webhook, execution and status evidence is still pending, and private
+checkout acceptance requires a private repository. Deployment readiness and
+repository Actions results do not satisfy the real acceptance gate.
 
 ### Cloud deployment checkpoint
 
@@ -178,10 +183,10 @@ stages:
 | Date / operator | Pending |
 | GitHub administrator | `zhylq`, numeric ID `55230820` (operator-confirmed; public API verified) |
 | Protected origin / deployed SHA / image digests | `https://ci.uyii.cn`; b436ab0; image IDs above |
-| Exact private repository / repository ID | Pending |
+| Exact private repository / repository ID | `zhylq/yuanci-test`, `1356634073`; currently public, private checkout acceptance pending |
 | App ID / installation ID / webhook version | Pending |
 | Runner ID / pool / online and Docker readiness | `e991d33c-bd64-4a0c-b250-fce2a6037e87`; `standard`; online; actual sandbox Job execution pending |
-| Authentication and project isolation | Managed mode; unauthenticated API denied; operator login and cross-project check pending |
+| Authentication and project isolation | Operator login completed; managed/configured/initialized true; unauthenticated API denied; cross-project check pending |
 | Success: delivery ID / event SHA / config digest / Run URL / status | Not executed |
 | Moving branch and duplicate delivery | Not executed |
 | Failure and full/failed-Job reruns | Not executed |
