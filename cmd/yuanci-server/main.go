@@ -61,6 +61,7 @@ func main() {
 	var database *postgres.Store
 	var githubPipeline *githubapp.Service
 	var giteePipeline *gitee.Service
+	var giteeCheckout *gitee.CheckoutBroker
 	if cfg.AuthenticatedPreview {
 		database = store.(*postgres.Store) // Config forbids memory storage in preview.
 		var login httpapi.GitHubLogin
@@ -84,7 +85,8 @@ func main() {
 				os.Exit(2)
 			}
 			giteePipeline = gitee.New(database, cipher, cfg.PublicOrigin)
-			login = httpapi.GitHubLogin{Store: database, Managed: provisioning.New(database, cipher, cfg.PublicOrigin), Integrations: integrations, Pipeline: githubPipeline, Gitee: giteePipeline}
+			giteeCheckout = gitee.NewCheckoutBroker(giteePipeline, database)
+			login = httpapi.GitHubLogin{Store: database, Managed: provisioning.New(database, cipher, cfg.PublicOrigin), Integrations: integrations, Pipeline: githubPipeline, Gitee: giteePipeline, Checkout: giteeCheckout}
 			stopCleanup := startIntegrationCleanup(logger, database)
 			defer stopCleanup()
 		} else {
@@ -159,7 +161,7 @@ func main() {
 		}
 		var credentialIssuers []runnergrpc.CredentialIssuer
 		if githubPipeline != nil {
-			credentialIssuers = append(credentialIssuers, githubPipeline)
+			credentialIssuers = append(credentialIssuers, credentialRouter{github: githubPipeline, gitee: giteeCheckout})
 		}
 		grpcServer, err = runnergrpc.NewServer(auth, store.(runmodel.RunnerJobStore), pki.RootPEM, pki.TLSConfig, credentialIssuers...)
 		if err != nil {

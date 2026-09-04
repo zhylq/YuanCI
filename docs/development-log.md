@@ -1390,3 +1390,14 @@ the batch outcome and remaining work.
   canonical HTTPS broker routes and forces Git v0 for the guarded shallow fetch.
 - Runner and gRPC race suites passed, including Gitee source validation, scoped
   issuer selection, credential cleanup and existing GitHub assignment regressions.
+
+## 2026-09-04 — GE-03 integrated Gitee checkout and status complete
+
+- Wired the broker into the protected server configuration and shared Runner
+  credential router. The public Git endpoint authorizes only its dedicated
+  capability, not browser cookies or provider OAuth tokens.
+- Focused Gitee/PostgreSQL/gRPC race tests passed for webhook-to-Run, pending
+  Check Run, source Job claim, scoped credential, completion and final status.
+  Grant revocation prevents subsequent status writes. Server/HTTP tests passed.
+- GE-03 implementation complete. Next GE-04: repository-wide gate, deployment
+  image checks, and operator-owned real Gitee OAuth/Git/Checks acceptance.

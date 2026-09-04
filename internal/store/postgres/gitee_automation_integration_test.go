@@ -12,18 +12,26 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/yuanci/yuanci/internal/commitstatus"
 	"github.com/yuanci/yuanci/internal/gitee"
 	"github.com/yuanci/yuanci/internal/githubci"
 	"github.com/yuanci/yuanci/internal/httpapi"
 	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/project"
 	"github.com/yuanci/yuanci/internal/provisioning"
+	runmodel "github.com/yuanci/yuanci/internal/run"
 	"github.com/yuanci/yuanci/internal/scm"
 	"github.com/yuanci/yuanci/internal/secrets"
 )
 
 func (p *giteeProviderFixture) Commit(context.Context, string, gitee.Repository, string) (string, error) {
 	return strings.Repeat("a", 40), nil
+}
+func (p *giteeProviderFixture) DeliverCheck(_ context.Context, token string, repo gitee.Repository, item commitstatus.Item, target string) error {
+	if token == "" || repo.ID != "42" || item.RunID == uuid.Nil || item.CommitSHA != strings.Repeat("a", 40) || !strings.HasSuffix(target, "/runs/"+item.RunID.String()) {
+		return commitstatus.ErrInvalid
+	}
+	return nil
 }
 func (p *giteeProviderFixture) File(_ context.Context, _ string, _ gitee.Repository, _ string, sha string) ([]byte, error) {
 	if sha != strings.Repeat("a", 40) {
@@ -131,6 +139,84 @@ func TestGiteeWebhookCreatesSharedRun(t *testing.T) {
 	}
 	if err := s.pool.QueryRow(t.Context(), `SELECT count(*) FROM commit_status_outbox WHERE repository_id=$1 AND provider='gitee' AND commit_state='pending'`, id).Scan(&count); err != nil || count != 1 {
 		t.Fatal("pending outbox missing")
+	}
+	status, err := s.ClaimCommitStatus(t.Context(), time.Minute)
+	if err != nil || status == nil {
+		t.Fatal("claim status", err)
+	}
+	if err := service.Deliver(t.Context(), *status); err != nil {
+		t.Fatal("pending delivery", err)
+	}
+	if err := s.FinishCommitStatus(t.Context(), status.ID, status.LeaseOwner); err != nil {
+		t.Fatal(err)
+	}
+	runnerID := uuid.New()
+	if _, err := s.pool.Exec(t.Context(), `INSERT INTO runners(id,pool_id,name,status,capacity,labels,certificate_serial,os,architecture,executor,isolation_level,available_disk_bytes,protocol_version,runner_version)
+	SELECT $1,id,'gitee-runner','online',1,'{}','gitee-serial','linux','amd64','docker','standard',4294967296,2,'v2' FROM runner_pools WHERE name='standard'`, runnerID); err != nil {
+		t.Fatal(err)
+	}
+	assignment, err := s.ClaimRunnerJob(t.Context(), runmodel.RunnerClaim{RunnerID: runnerID})
+	if err != nil || assignment == nil || assignment.Source == nil {
+		t.Fatal("Gitee source claim", err)
+	}
+	lease := runmodel.LeaseRequest{RunnerID: runnerID, JobID: assignment.JobID, LeaseToken: assignment.LeaseToken}
+	sha := assignment.Source.CommitSHA
+	if err := s.CheckGiteeCheckoutLease(t.Context(), lease, id, sha); err != nil {
+		t.Fatal("valid checkout lease", err)
+	}
+	wrong := lease
+	wrong.LeaseToken = "other"
+	if s.CheckGiteeCheckoutLease(t.Context(), wrong, id, sha) == nil || s.CheckGiteeCheckoutLease(t.Context(), lease, uuid.New(), sha) == nil || s.CheckGiteeCheckoutLease(t.Context(), lease, id, strings.Repeat("b", 40)) == nil {
+		t.Fatal("checkout crossed lease/source scope")
+	}
+	for _, boundary := range []struct {
+		deny, restore string
+		target        uuid.UUID
+	}{
+		{`UPDATE runners SET status='disabled' WHERE id=$1`, `UPDATE runners SET status='online' WHERE id=$1`, runnerID},
+		{`UPDATE repositories SET active=false WHERE id=$1`, `UPDATE repositories SET active=true WHERE id=$1`, id},
+		{`UPDATE jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, `UPDATE jobs SET lease_expires_at=clock_timestamp()+interval '30 seconds' WHERE id=$1`, assignment.JobID},
+	} {
+		if _, err := s.pool.Exec(t.Context(), boundary.deny, boundary.target); err != nil {
+			t.Fatal(err)
+		}
+		if s.CheckGiteeCheckoutLease(t.Context(), lease, id, sha) == nil {
+			t.Fatal("revoked checkout boundary accepted")
+		}
+		if _, err := s.pool.Exec(t.Context(), boundary.restore, boundary.target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	broker := gitee.NewCheckoutBroker(service, s)
+	credential, err := broker.IssueAssignmentCredential(t.Context(), runnerID, assignment)
+	if err != nil || len(credential.Token) != 43 || credential.CloneURL == assignment.Source.CloneURL {
+		t.Fatal("scoped issuance", err)
+	}
+	clear(credential.Token)
+	if _, err := s.AcknowledgeRunnerJob(t.Context(), lease); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.StartRunnerJob(t.Context(), lease); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteRunnerJob(t.Context(), runmodel.RunnerCompletion{RunnerID: runnerID, JobID: assignment.JobID, LeaseToken: assignment.LeaseToken, Status: runmodel.JobSucceeded}); err != nil {
+		t.Fatal(err)
+	}
+	if s.CheckGiteeCheckoutLease(t.Context(), lease, id, sha) == nil {
+		t.Fatal("completed lease still authorizes checkout")
+	}
+	final, err := s.ClaimCommitStatus(t.Context(), time.Minute)
+	if err != nil || final == nil || final.State != commitstatus.StateSuccess {
+		t.Fatal("final outbox", err)
+	}
+	if err := service.Deliver(t.Context(), *final); err != nil {
+		t.Fatal("final delivery", err)
+	}
+	if err := service.Store.RevokeGiteeGrant(t.Context(), session.Token); err != nil {
+		t.Fatal(err)
+	}
+	if service.Deliver(t.Context(), *final) == nil {
+		t.Fatal("revoked grant delivered status")
 	}
 }
 

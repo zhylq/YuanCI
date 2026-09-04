@@ -2,12 +2,32 @@ package main
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"github.com/yuanci/yuanci/internal/commitstatus"
+	runmodel "github.com/yuanci/yuanci/internal/run"
 
 	"github.com/yuanci/yuanci/internal/gitee"
 	"github.com/yuanci/yuanci/internal/githubapp"
 	"github.com/yuanci/yuanci/internal/scm"
 )
+
+type credentialRouter struct {
+	github *githubapp.Service
+	gitee  *gitee.CheckoutBroker
+}
+
+func (c credentialRouter) IssueCheckoutCredential(ctx context.Context, id uuid.UUID, external string) (githubapp.CheckoutCredential, error) {
+	if c.github == nil {
+		return githubapp.CheckoutCredential{}, githubapp.ErrCredentialUnavailable
+	}
+	return c.github.IssueCheckoutCredential(ctx, id, external)
+}
+func (c credentialRouter) IssueAssignmentCredential(ctx context.Context, runner uuid.UUID, a *runmodel.Assignment) (githubapp.CheckoutCredential, error) {
+	if c.gitee == nil {
+		return githubapp.CheckoutCredential{}, githubapp.ErrCredentialUnavailable
+	}
+	return c.gitee.IssueAssignmentCredential(ctx, runner, a)
+}
 
 type statusRouter struct {
 	github commitstatus.DeliveryProvider

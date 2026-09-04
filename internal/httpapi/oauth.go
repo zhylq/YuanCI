@@ -22,6 +22,7 @@ type AutomationPipeline interface {
 
 // GitHubLogin is installed only on the authenticated surface, never evaluation.
 type GitHubLogin struct {
+	Checkout     http.Handler
 	Gitee        *gitee.Service
 	Store        identity.OAuthStore
 	Provider     identity.OAuthProvider

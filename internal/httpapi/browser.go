@@ -41,6 +41,9 @@ func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend Browser
 	mux := http.NewServeMux()
 	if len(login) == 1 {
 		a.oauth = &login[0]
+		if a.oauth.Checkout != nil {
+			mux.Handle("/api/v1/checkout/gitee/", a.oauth.Checkout)
+		}
 		if (a.oauth.Pipeline != nil || a.oauth.Gitee != nil) && a.automation == nil {
 			return nil, errors.New("GitHub automation validation requires an automation store")
 		}
