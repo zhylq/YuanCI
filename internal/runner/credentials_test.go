@@ -202,7 +202,7 @@ type enrollmentFixture struct {
 	jobs     *runmodel.MemoryStore
 }
 
-func newEnrollmentFixture(t *testing.T) enrollmentFixture {
+func newEnrollmentFixture(t *testing.T, wrappers ...func(*runmodel.MemoryStore) runmodel.RunnerJobStore) enrollmentFixture {
 	t.Helper()
 	directory := filepath.Join(t.TempDir(), "pki")
 	if _, err := runnerauth.InitializePKI(runnerauth.PKIOptions{OutputDir: directory, ServerNames: []string{"server", "127.0.0.1"}}); err != nil {
@@ -221,7 +221,11 @@ func newEnrollmentFixture(t *testing.T) enrollmentFixture {
 		t.Fatal(err)
 	}
 	jobs := runmodel.NewMemoryStore()
-	server, err := runnergrpc.NewServer(auth, jobs, pki.RootPEM, pki.TLSConfig)
+	var jobStore runmodel.RunnerJobStore = jobs
+	if len(wrappers) != 0 {
+		jobStore = wrappers[0](jobs)
+	}
+	server, err := runnergrpc.NewServer(auth, jobStore, pki.RootPEM, pki.TLSConfig)
 	if err != nil {
 		t.Fatal(err)
 	}

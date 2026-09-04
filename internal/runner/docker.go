@@ -88,7 +88,9 @@ func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipe
 			stepCtx, cancel = context.WithTimeout(jobCtx, duration)
 		}
 		args := buildDockerArgs(volume, network, jobID, index, image, spec, step)
-		err := e.run(stepCtx, args...)
+		command := e.commandFor(stepCtx, e.Binary, args...)
+		command.Stdout, command.Stderr = jobLogWriters(stepCtx, index, e.Stdout, e.Stderr)
+		err := command.Run()
 		cancel()
 		if err != nil {
 			return fmt.Errorf("step %q failed: %w", step.Name, err)

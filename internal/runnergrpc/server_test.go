@@ -552,3 +552,49 @@ func testCapabilities() *runnerv1.RunnerCapabilities {
 		AvailableDiskBytes: 1024, IsolationLevel: runnerv1.IsolationLevel_ISOLATION_LEVEL_STANDARD,
 		Labels: map[string]string{"region": "test"}}
 }
+
+type loggingJobStore struct {
+	assignmentJobStore
+	chunk runmodel.LogChunk
+	err   error
+}
+
+func (s *loggingJobStore) AppendLogChunk(_ context.Context, c runmodel.LogChunk) error {
+	s.chunk = c
+	s.chunk.Data = append([]byte(nil), c.Data...)
+	return s.err
+}
+func TestLogTransportPersistsBeforeAckAndBindsIdentity(t *testing.T) {
+	runnerID, jobID := uuid.New(), uuid.New()
+	store := &loggingJobStore{}
+	server := &Server{jobs: store}
+	stream := &captureWorkStream{ctx: t.Context()}
+	message := func() *runnerv1.LogChunk {
+		return &runnerv1.LogChunk{JobId: jobID.String(), LeaseToken: "lease", Sequence: 1, StepIndex: 2, Data: []byte("hello"), Stderr: true}
+	}
+	m := message()
+	if err := server.handleLog(stream, runnerID, m); err != nil {
+		t.Fatal(err)
+	}
+	if store.chunk.Lease.RunnerID != runnerID || store.chunk.Stream != "stderr" || string(store.chunk.Data) != "hello" || store.chunk.Step != 2 {
+		t.Fatal("incorrect persistence")
+	}
+	if len(stream.responses) != 1 || stream.responses[0].GetLogAcknowledged().Sequence != 1 {
+		t.Fatal("missing ack")
+	}
+	if bytes.Contains(m.Data, []byte("hello")) {
+		t.Fatal("transport buffer retained")
+	}
+	store.err = errors.New("sensitive database detail")
+	if err := server.handleLog(stream, runnerID, message()); status.Code(err) != codes.Unavailable || bytes.Contains([]byte(err.Error()), []byte("sensitive")) {
+		t.Fatalf("unsafe failure: %v", err)
+	}
+	if len(stream.responses) != 1 {
+		t.Fatal("acknowledged failed persistence")
+	}
+	m = message()
+	m.Sequence = 1 << 63
+	if err := server.handleLog(stream, runnerID, m); status.Code(err) != codes.InvalidArgument {
+		t.Fatal("overflow accepted")
+	}
+}

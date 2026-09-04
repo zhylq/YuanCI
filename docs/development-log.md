@@ -988,3 +988,17 @@ the batch outcome and remaining work.
   Affected run/PostgreSQL package tests exposed two fixed migration-count
   assertions; both were updated and their focused rerun passed. Focused vet
   and diff checks passed. LOG-01 is not a full-suite phase gate.
+
+## 2026-09-04 — LOG-02 acknowledged Runner log transport
+
+- Work now persists certificate/lease-bound log chunks and acknowledges only
+  committed writes. The Runner sends stdout/stderr with step indexes, keeps
+  one 32 KiB unacknowledged chunk per Job, and replays its unchanged sequence
+  after reconnect. Heartbeats continue while writers wait for acknowledgement.
+- Docker step output feeds the bounded transport. Quota exhaustion emits one
+  empty truncation marker and drains further output; cancellation interrupts
+  backpressure. Job completion follows the final log acknowledgement.
+- Focused buffer, server and real TLS reconnect tests passed, including injected
+  lost acknowledgement, replay identity, old acknowledgement, truncation and
+  cancellation. Affected Runner/gRPC/protocol packages passed Linux race tests
+  and vet. No full repository suite or deployment build was run.

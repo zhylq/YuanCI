@@ -73,6 +73,7 @@ type localJob struct {
 	leaseTimer    *time.Timer
 	authorityLost atomic.Bool
 	source        *localSource
+	logs          *logBuffer
 }
 
 type localSource struct {
@@ -187,6 +188,9 @@ func (client *WorkClient) runSession(ctx context.Context, executor Executor, act
 	}
 	ticker := time.NewTicker(workHeartbeatInterval)
 	defer ticker.Stop()
+	logTick := time.NewTicker(25 * time.Millisecond)
+	defer logTick.Stop()
+	sentLogs := make(map[uuid.UUID]uint64)
 	rotation := rotationTimer(client.config)
 	if rotation != nil {
 		defer rotation.Stop()
@@ -220,6 +224,26 @@ func (client *WorkClient) runSession(ctx context.Context, executor Executor, act
 			}
 		case <-timerChannel(rotation):
 			return errCertificateRotationDue
+		case <-logTick.C:
+			for id := range sentLogs {
+				if active[id] == nil {
+					delete(sentLogs, id)
+				}
+			}
+			for id, job := range active {
+				if job.logs == nil || job.authorityLost.Load() {
+					continue
+				}
+				chunk := job.logs.pending()
+				if chunk == nil || sentLogs[id] == chunk.Sequence {
+					continue
+				}
+				chunk.JobId, chunk.LeaseToken = id.String(), job.leaseToken
+				if err := stream.Send(&runnerv1.WorkRequest{Body: &runnerv1.WorkRequest_LogChunk{LogChunk: chunk}}); err != nil {
+					return err
+				}
+				sentLogs[id] = chunk.Sequence
+			}
 		case jobID := <-leaseLosses:
 			if job := active[jobID]; job != nil && job.authorityLost.Load() {
 				forgetJob(active, job)
@@ -255,6 +279,8 @@ func (client *WorkClient) handleResponse(ctx context.Context,
 		jobCtx, cancel := context.WithCancel(ctx)
 		job.ctx = jobCtx
 		job.cancel = cancel
+		job.logs = newLogBuffer(jobCtx)
+		job.ctx = withJobLogs(jobCtx, job.logs)
 		if !armLeaseDeadline(job, leaseLosses) {
 			clearJobSource(job)
 			return errors.New("Runner assignment lease expired before acceptance")
@@ -297,6 +323,19 @@ func (client *WorkClient) handleResponse(ctx context.Context,
 				return errors.New("Runner completion state is invalid")
 			}
 			return stream.Send(completionRequest(job, *job.result))
+		}
+		return nil
+	case *runnerv1.WorkResponse_LogAcknowledged:
+		ack := body.LogAcknowledged
+		if ack == nil || ack.Sequence == 0 {
+			return errors.New("invalid log acknowledgement")
+		}
+		id, err := uuid.Parse(ack.JobId)
+		if err != nil {
+			return errors.New("invalid log acknowledgement")
+		}
+		if job := active[id]; job != nil && job.logs != nil {
+			job.logs.ack(ack.Sequence)
 		}
 		return nil
 	case *runnerv1.WorkResponse_Cancel:

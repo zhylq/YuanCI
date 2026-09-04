@@ -78,6 +78,7 @@ message WorkResponse {
     CancelJob cancel = 2;
     LeaseRenewed lease_renewed = 3;
     JobRejected job_rejected = 4;
+    LogAcknowledged log_acknowledged = 5;
   }
 }
 
@@ -172,10 +173,18 @@ message LogChunk {
   string job_id = 1;
   string step_name = 2;
   uint64 sequence = 3;
-  // data is at most 64 KiB per message.
+  // data is at most 32 KiB; sequence is Job-wide, starting at 1.
   bytes data = 4;
   bool stderr = 5;
   string lease_token = 6;
+  uint32 step_index = 7;
+  // Empty marker, emitted once when the Job log quota is reached.
+  bool truncated = 8;
+}
+
+message LogAcknowledged {
+  string job_id = 1;
+  uint64 sequence = 2;
 }
 
 message JobCompleted {

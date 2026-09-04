@@ -158,12 +158,7 @@ func (server *Server) Work(stream grpc.BidiStreamingServer[runnerv1.WorkRequest,
 				return err
 			}
 		case *runnerv1.WorkRequest_LogChunk:
-			if body.LogChunk == nil || len(body.LogChunk.Data) > 64<<10 {
-				return status.Error(codes.InvalidArgument, "invalid Runner log message")
-			}
-			if err := stream.Send(&runnerv1.WorkResponse{Body: &runnerv1.WorkResponse_JobRejected{JobRejected: &runnerv1.JobRejected{
-				JobId: body.LogChunk.JobId, Reason: runnerv1.JobRejectReason_JOB_REJECT_REASON_PROTOCOL_ERROR,
-				Detail: "log transport is not enabled"}}}); err != nil {
+			if err := server.handleLog(stream, identity.RunnerID, body.LogChunk); err != nil {
 				return err
 			}
 		default:
@@ -175,6 +170,41 @@ func (server *Server) Work(stream grpc.BidiStreamingServer[runnerv1.WorkRequest,
 type receiptMessage interface {
 	GetJobId() string
 	GetLeaseToken() string
+}
+
+func (server *Server) handleLog(stream grpc.BidiStreamingServer[runnerv1.WorkRequest, runnerv1.WorkResponse], runnerID uuid.UUID, message *runnerv1.LogChunk) error {
+	if message == nil || message.Sequence > runmodel.MaxJobLogChunks || message.StepIndex > 1023 || len(message.StepName) > 128 {
+		return status.Error(codes.InvalidArgument, "invalid log chunk")
+	}
+	defer clear(message.Data)
+	jobID, err := uuid.Parse(message.JobId)
+	if err != nil {
+		return status.Error(codes.InvalidArgument, "invalid log chunk")
+	}
+	output := "stdout"
+	if message.Stderr {
+		output = "stderr"
+	}
+	chunk := runmodel.LogChunk{Lease: runmodel.LeaseRequest{RunnerID: runnerID, JobID: jobID, LeaseToken: message.LeaseToken}, Sequence: int64(message.Sequence), Step: int(message.StepIndex), Stream: output, Data: message.Data, Truncated: message.Truncated}
+	if err := runmodel.ValidateLogChunk(chunk); err != nil {
+		return status.Error(codes.InvalidArgument, "invalid log chunk")
+	}
+	logs, ok := server.jobs.(runmodel.LogStore)
+	if !ok {
+		return status.Error(codes.Unavailable, "log storage unavailable")
+	}
+	ctx, cancel := context.WithTimeout(stream.Context(), 10*time.Second)
+	defer cancel()
+	if err := logs.AppendLogChunk(ctx, chunk); err != nil {
+		if errors.Is(err, runmodel.ErrLeaseInvalid) {
+			return workStoreError(err)
+		}
+		if errors.Is(err, runmodel.ErrLogSequence) || errors.Is(err, runmodel.ErrLogLimit) || errors.Is(err, runmodel.ErrLogExpired) {
+			return status.Error(codes.FailedPrecondition, "log stream rejected")
+		}
+		return status.Error(codes.Unavailable, "log storage unavailable")
+	}
+	return stream.Send(&runnerv1.WorkResponse{Body: &runnerv1.WorkResponse_LogAcknowledged{LogAcknowledged: &runnerv1.LogAcknowledged{JobId: message.JobId, Sequence: message.Sequence}}})
 }
 
 func (server *Server) handleHeartbeat(stream grpc.BidiStreamingServer[runnerv1.WorkRequest, runnerv1.WorkResponse],
