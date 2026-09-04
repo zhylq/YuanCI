@@ -96,6 +96,7 @@ type ValidationProof struct {
 // CheckoutCredential is an ephemeral token bound to one trusted GitHub
 // repository. The caller owns Token and must clear it after delivery or use.
 type CheckoutCredential struct {
+	CloneURL     string // Optional trusted control-plane checkout broker URL.
 	RepositoryID string
 	Token        []byte
 	ExpiresAt    time.Time

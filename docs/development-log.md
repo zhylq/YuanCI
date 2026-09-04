@@ -1370,3 +1370,15 @@ the batch outcome and remaining work.
   schema informed the adapter; real API acceptance remains GE-04. Gitee does
   not document an idempotency key, so remote exactly-once creation is not claimed.
 - GE-03 scoped private checkout remains in progress.
+
+## 2026-09-04 — GE-03 lease-scoped Gitee checkout broker
+
+- Added a bounded in-memory capability broker: two-minute tokens, hashed keys,
+  one live Job/repository/SHA, read-only Git protocol v0 depth-one requests,
+  fixed upstream host, repository-ID recheck and no credential/redirect forwarding.
+  OAuth stays on the control plane. In-flight requests recheck leases each second.
+- Focused race tests cover scope, expiry, revocation and packet rejection; an
+  actual Git client fetched and checked out a file through a fake upstream Git
+  HTTP backend. This proves the wire protocol, not Gitee OAuth Git acceptance.
+- PostgreSQL lease guards reject disabled Runners, inactive repositories, expired
+  leases, wrong Job/source and completed Jobs. Runner/API wiring follows.
