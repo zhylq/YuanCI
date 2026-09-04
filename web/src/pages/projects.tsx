@@ -1,8 +1,8 @@
-import type { FormEvent, ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { ApiError, request, type Run } from '../lib/api'
-import { useAuthStatus, useSession } from '../lib/auth'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { ApiError, request, type Run, type PlanJob } from '../lib/api'
+import { post, useAuthStatus, useSession } from '../lib/auth'
 import { buttonClass, linkClass, Pending } from '../components/auth-boundary'
 import { StatusBadge } from '../components/status-badge'
 import { ProjectAutomation } from './project-automation'
@@ -128,9 +128,90 @@ function ProjectDetail({ userID, projectID }: { userID: string; projectID: strin
         : <ul aria-label="项目运行记录" className="mt-4 divide-y divide-slate-200">{runs.data.items.map(run => <li key={run.id} className="min-w-0 py-4 first:pt-0">
           <div className="flex flex-wrap items-start justify-between gap-3"><h3 className="break-all text-balance text-base font-semibold">{run.pipeline_name}</h3><StatusBadge status={run.status} /></div>
           <dl className="mt-3 grid min-w-0 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3"><div><dt className="text-slate-600">触发事件 / 引用</dt><dd className="mt-1 break-all">{run.event} · {run.ref || '无引用'}</dd></div><div><dt className="text-slate-600">提交</dt><dd className="mt-1 break-all font-mono">{run.commit_sha || '未记录'}</dd></div><div><dt className="text-slate-600">创建时间</dt><dd className="mt-1 tabular-nums"><time dateTime={run.created_at}>{new Date(run.created_at).toLocaleString()}</time></dd></div></dl>
-          <p className="mt-3 break-all font-mono text-xs text-slate-600">运行 ID：{run.id}</p>
+          <Link className={`${linkClass} mt-3 inline-flex min-h-11 items-center break-all text-sm`} to={`/projects/${projectID}/runs/${run.id}`}>查看运行详情 · {run.id}</Link>
         </li>)}</ul>}
       <Pager after={after} next={runs.data.next_cursor} navigate={cursor => setParams(cursor ? { after: cursor } : {})} />
     </section>
   </div>
+}
+
+type Job = { id: string; stage_name: string; job_name: string; status: string; spec: PlanJob; reused_from_job_id?: string }
+type RunDetail = { run: Run; jobs: Job[] }
+export function RunDetailPage() {
+ const { projectID = '', runID = '' } = useParams()
+ return <ProjectAccess>{userID => <RunView key={`${userID}:${runID}`} projectID={projectID} runID={runID} userID={userID} />}</ProjectAccess>
+}
+function RunView({ projectID, runID, userID }: { projectID: string; runID: string; userID: string }) {
+ const session = useSession(true)
+ const base = `/api/v1/projects/${encodeURIComponent(projectID)}/runs/${encodeURIComponent(runID)}`
+ const detail = useQuery({ queryKey: ['run-detail', userID, projectID, runID], queryFn: ({ signal }) => request<RunDetail>(base, { signal }), retry: false, gcTime: 0, refetchInterval: q => q.state.data && terminal(q.state.data.run.status) ? false : 1000 })
+ const [selected, setSelected] = useState('')
+ const [busy, setBusy] = useState(false)
+ const [error, setError] = useState('')
+ const requestKey = useRef<{ mode: string; id: string } | null>(null)
+ const navigate = useNavigate()
+ async function action(mode: 'cancel' | 'full' | 'failed') {
+  if (!session.data) return
+  setBusy(true); setError('')
+  try {
+   if (mode === 'cancel') { await post(`${base}/cancel`, {}, session.data.csrf_token); await detail.refetch() }
+   else {
+    if (requestKey.current?.mode !== mode) requestKey.current = { mode, id: crypto.randomUUID() }
+    const next = await request<Run>(`${base}/rerun`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.data.csrf_token, 'Idempotency-Key': requestKey.current.id }, body: JSON.stringify({ mode }) })
+    navigate(`/projects/${projectID}/runs/${next.id}`)
+   }
+  } catch (cause) { setError(cause instanceof Error ? cause.message : '运行操作失败，请重试。') }
+  finally { setBusy(false) }
+ }
+ if (detail.isPending || session.isPending) return <Pending label="正在读取运行详情…" />
+ if (detail.isError || session.isError || !session.data) return <ReadError error={detail.error ?? session.error ?? new ApiError('', 401)} retry={() => void detail.refetch()} />
+ const { run, jobs } = detail.data
+ const job = jobs.find(j => j.id === selected) ?? jobs[0]
+ const stages = new Map<string, Job[]>()
+ for (const item of jobs) stages.set(item.stage_name, [...(stages.get(item.stage_name) ?? []), item])
+ return <div className="min-w-0 space-y-6"><Link className={linkClass} to={`/projects/${projectID}`}>返回项目</Link>
+  <header><h1 className="text-balance text-3xl font-semibold">{run.pipeline_name}</h1><div className="mt-3"><StatusBadge status={run.status} /></div></header>
+  <section className={panel}><h2 className="text-balance text-xl font-semibold">运行来源</h2><dl className="mt-4 grid min-w-0 gap-4 text-sm sm:grid-cols-2"><div><dt>事件 / 引用</dt><dd className="mt-1 break-all">{run.event} · {run.ref || '无引用'}</dd></div><div><dt>提交 SHA</dt><dd className="mt-1 break-all font-mono">{run.commit_sha || '未记录'}</dd></div><div><dt>配置 SHA256</dt><dd className="mt-1 break-all font-mono">{run.config_sha256}</dd></div><div><dt>运行 ID</dt><dd className="mt-1 break-all font-mono">{run.id}</dd></div></dl>
+   <div className="mt-5 flex flex-wrap gap-3" aria-busy={busy}>{!terminal(run.status) ? <button className={buttonClass} disabled={busy} onClick={() => void action('cancel')}>取消运行</button> : <><button className={buttonClass} disabled={busy || !jobs.length} onClick={() => void action('full')}>完整重跑</button>{run.status === 'failed' ? <button className={buttonClass} disabled={busy || !jobs.length} onClick={() => void action('failed')}>重跑失败任务</button> : null}</>}</div>
+   <p className="mt-3 text-pretty text-sm text-slate-600">操作需要运行权限。重跑使用相同提交与配置；失败重跑保留成功任务的结果。</p>{error ? <p role="alert" className="mt-3 text-pretty text-red-800">{error}</p> : null}
+  </section>
+  {Array.from(stages, ([stage, items]) => <section className={panel} key={stage}><h2 className="text-balance text-xl font-semibold">阶段：{stage}</h2><ul className="mt-4 space-y-4">{items.map(item => <li key={item.id}><h3 className="text-balance font-semibold">{item.job_name} · {item.status}</h3>{item.reused_from_job_id ? <p className="mt-1 break-all text-sm text-slate-600">复用成功任务：{item.reused_from_job_id}</p> : null}<ol aria-label={`${item.job_name} 步骤`} className="mt-2 list-decimal space-y-2 pl-5">{item.spec.steps.map((step, index) => <li key={index}><details><summary className="min-h-11 cursor-pointer py-2 focus-visible:outline-2 focus-visible:outline-blue-600">{step.name} · {step.image || item.spec.image || '默认镜像'}</summary><pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded bg-slate-50 p-3 text-sm">{step.commands.join('\n')}</pre></details></li>)}</ol></li>)}</ul></section>)}
+  <section className={`${panel} min-w-0`}><h2 className="text-balance text-xl font-semibold">实时日志</h2>{job ? <><label className="mt-4 block text-sm font-semibold">选择任务<select className="mt-2 min-h-11 w-full rounded border border-slate-300 px-3" value={job.id} onChange={e => setSelected(e.target.value)}>{jobs.map(item => <option key={item.id} value={item.id}>{item.stage_name} / {item.job_name}</option>)}</select></label><LiveLogs key={job.id} path={`${base}/jobs/${job.id}/logs`} finished={terminal(job.status)} reused={Boolean(job.reused_from_job_id)} /></> : <p className="mt-3 text-pretty">此运行没有可执行任务，请检查配置。</p>}</section>
+ </div>
+}
+function terminal(status: string) { return ['succeeded', 'failed', 'canceled', 'skipped'].includes(status) }
+type Chunk = { sequence: number; step: number; stream: string; data: string; truncated: boolean }
+function LiveLogs({ path, finished, reused }: { path: string; finished: boolean; reused: boolean }) {
+ const [view, setView] = useState({ text: '', message: '正在读取日志…', error: '', clipped: false })
+ useEffect(() => {
+  if (reused) return
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let after = 0, text = '', clipped = false
+  const decoders = new Map<string, TextDecoder>()
+  async function poll() {
+   try {
+    const page = await request<{ items: Chunk[]; next_sequence: number; expired: boolean }>(`${path}?after=${after}`, { signal: controller.signal })
+    if (controller.signal.aborted) return
+    for (const c of page.items) {
+     if (c.sequence <= after) continue
+     const key = `${c.step}:${c.stream}`
+     if (!decoders.has(key)) decoders.set(key, new TextDecoder())
+     const bytes = Uint8Array.from(atob(c.data || ''), char => char.charCodeAt(0))
+     text += decoders.get(key)!.decode(bytes, { stream: true })
+     if (c.truncated) text += '\n[服务端日志已截断]\n'
+    }
+    if (finished && !page.items.length) { for (const decoder of decoders.values()) text += decoder.decode(); decoders.clear() }
+    if (text.length > 262144) { text = text.slice(-262144); clipped = true }
+    after = page.next_sequence
+    if (page.expired) text = ''
+    setView({ text, clipped, error: '', message: page.expired ? '日志保留期已结束。' : finished && !page.items.length ? '日志读取完成。' : '日志更新中…' })
+    if (!page.expired && (!finished || page.items.length > 0)) timer = setTimeout(() => void poll(), page.items.length === 16 ? 50 : 1000)
+   } catch (cause) { if (!controller.signal.aborted) setView({ text: '', clipped: false, message: '', error: cause instanceof Error ? cause.message : '日志读取失败，请刷新页面重试。' }) }
+  }
+  void poll()
+  return () => { controller.abort(); clearTimeout(timer) }
+ }, [path, finished, reused])
+ if (reused) return <p className="mt-3 text-pretty">此任务复用先前成功结果，本次没有新日志。</p>
+ return <div className="mt-4 min-w-0"><p role="status" className="text-sm text-slate-600">{view.message}</p>{view.error ? <p role="alert" className="mt-3 text-red-800">{view.error}</p> : <>{view.clipped ? <p className="mt-2 text-sm">页面仅显示最近 262144 个字符。</p> : null}<pre aria-label="任务日志" tabIndex={0} className="mt-3 max-h-96 max-w-full overflow-auto whitespace-pre-wrap break-all rounded-lg bg-slate-950 p-4 font-mono text-sm text-slate-100 focus-visible:outline-2 focus-visible:outline-blue-600">{view.text || '暂无日志。'}</pre></>}</div>
 }

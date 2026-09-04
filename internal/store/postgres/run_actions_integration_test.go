@@ -258,3 +258,46 @@ func TestRerunConcurrentReplayAndAuditRollback(t *testing.T) {
 		t.Fatalf("rollback: %d %v", count, err)
 	}
 }
+
+func TestRunDetailAndLogsAreScopedOrderedAndBounded(t *testing.T) {
+	f := newAccessFixture(t)
+	grantProject(t, f, authorization.Viewer)
+	original, err := f.store.CreateAuthorizedRun(t.Context(), f.adminSession.Token, f.project, storetest.Record(t, 1, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := f.store.GetAuthorizedRun(t.Context(), f.memberSession.Token, f.project, original.ID)
+	if err != nil || len(detail.Jobs) != 1 {
+		t.Fatalf("detail: %+v %v", detail, err)
+	}
+	jobID := detail.Jobs[0].ID
+	if _, err := f.store.pool.Exec(t.Context(), `INSERT INTO job_log_streams(job_id,expires_at) VALUES($1,clock_timestamp()+interval '1 day')`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 20; i++ {
+		if _, err := f.store.pool.Exec(t.Context(), `INSERT INTO job_log_chunks(job_id,sequence,step_index,stream,data) VALUES($1,$2,0,'stdout',$3)`, jobID, i, []byte("safe output")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := f.store.ReadAuthorizedLogs(t.Context(), f.memberSession.Token, f.project, original.ID, jobID, 0)
+	if err != nil || len(page.Items) != 16 || page.NextSequence != 16 {
+		t.Fatalf("page: %+v %v", page, err)
+	}
+	page, err = f.store.ReadAuthorizedLogs(t.Context(), f.memberSession.Token, f.project, original.ID, jobID, page.NextSequence)
+	if err != nil || len(page.Items) != 4 || page.NextSequence != 20 {
+		t.Fatalf("cursor: %+v %v", page, err)
+	}
+	if _, err := f.store.ReadAuthorizedLogs(t.Context(), f.memberSession.Token, f.otherProject, original.ID, jobID, 0); !errors.Is(err, authorization.ErrForbidden) {
+		t.Fatal("cross-project logs")
+	}
+	if _, err := f.store.ReadAuthorizedLogs(t.Context(), f.memberSession.Token, f.project, original.ID, uuid.New(), 0); !errors.Is(err, authorization.ErrForbidden) {
+		t.Fatal("foreign Job logs")
+	}
+	if _, err := f.store.pool.Exec(t.Context(), `UPDATE job_log_streams SET expires_at=clock_timestamp()-interval '1 second' WHERE job_id=$1`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	page, err = f.store.ReadAuthorizedLogs(t.Context(), f.memberSession.Token, f.project, original.ID, jobID, 0)
+	if err != nil || !page.Expired || len(page.Items) != 0 {
+		t.Fatal("expired logs disclosed")
+	}
+}

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, expect, test, vi } from 'vitest'
-import { ProjectDetailPage, ProjectsPage, type Project } from './projects'
+import { ProjectDetailPage, ProjectsPage, RunDetailPage, type Project } from './projects'
 
 const id = '10000000-0000-4000-8000-000000000001'
 const otherID = '20000000-0000-4000-8000-000000000002'
@@ -28,6 +28,7 @@ function mount(path = '/projects') {
   render(<QueryClientProvider client={cache}><MemoryRouter initialEntries={[path]}><Routes>
     <Route path="/projects" element={<ProjectsPage />} />
     <Route path="/projects/:projectID" element={<ProjectDetailPage />} />
+    <Route path="/projects/:projectID/runs/:runID" element={<RunDetailPage />} />
     <Route path="/login" element={<p>登录入口</p>} />
   </Routes></MemoryRouter></QueryClientProvider>)
   return cache
@@ -137,4 +138,48 @@ test('switching project discards the previous detail while the next loads', asyn
   expect(screen.queryByRole('heading', { name: 'team/first' })).not.toBeInTheDocument()
   finish(reply(other))
   await screen.findByRole('heading', { name: 'team/second' })
+})
+
+const detailRun = { id: otherID, pipeline_name: 'CI fixture', event: 'push', ref: 'refs/heads/main', commit_sha: 'a'.repeat(40), config_sha256: 'b'.repeat(64), status: 'failed', created_at: '2026-09-04T00:00:00Z' }
+const detailJob = { id: 'job-1', stage_name: 'build', job_name: 'unit', status: 'failed', spec: { name: 'unit', image: 'alpine', steps: [{ name: 'test step', commands: ['echo test'] }] } }
+test('Run detail shows source, keyboard-accessible steps, safe logs and idempotent rerun', async () => {
+ const writes: RequestInit[] = []
+ vi.stubGlobal('fetch', vi.fn(async (path: string, options?: RequestInit) => {
+  if (path.endsWith('/auth/status')) return reply(status)
+  if (path.endsWith('/session')) return reply(session)
+  if (options?.method === 'POST') { writes.push(options); return reply({ detail: '暂时失败' }, 503) }
+  if (path.includes('/logs')) return reply({ items: [{ sequence: 1, step: 0, stream: 'stdout', data: btoa('<script>alert(1)</script>'), truncated: false }], next_sequence: 1, expired: false })
+  return reply({ run: detailRun, jobs: [detailJob] })
+ }))
+ mount(`/projects/${id}/runs/${otherID}`)
+ expect(await screen.findByRole('heading', { name: 'CI fixture' })).toBeInTheDocument()
+ expect(screen.getByText('a'.repeat(40))).toBeInTheDocument()
+ expect(screen.getByText('test step · alpine').tagName).toBe('SUMMARY')
+ expect(screen.getByLabelText('选择任务')).toHaveValue('job-1')
+ await waitFor(() => expect(screen.getByLabelText('任务日志')).toHaveTextContent('<script>alert(1)</script>'))
+ expect(screen.getByLabelText('任务日志')).toHaveAttribute('tabindex', '0')
+ expect(document.querySelector('script')).toBeNull()
+ fireEvent.click(screen.getByRole('button', { name: '重跑失败任务' }))
+ await screen.findByRole('alert')
+ fireEvent.click(screen.getByRole('button', { name: '重跑失败任务' }))
+ await waitFor(() => expect(writes).toHaveLength(2))
+ expect(writes[0].headers).toMatchObject({ 'X-CSRF-Token': 'fixture' })
+ expect(writes[0].headers).toEqual(writes[1].headers)
+ expect(JSON.parse(String(writes[0].body))).toEqual({ mode: 'failed' })
+})
+
+test('Run cancellation refreshes status and log access failure hides old output', async () => {
+ let canceled = false
+ vi.stubGlobal('fetch', vi.fn(async (path: string, options?: RequestInit) => {
+  if (path.endsWith('/auth/status')) return reply(status)
+  if (path.endsWith('/session')) return reply(session)
+  if (path.endsWith('/cancel')) { expect(options?.headers).toMatchObject({ 'X-CSRF-Token': 'fixture' }); canceled = true; return reply({ status: 'canceled' }) }
+  if (path.includes('/logs')) return reply({ detail: '日志权限已失效' }, 403)
+  return reply({ run: { ...detailRun, status: canceled ? 'canceled' : 'running' }, jobs: [{ ...detailJob, status: canceled ? 'canceled' : 'running' }] })
+ }))
+ mount(`/projects/${id}/runs/${otherID}`)
+ fireEvent.click(await screen.findByRole('button', { name: '取消运行' }))
+ expect(await screen.findByText('已取消')).toBeInTheDocument()
+ expect(await screen.findByRole('alert')).toHaveTextContent('日志权限已失效')
+ expect(screen.queryByLabelText('任务日志')).not.toBeInTheDocument()
 })

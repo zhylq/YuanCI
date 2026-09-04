@@ -1056,3 +1056,17 @@ the batch outcome and remaining work.
 - 18 focused React tests, TypeScript, focused ESLint and related GitHub,
   automation and encrypted-secret API tests passed. No full frontend build or
   full repository suite was run for this ordinary task.
+
+## 2026-09-04 — UIA-02 Run details, live logs and actions
+
+- Added project/session-scoped Run/Job/step detail and ordered log-read APIs.
+  Logs page at 16 chunks, enforce Job ownership and retention, and exclude
+  lease credentials. Detail reads do not duplicate the full compiled plan.
+- Added Run source/config identity, stage/Job/step inspection, live incremental
+  UTF-8 log viewing with bounded browser retention, cancellation, full rerun
+  and failed-Job rerun. Retried rerun requests retain their idempotency UUID.
+  Permission/read errors hide stale data; reused successes are explicitly shown.
+- 11 focused React tests, TypeScript, focused lint, and affected backend Linux
+  race/vet checks passed. Real browser checks at 375px and 1440px showed no
+  horizontal overflow; keyboard Enter expanded native step details.
+  No full repository suite was run for this ordinary task.

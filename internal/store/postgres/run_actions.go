@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/yuanci/yuanci/internal/authorization"
@@ -32,6 +34,91 @@ func lockAuthorizedRun(ctx context.Context, tx pgx.Tx, token string, projectID, 
 		return session, runmodel.Record{}, err
 	}
 	return session, records[0], nil
+}
+
+func (s *Store) GetAuthorizedRun(ctx context.Context, token string, projectID, runID uuid.UUID) (runmodel.Detail, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return runmodel.Detail{}, err
+	}
+	defer tx.Rollback(ctx)
+	_, record, err := lockAuthorizedRun(ctx, tx, token, projectID, runID, authorization.RunRead)
+	if err != nil {
+		return runmodel.Detail{}, err
+	}
+	// Job details carry the execution specs; avoid duplicating the full plan.
+	record.Plan = nil
+	detail := runmodel.Detail{Run: record, Jobs: []runmodel.JobDetail{}}
+	rows, err := tx.Query(ctx, `SELECT id,stage_name,job_name,status,spec,started_at,finished_at,reused_from_job_id FROM jobs WHERE run_id=$1 ORDER BY created_at,id LIMIT 1025`, runID)
+	if err != nil {
+		return detail, err
+	}
+	for rows.Next() {
+		var job runmodel.JobDetail
+		var spec []byte
+		if err := rows.Scan(&job.ID, &job.StageName, &job.JobName, &job.Status, &spec, &job.StartedAt, &job.FinishedAt, &job.ReusedFrom); err != nil {
+			rows.Close()
+			return detail, err
+		}
+		if err := json.Unmarshal(spec, &job.Spec); err != nil {
+			rows.Close()
+			return detail, err
+		}
+		detail.Jobs = append(detail.Jobs, job)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return detail, err
+	}
+	if len(detail.Jobs) > 1024 {
+		return runmodel.Detail{}, errors.New("Run detail limit exceeded")
+	}
+	return detail, tx.Commit(ctx)
+}
+
+func (s *Store) ReadAuthorizedLogs(ctx context.Context, token string, projectID, runID, jobID uuid.UUID, after int64) (runmodel.LogPage, error) {
+	page := runmodel.LogPage{Items: []runmodel.LogChunk{}, NextSequence: after}
+	if after < 0 || after > runmodel.MaxJobLogChunks {
+		return page, runmodel.ErrInvalidLogChunk
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return page, err
+	}
+	defer tx.Rollback(ctx)
+	if _, _, err := lockAuthorizedRun(ctx, tx, token, projectID, runID, authorization.RunRead); err != nil {
+		return page, err
+	}
+	err = tx.QueryRow(ctx, `SELECT COALESCE(log.expires_at,job.created_at+interval '7 days')<=clock_timestamp() FROM jobs job LEFT JOIN job_log_streams log ON log.job_id=job.id WHERE job.id=$1 AND job.run_id=$2`, jobID, runID).Scan(&page.Expired)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return page, authorization.ErrForbidden
+	}
+	if err != nil {
+		return page, err
+	}
+	if page.Expired {
+		return page, tx.Commit(ctx)
+	}
+	rows, err := tx.Query(ctx, `SELECT sequence,step_index,stream,data,truncated FROM job_log_chunks WHERE job_id=$1 AND sequence>$2 ORDER BY sequence LIMIT 16`, jobID, after)
+	if err != nil {
+		return page, err
+	}
+	for rows.Next() {
+		var c runmodel.LogChunk
+		if err := rows.Scan(&c.Sequence, &c.Step, &c.Stream, &c.Data, &c.Truncated); err != nil {
+			rows.Close()
+			return page, err
+		}
+		page.Items = append(page.Items, c)
+		page.NextSequence = c.Sequence
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return page, err
+	}
+	return page, tx.Commit(ctx)
 }
 
 func (s *Store) CancelAuthorizedRun(ctx context.Context, token string, projectID, runID uuid.UUID) (runmodel.Status, error) {
