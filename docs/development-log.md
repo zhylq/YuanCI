@@ -1002,3 +1002,16 @@ the batch outcome and remaining work.
   lost acknowledgement, replay identity, old acknowledgement, truncation and
   cancellation. Affected Runner/gRPC/protocol packages passed Linux race tests
   and vet. No full repository suite or deployment build was run.
+
+## 2026-09-04 — LOG-03 streaming credential redaction
+
+- Added bounded per-pipe streaming redaction with split-write matching, longest
+  prefix handling, conservative EOF-prefix suppression, and buffer clearing.
+  Checkout credentials and common URL/base64 forms are captured before checkout
+  clears its token, and filtered before transport or local output.
+- Disabled Docker's raw log driver for checkout and user-step containers so
+  daemon log files cannot bypass the redaction boundary.
+- Split-boundary/property seeds, 6,841 fuzz executions, and injected Docker
+  stdout/stderr leak checks passed. The Runner package race run exposed only
+  a too-short helper-process test deadline; its 20-second focused rerun passed.
+  Runner package tests and vet passed. No full-suite phase gate was run.

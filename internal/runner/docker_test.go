@@ -155,6 +155,10 @@ func TestDockerHelperProcess(t *testing.T) {
 	_, _ = file.WriteString(strings.Join(arguments[1:], " ") + "\n")
 	_ = file.Close()
 	joined := strings.Join(arguments[1:], " ")
+	if len(arguments) > 1 && arguments[1] == "run" && os.Getenv("DOCKER_HELPER_REDACTION") == "1" {
+		_, _ = os.Stdout.WriteString("before synthetic-log-secret after\n")
+		_, _ = os.Stderr.WriteString("stderr synthetic-log-secret\n")
+	}
 	if strings.Contains(joined, "-checkout") && os.Getenv("DOCKER_HELPER_FAIL_CHECKOUT") == "1" {
 		os.Exit(42)
 	}

@@ -38,7 +38,26 @@ func (e *DockerExecutor) Check(ctx context.Context) error {
 	return nil
 }
 
-func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipeline.PlanJob, source *localSource) error {
+func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipeline.PlanJob, source *localSource) (result error) {
+	values := checkoutRedactionValues(source)
+	defer func() {
+		for _, value := range values {
+			clear(value)
+		}
+	}()
+	stdout, err := newRedactingWriter(e.Stdout, values)
+	if err != nil {
+		return err
+	}
+	stderr, err := newRedactingWriter(e.Stderr, values)
+	if err != nil {
+		stdout.destroy()
+		return err
+	}
+	defer func() { result = errors.Join(result, stdout.Close(), stderr.Close()) }()
+	local := *e
+	e = &local
+	e.Stdout, e.Stderr = stdout, stderr
 	if source != nil {
 		defer clear(source.credential)
 	}
@@ -89,8 +108,12 @@ func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipe
 		}
 		args := buildDockerArgs(volume, network, jobID, index, image, spec, step)
 		command := e.commandFor(stepCtx, e.Binary, args...)
-		command.Stdout, command.Stderr = jobLogWriters(stepCtx, index, e.Stdout, e.Stderr)
+		out, errOut := jobLogWriters(stepCtx, index, e.Stdout, e.Stderr)
+		stepOut, _ := newRedactingWriter(out, values)
+		stepErr, _ := newRedactingWriter(errOut, values)
+		command.Stdout, command.Stderr = stepOut, stepErr
 		err := command.Run()
+		err = errors.Join(err, stepOut.Close(), stepErr.Close())
 		cancel()
 		if err != nil {
 			return fmt.Errorf("step %q failed: %w", step.Name, err)
@@ -114,7 +137,7 @@ func (e *DockerExecutor) checkout(ctx context.Context, jobID uuid.UUID, volume, 
 
 func buildDockerArgs(volume, network string, jobID uuid.UUID, index int, image string, job pipeline.PlanJob, step pipeline.Step) []string {
 	name := dockerContainerName(jobID, index)
-	args := []string{"run", "--rm", "--name", name, "--network", network, "--cap-drop", "ALL",
+	args := []string{"run", "--rm", "--name", name, "--network", network, "--log-driver", "none", "--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges", "--pids-limit", "256", "--read-only",
 		"--tmpfs", "/tmp:rw,nosuid,size=536870912", "--volume", volume + ":/workspace",
 		"--workdir", defaultString(step.WorkingDir, "/workspace"), "--env", "HOME=/tmp"}
