@@ -45,7 +45,7 @@ func giteeSnapshot(ctx context.Context, tx pgx.Tx, actor settingsActor) (gitee.S
 	if len(snap.Subjects) == 0 {
 		return snap, scm.ErrUnauthorized
 	}
-	grant, err := giteeGrantRow(tx.QueryRow(ctx, `SELECT `+giteeGrantColumns+` FROM gitee_authorizations WHERE user_id=$1`, snap.UserID))
+	grant, err := giteeGrantRow(tx.QueryRow(ctx, `SELECT `+giteeGrantColumns+` FROM gitee_authorizations WHERE user_id=$1 FOR UPDATE`, snap.UserID))
 	if err == nil {
 		snap.Grant = &grant
 	} else if !errors.Is(err, gitee.ErrStale) {

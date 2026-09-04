@@ -1277,3 +1277,14 @@ the batch outcome and remaining work.
 - Gitee client and affected PostgreSQL race suites passed. Tests cover browser
   binding/replay, ciphertext isolation, renewal/replacement races, rate limits,
   crash recovery, revocation and additive migration. Next: GE-01F.
+
+## 2026-09-04 — GE-01F repository discovery/import core
+
+- Checked Gitee's official v5 Swagger contract for repository paths, namespace
+  identity, permission and pagination. Added bounded discovery and per-selection
+  administrator rechecks, with exact ID/owner/path validation before import.
+- Gitee namespace/project identities are isolated from GitHub. Imports pin the
+  authorization revision and never adopt/move an existing differently-bound
+  project. Grant row locking closes renewal/revocation races during persistence.
+- Focused Gitee/provider/PostgreSQL race and migration tests passed. This is
+  the independently testable repository core; GE-01F HTTP/UI wiring follows.

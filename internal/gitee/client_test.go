@@ -72,3 +72,26 @@ func TestOAuthRejectsScopeAndRateAndRedirect(t *testing.T) {
 		t.Fatal("followed redirect")
 	}
 }
+
+func TestRepositoryIdentityAndPermissionContract(t *testing.T) {
+	c := NewClient()
+	c.http.Transport = transport(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("Authorization") != "Bearer access" || r.URL.Query().Has("access_token") {
+			t.Fatal("incorrect credential transport")
+		}
+		return response(r, 200, `{"id":42,"path":"repo","namespace":{"id":7,"path":"owner"},"private":true,"default_branch":"main","html_url":"https://gitee.com/owner/repo","permission":{"admin":true}}`), nil
+	})
+	repo, err := c.Repository(t.Context(), "access", "owner", "repo")
+	if err != nil || repo.ID != "42" || repo.AccountID != "7" || !repo.Private {
+		t.Fatalf("repo=%+v err=%v", repo, err)
+	}
+	if _, err := c.Repository(t.Context(), "access", "other", "repo"); err == nil {
+		t.Fatal("repository identity substitution")
+	}
+	c.http.Transport = transport(func(r *http.Request) (*http.Response, error) {
+		return response(r, 200, `{"id":42,"path":"repo","namespace":{"id":7,"path":"owner"},"default_branch":"main","html_url":"https://gitee.com/owner/repo","permission":{"push":true}}`), nil
+	})
+	if _, err := c.Repository(t.Context(), "access", "owner", "repo"); !errors.Is(err, scm.ErrUnauthorized) {
+		t.Fatalf("non-admin accepted: %v", err)
+	}
+}

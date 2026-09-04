@@ -209,3 +209,44 @@ func TestGiteeRefreshRateAndCrashRecovery(t *testing.T) {
 		})
 	}
 }
+
+func (p *giteeProviderFixture) Repositories(context.Context, string, int) (gitee.RepositoryPage, error) {
+	return gitee.RepositoryPage{Items: []gitee.Repository{{ID: "42", AccountID: "7", Owner: "fixture", Name: "repo", DefaultBranch: "main", Private: true}}}, nil
+}
+func (p *giteeProviderFixture) Repository(context.Context, string, string, string) (gitee.Repository, error) {
+	return gitee.Repository{ID: "42", AccountID: "7", Owner: "fixture", Name: "repo", DefaultBranch: "main", Private: true}, nil
+}
+func TestGiteeRepositoryImportBindingAndRevocation(t *testing.T) {
+	s, service, session, _ := giteeFixture(t)
+	grant := authorizeGitee(t, s, service, session.Token)
+	selected := []gitee.Selection{{ID: "42", Owner: "fixture", Name: "repo"}}
+	imported, err := service.Import(t.Context(), session.Token, selected)
+	if err != nil || len(imported) != 1 || !imported[0].Created {
+		t.Fatalf("import: %v", err)
+	}
+	again, err := service.Import(t.Context(), session.Token, selected)
+	if err != nil || again[0].ID != imported[0].ID || again[0].Created {
+		t.Fatal("import not idempotent")
+	}
+	var provider, instance, clone string
+	var auth uuid.UUID
+	if err := s.pool.QueryRow(t.Context(), `SELECT provider,provider_instance,clone_url,gitee_authorization_id FROM repositories WHERE id=$1`, imported[0].ID).Scan(&provider, &instance, &clone, &auth); err != nil {
+		t.Fatal(err)
+	}
+	if provider != "gitee" || instance != identity.GiteeInstance || clone != "https://gitee.com/fixture/repo.git" || auth != grant.ID {
+		t.Fatal("wrong repository binding")
+	}
+	selected[0].ID = "99"
+	if _, err := service.Import(t.Context(), session.Token, selected); err == nil {
+		t.Fatal("ID substitution accepted")
+	}
+	if _, err := service.Import(t.Context(), identity.NewToken(), selected); err == nil {
+		t.Fatal("unrelated session imported repository")
+	}
+	if err := s.RevokeGiteeGrant(t.Context(), session.Token); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CheckGiteeContext(t.Context(), session.Token, grant.ID, grant.Revision); err == nil {
+		t.Fatal("revoked discovery proof accepted")
+	}
+}
