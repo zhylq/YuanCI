@@ -1229,3 +1229,15 @@ the batch outcome and remaining work.
   disposable isolated test database. The upgrade test proves legacy GitHub
   ciphertext still opens with its original AAD. No phase-gate full suite was
   run. Next task: GE-01B.
+
+## 2026-09-04 — GE-01B Gitee OAuth client
+
+- Implemented bounded, redirect-refusing confidential authorization-code login
+  with Gitee identity validation, least-privilege user_info scope and redacted
+  authentication/rate-limit errors. Tokens travel in request bodies/headers.
+- Checked the official OAuth documentation and its rendered source. Gitee does
+  not document PKCE there; login relies on the existing single-use state and
+  browser binding, with no blind code-exchange retry. Real Gitee confirmation
+  of header authentication remains part of GE-04.
+- Focused identity race tests passed, including redirects, malformed/oversized
+  replies, scope/expiry rejection and secret-safe errors. Next: GE-01C.
