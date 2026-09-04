@@ -95,3 +95,17 @@ func TestRepositoryIdentityAndPermissionContract(t *testing.T) {
 		t.Fatalf("non-admin accepted: %v", err)
 	}
 }
+
+func TestRepositoriesSkipEmptyRepositories(t *testing.T) {
+	c := NewClient()
+	c.http.Transport = transport(func(r *http.Request) (*http.Response, error) {
+		return response(r, 200, `[
+{"id":41,"path":"empty","namespace":{"id":7,"path":"owner"},"html_url":"https://gitee.com/owner/empty","permission":{"admin":true}},
+{"id":42,"path":"ready","namespace":{"id":7,"path":"owner"},"default_branch":"main","html_url":"https://gitee.com/owner/ready","permission":{"admin":true}}
+]`), nil
+	})
+	page, err := c.Repositories(t.Context(), "access", 1)
+	if err != nil || len(page.Items) != 1 || page.Items[0].Name != "ready" {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+}

@@ -83,7 +83,7 @@ func (c *Client) Repositories(ctx context.Context, token string, page int) (Repo
 	}
 	result := RepositoryPage{Items: []Repository{}}
 	for _, raw := range reply {
-		if !raw.Permission.Admin {
+		if !raw.Permission.Admin || raw.Branch == "" {
 			continue
 		}
 		repo, err := raw.normalized()

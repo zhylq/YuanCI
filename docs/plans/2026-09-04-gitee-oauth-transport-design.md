@@ -22,3 +22,10 @@ Runs contract tests assert the parameter is present and the Authorization
 header is absent. Deployment verification will use the existing authorized
 Gitee grant and the operator's repository-settings page; it does not inspect
 or export the OAuth token.
+
+## Empty repositories
+
+Gitee represents a repository without a first commit with an empty
+`default_branch`. Repository discovery skips only that incomplete repository,
+because it cannot be a pipeline source yet; it continues to return valid,
+admin-accessible repositories. Direct import validation remains strict.

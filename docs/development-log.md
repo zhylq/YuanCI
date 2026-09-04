@@ -1489,3 +1489,7 @@ the batch outcome and remaining work.
   capabilities are unchanged; tokens remain excluded from logs and all browser
   and Runner-facing data. Focused client and status contract tests cover the
   transport representation.
+- Gitee reports an empty repository without `default_branch`. Repository
+  discovery now skips only those not-yet-initialized repositories rather than
+  failing the complete page; importing an incomplete repository remains
+  disallowed. A focused regression covers a mixed empty and ready response.
