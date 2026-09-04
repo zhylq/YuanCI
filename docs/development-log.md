@@ -1264,3 +1264,16 @@ the batch outcome and remaining work.
 - Nine focused React tests, TypeScript and focused ESLint passed, covering
   Gitee-only setup/login, secret clearing, access denial and form accessibility.
   Embedded output will be rebuilt at GE-04. Next: GE-01E.
+
+## 2026-09-04 — GE-01E Gitee repository authorization lifecycle
+
+- Added separate projects/user_info authorization with user/config-bound flows
+  and envelope-encrypted grants. Access remains control-plane-only, checked
+  against live administrator, external identity and login configuration.
+- PostgreSQL refresh claims serialize rotation; revision checks protect newer
+  authorization from an old in-flight refresh. Rate limits persist a retry
+  deadline; ambiguous failures/crashes revoke local material and require fresh
+  authorization. Local revocation erases encrypted token material.
+- Gitee client and affected PostgreSQL race suites passed. Tests cover browser
+  binding/replay, ciphertext isolation, renewal/replacement races, rate limits,
+  crash recovery, revocation and additive migration. Next: GE-01F.
