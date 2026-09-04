@@ -1401,3 +1401,19 @@ the batch outcome and remaining work.
   Grant revocation prevents subsequent status writes. Server/HTTP tests passed.
 - GE-03 implementation complete. Next GE-04: repository-wide gate, deployment
   image checks, and operator-owned real Gitee OAuth/Git/Checks acceptance.
+
+## 2026-09-04 — GE-04 local verification; real acceptance pending
+
+- Full repository Go race tests (with disposable PostgreSQL) and `go vet` passed.
+  Frontend: 8 files / 33 tests, lint and build passed; embedded console rebuilt
+  without reading generated bundles. Four Compose profiles validated; server
+  and Runner deployment images built successfully without changing deployments.
+- Fixed the Check Runs details link to the actual project/Run route; focused
+  Gitee status and PostgreSQL lifecycle regression tests passed afterward.
+- Added the real sandbox checklist and explicit distinctions between fake Git,
+  shared lifecycle, Docker boundary and real Gitee provider evidence. The supplied
+  account name alone does not establish a selected private repository, a YuanCI
+  instance or completed authorization. No provider secrets were requested in chat.
+- GE-04 and the four-SCM gate remain OPEN. Next exact task: GE-04 real Gitee
+  acceptance after the operator supplies the private repository URL, YuanCI URL
+  and authorization status. Remote CI is reported separately for the final SHA.

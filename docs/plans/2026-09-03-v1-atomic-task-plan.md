@@ -155,4 +155,7 @@ for `SRC-07`, `E2E-GH-01`, `ART-03`, `SEC-05`, `GE-04`, `EDIT-05`, `CD-10`,
 `go vet`, frontend tests/build when applicable, Compose validation, and only the
 deployment-image builds relevant to that gate.
 
-The next task is `GH-01`.
+Current user-authorized Gitee workstream (2026-09-04): GE-01 through GE-03 are
+implemented; next is `GE-04` operator-owned real sandbox acceptance. Local
+verification alone does not close GE-04 or the four-SCM gate. See
+[Gitee acceptance evidence/checklist](../integrations/gitee-e2e.md).

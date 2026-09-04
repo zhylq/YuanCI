@@ -28,7 +28,7 @@ func (p *giteeProviderFixture) Commit(context.Context, string, gitee.Repository,
 	return strings.Repeat("a", 40), nil
 }
 func (p *giteeProviderFixture) DeliverCheck(_ context.Context, token string, repo gitee.Repository, item commitstatus.Item, target string) error {
-	if token == "" || repo.ID != "42" || item.RunID == uuid.Nil || item.CommitSHA != strings.Repeat("a", 40) || !strings.HasSuffix(target, "/runs/"+item.RunID.String()) {
+	if token == "" || repo.ID != "42" || item.RunID == uuid.Nil || item.CommitSHA != strings.Repeat("a", 40) || !strings.HasSuffix(target, "/projects/"+item.RepositoryID.String()+"/runs/"+item.RunID.String()) {
 		return commitstatus.ErrInvalid
 	}
 	return nil

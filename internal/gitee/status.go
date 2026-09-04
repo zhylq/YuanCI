@@ -52,7 +52,7 @@ func (s *Service) Deliver(ctx context.Context, item commitstatus.Item) error {
 	if remote.ID != binding.ID || remote.AccountID != binding.AccountID {
 		return ErrStale
 	}
-	return provider.DeliverCheck(ctx, string(token), binding.Repository, item, s.Origin+"/runs/"+item.RunID.String())
+	return provider.DeliverCheck(ctx, string(token), binding.Repository, item, s.Origin+"/projects/"+binding.ProjectID.String()+"/runs/"+item.RunID.String())
 }
 
 type checkRun struct {
