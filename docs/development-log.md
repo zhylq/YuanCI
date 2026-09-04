@@ -1309,3 +1309,15 @@ the batch outcome and remaining work.
   import identity/CSRF payloads and denied-access controls are covered. GE-01A
   through GE-01F are implemented; real-provider evidence belongs to GE-04.
 - Next: GE-02 webhook trust, normalization and immutable configuration.
+
+## 2026-09-04 — GE-02 Gitee event and immutable-file contract
+
+- Verified official webhook headers/payloads and v5 contents API. Added explicit
+  HTTPS password-mode authentication, bounded timestamp checks, deterministic
+  semantic delivery IDs, repository binding and fork classification. The
+  timestamp-only signature mode is not accepted as payload authentication.
+- Added provider-side current-ref/PR identity verification and file reads pinned
+  to exact 40-hex commits with bounded base64/content validation. Webhook URLs,
+  passwords and raw payloads are excluded from normalized events.
+- Focused Gitee race tests passed. Durable inbox/automation wiring follows
+  within GE-02; no real-provider gate is claimed.
