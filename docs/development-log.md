@@ -975,3 +975,16 @@ the batch outcome and remaining work.
   and expiry sweep; worker tests cover the provider-success crash window,
   rate-limit retry, dead letters and lifecycle shutdown. Affected package tests,
   vet and `git diff --check` passed. STAT-04 is not a phase gate.
+
+## 2026-09-04 — LOG-01 bounded persistent job logs
+
+- Added the PostgreSQL log storage contract: Job-wide ordered 32 KiB chunks,
+  a 16 MiB/8192-chunk ceiling, stdout/stderr and step metadata, an explicit
+  truncation marker, and seven-day retention with cascading chunk deletion.
+- Appends serialize with Job lease transitions, authenticate Runner and live
+  lease, reject gaps/conflicting replays, and acknowledge exact duplicates.
+  Tokens never enter persistent log metadata.
+- PostgreSQL 17 migration/concurrency tests and model boundary tests passed.
+  Affected run/PostgreSQL package tests exposed two fixed migration-count
+  assertions; both were updated and their focused rerun passed. Focused vet
+  and diff checks passed. LOG-01 is not a full-suite phase gate.
