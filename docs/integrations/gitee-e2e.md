@@ -21,35 +21,39 @@ examples only after DNS and TLS are assigned to the new hostname.
 ### Current cloud sandbox handoff (2026-09-04)
 
 The isolated `yuanci-gitee-sandbox` Stack is running on the existing cloud host
-with the verified `d1c2b1e` Server and Runner images. Its local readiness and
-uninitialized managed-auth status passed on `127.0.0.1:8083`. Its configured
-origin is `https://gitee-ci.uyii.cn`; it deliberately has distinct Docker
-volumes, database, master key, PKI and Runner identity from `ci.uyii.cn`.
+with the verified `d1c2b1e` Server and Runner images. Its local readiness,
+public readiness and uninitialized managed-auth status passed. It deliberately
+has distinct Docker volumes, database, master key, PKI and Runner identity from
+the retained legacy GitHub stack.
 
-Before public OAuth setup, a host/DNS administrator must complete these two
-external changes (the deployment SSH account has no root or DNS authority):
-
-1. Point the `A`/`AAAA` records for `gitee-ci.uyii.cn` to the cloud host that
-   currently serves `ci.uyii.cn` (`117.72.110.61`). It currently resolves to a
-   different address, so Gitee callbacks would not reach YuanCI.
-2. Install the rendered version of `deploy/nginx.gitee-sandbox.conf.example`
-   in the root-owned Nginx `conf.d` directory, replacing the example hostname
-   with `gitee-ci.uyii.cn` and `wildcard.pem`/`wildcard.key` with the existing
-   `_.uyii.cn.pem`/`_.uyii.cn.key` certificate pair. Run `nginx -t` and reload
-   only if syntax validation passes. The existing wildcard certificate is the
-   intended TLS asset; do not copy private keys or configuration secrets here.
-
-After DNS propagates, verify `https://gitee-ci.uyii.cn/readyz`, then configure
-the third-party application with this exact callback URL:
+The operator selected the existing `ci.uyii.cn` hostname for this Gitee stack,
+so no DNS or root-owned Nginx file change is pending. Configure the third-party
+application with this exact callback URL:
 
 ```
-https://gitee-ci.uyii.cn/api/v1/auth/gitee/callback
+https://ci.uyii.cn/api/v1/auth/gitee/callback
 ```
 
-Open `https://gitee-ci.uyii.cn/setup`, use a freshly issued one-time setup code
+Open `https://ci.uyii.cn/setup`, use a freshly issued one-time setup code
 from the isolated Stack, choose Gitee, and enter Client ID, Client Secret and
 the first administrator's immutable numeric Gitee user ID. Do not provide the
 secret or setup code in chat.
+
+### Reusing an existing CI hostname
+
+If an operator explicitly retires GitHub testing for now, the existing CI
+hostname can point at this isolated Gitee stack without rewriting the legacy
+GitHub database. Stop only the legacy Server and Runner, keep its volumes and
+Compose directory for rollback, then apply
+`deploy/compose.gitee-ci-domain.override.yml` to the Gitee Stack. It gives the
+new Server the legacy Nginx upstream alias. Update `YUANCI_PUBLIC_ORIGIN` in
+the Gitee Stack's protected environment to that existing HTTPS hostname and
+recreate the Gitee Server before reloading Nginx. This is a deliberate traffic
+cutover, not a provider conversion or database migration.
+
+On 2026-09-04 the operator chose this takeover for `ci.uyii.cn`: its public
+Nginx upstream now routes to the uninitialized Gitee stack and the legacy
+GitHub Server/Runner are stopped (their database and volumes remain retained).
 
 ## Deterministic evidence
 

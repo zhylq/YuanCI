@@ -1461,3 +1461,19 @@ the batch outcome and remaining work.
   same alias to the Server's default network, retaining the certificate name and
   avoiding any token/database reset. The corrected Stack is revalidated before
   OAuth setup proceeds.
+
+## 2026-09-04 — GE-04 Gitee default traffic cutover
+
+- Operator explicitly deferred GitHub testing and chose the existing
+  `ci.uyii.cn` hostname for Gitee. Stopped only the legacy GitHub Server and
+  Runner, leaving its PostgreSQL data, master key, PKI and Compose files intact
+  for rollback. Its database remains online but receives no public CI traffic.
+- Changed the separate Gitee stack's protected public origin to
+  `https://ci.uyii.cn`, applied the explicit legacy-Nginx-alias override, then
+  recreated only the Gitee Server and reloaded Nginx after a successful syntax
+  check. Public readiness and uninitialized managed-auth status passed; Gitee
+  Runner remains online with protocol v2.
+- The existing hostname is now ready for Gitee third-party OAuth setup with the
+  `/api/v1/auth/gitee/callback` callback. No provider secret, setup code, token
+  or legacy data was exposed. Real OAuth/repository/webhook/checkout/Checks
+  acceptance remains the GE-04 next step.

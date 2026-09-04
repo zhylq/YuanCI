@@ -1,0 +1,9 @@
+# Opt-in takeover for an existing ci.uyii.cn-style gateway. Apply only after
+# stopping the legacy Stack that owns this alias; its data remains untouched.
+services:
+  server:
+    networks:
+      edge:
+        aliases:
+          - gitee-sandbox-server
+          - yuanci-sandbox-server
