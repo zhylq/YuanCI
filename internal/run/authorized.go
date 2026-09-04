@@ -13,3 +13,7 @@ type AuthorizedStore interface {
 	CreateAuthorizedRun(context.Context, string, uuid.UUID, Record) (Record, error)
 	ListAuthorizedRuns(context.Context, string, uuid.UUID, int) ([]Record, error)
 }
+
+type CancellationStore interface {
+	CancelAuthorizedRun(context.Context, string, uuid.UUID, uuid.UUID) (Status, error)
+}

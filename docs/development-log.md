@@ -1015,3 +1015,17 @@ the batch outcome and remaining work.
   stdout/stderr leak checks passed. The Runner package race run exposed only
   a too-short helper-process test deadline; its 20-second focused rerun passed.
   Runner package tests and vet passed. No full-suite phase gate was run.
+
+## 2026-09-04 — RUN-01 authenticated Run cancellation
+
+- Added the CSRF-protected project-scoped Run cancellation endpoint. Session,
+  RunCancel permission, Run identity and session liveness are checked inside
+  the cancellation transaction; terminal replay preserves the original result.
+- Cancellation locks Run then Jobs, revokes every active lease, cancels queued
+  work, writes the terminal commit status and audit atomically. Existing Work
+  heartbeat rejection cancels the Runner context and bounded Docker cleanup;
+  disconnected Runners retain the existing lease-deadline termination bound.
+- HTTP authentication/origin/CSRF/RBAC, cross-project denial, cancellation versus
+  Runner completion, heartbeat cancellation and audit rollback tests passed.
+  Affected PostgreSQL, HTTP and run packages passed Linux race tests and vet.
+  No full repository suite was run.

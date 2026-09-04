@@ -83,6 +83,7 @@ func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend Browser
 	mux.HandleFunc("GET /api/v1/projects", a.browserAuth(a.listProjects))
 	mux.HandleFunc("GET /api/v1/projects/{projectID}", a.browserAuth(a.projectDetail))
 	mux.HandleFunc("GET /api/v1/projects/{projectID}/runs", a.browserAuth(a.projectRuns))
+	mux.HandleFunc("POST /api/v1/projects/{projectID}/runs/{runID}/cancel", a.browserAuth(a.cancelRun))
 	if a.automation != nil {
 		mux.HandleFunc("GET /api/v1/projects/{projectID}/automation", a.browserAuth(a.projectAutomation))
 		mux.HandleFunc("PUT /api/v1/projects/{projectID}/automation", a.browserAuth(a.updateProjectAutomation))
