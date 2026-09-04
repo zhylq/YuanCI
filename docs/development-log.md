@@ -1106,3 +1106,22 @@ the batch outcome and remaining work.
 - Next task ID: E2E-GH-02, to execute and record the checklist once the operator
   supplies the sandbox. CI-01 is the following development task, outside this
   request. E2E-GH-01 implementation commit: 46c65a5.
+
+## 2026-09-04 — E2E-GH-02 local deployment prerequisite
+
+- The operator identified localhost:8080 as the available instance. Inspection
+  found the August 26 Quickstart server image, without the new auth-status API,
+  and an obsolete shared-token Runner. This was not the current checkout.
+- Backed up the existing PostgreSQL database to a restricted, gitignored local
+  directory and validated the dump archive index before updating. No Jobs were
+  active. Built and deployed the current Quickstart Server/Runner and mTLS
+  initialization images from b436ab0, retaining the database volume. The HTTP
+  port now binds only to 127.0.0.1 as specified by the current Compose file.
+- Focused deployment checks passed: health/ready endpoints, system commit
+  b436ab0d4f9905f52856994ad52545ff4cdc1046, JSON authentication status, online
+  Runner heartbeat and preservation of both successful historical Jobs.
+  No full test suite was repeated; this changes deployment state, not code.
+- Authentication status is still evaluation/unconfigured. Do not expose this
+  Quickstart instance as the real GitHub sandbox. A separate managed instance
+  with a trusted, GitHub-reachable HTTPS origin and an operator-configured App
+  is still required. E2E-GH-02 remains open, with no real GitHub evidence.
