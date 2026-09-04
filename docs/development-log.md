@@ -1195,3 +1195,23 @@ the batch outcome and remaining work.
   setup. Requires an operator-provided working egress route or suitable test
   host; repeated fixed-IP substitutions are not treated as a durable fix.
   E2E-GH-02 remains incomplete and is still the next task ID.
+
+## 2026-09-04 — Gitee independent-login scope audit and atomic proposal
+
+- User reprioritized GE-01 through GE-04 and explicitly rejected GitHub as a
+  prerequisite for Gitee/Gitea customers. Focused source review confirmed
+  GitHub-only identity validation, login schema/crypto, bootstrap transactions,
+  HTTP routes and UI, plus App-specific repository authorization semantics.
+- Completing GE-01 as written would substantially exceed the approved atomic
+  file boundary. Applied the task-design stop-and-propose rule: recorded a
+  reviewable GE-01A through GE-01F split, preserving GitHub data and requiring
+  Gitee-only first initialization. No implementation task is marked complete;
+  the proposal awaits confirmation rather than silently changing the plan.
+- The proposal distinguishes login identity from repository access, prevents
+  automatic cross-provider administrator merging and leaves actual self-hosted
+  Gitea enablement to GT-01. Real Gitee evidence and the overall four-provider
+  gate remain separate; no credential, platform capability or successful
+  sandbox result was invented.
+- Documentation links/task dependencies and diff whitespace were checked. No
+  application changes, tests, migration execution, deployment or full suite
+  were performed. Proposed next task: GE-01A, subject to accepting the split.
