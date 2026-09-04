@@ -1070,3 +1070,20 @@ the batch outcome and remaining work.
   race/vet checks passed. Real browser checks at 375px and 1440px showed no
   horizontal overflow; keyboard Enter expanded native step details.
   No full repository suite was run for this ordinary task.
+
+## 2026-09-04 — E2E-GH-01 deterministic GitHub CI phase gate
+
+- Added a deterministic signed-webhook-to-final-status integration test using
+  PostgreSQL, immutable Git configuration/checkout, real mTLS Runner enrollment
+  and work transport, command execution, persisted redacted logs and cleanup.
+  Moving the branch cannot change the executed source. Duplicate deliveries
+  remain one receipt; checkout/status scopes and cleared secret buffers are
+  checked. GitHub API and Docker daemon boundaries use explicit test doubles;
+  this is not evidence of a real GitHub App or container isolation.
+- The focused Linux race E2E passed. The phase gate passed once: full isolated
+  Go race suite (23 packages), go vet, Node 24 frontend tests (28), lint/build,
+  all six Compose profiles, and Server/Runner deployment image builds.
+  Refreshed the tracked embedded console from that frontend build without
+  searching generated output. Added the reproducible test/boundary guide.
+- UIA-02 remote Verify passed at run 33825493622. Real sandbox acceptance remains
+  the separate operator-owned E2E-GH-02 gate.
