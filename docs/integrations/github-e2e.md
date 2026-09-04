@@ -35,7 +35,7 @@ Status on 2026-09-04: **DEPLOYED / AWAITING OPERATOR GITHUB APP SETUP**.
 The protected sandbox is available at `https://ci.uyii.cn`, with its dedicated
 Runner online. Managed authentication is not yet configured or initialized;
 the operator must redeem the setup code and authorize their GitHub App.
-The supplied `huiyuan1986` remains an unconfirmed GitHub owner, and the complete
+The operator confirmed GitHub user `zhylq` (numeric ID `55230820`); the complete
 test repository is still missing. No real App, webhook, private checkout or
 GitHub status result is claimed. Deployment readiness and repository Actions
 results do not satisfy the real acceptance gate.
@@ -66,6 +66,18 @@ results do not satisfy the real acceptance gate.
   The setup code and master-key backup are kept in restricted operator files,
   never in this repository. Codes expire after 15 minutes; an authorized
   operator can issue a replacement with `yuancictl setup-code` in the server.
+- First operator OAuth verification returned 502. The server could reach
+  `api.github.com`, but connections to the locally resolved `github.com`
+  address `20.205.243.166` repeatedly timed out. Alternate public DNS answers
+  `140.82.114.4` and `140.82.121.3` responded over verified HTTPS. A temporary
+  `extra_hosts` entry for `github.com:140.82.114.4` was applied only to the
+  sandbox server; the original hostname, TLS verification and host DNS remain
+  unchanged. The prior Compose file is saved as `compose.before-github-route.yml`.
+  GitHub login-page/API probes from the container and site readiness passed
+  after restart. This address is not a permanent DNS guarantee: remove the
+  override when normal resolution is reachable, or revalidate if it changes.
+  The consumed OAuth flow cannot be replayed; operator authorization must be
+  started again before login can be marked passed.
 
 ### Prerequisites and setup
 
@@ -164,7 +176,7 @@ stages:
 | Item | Evidence / observed result |
 | --- | --- |
 | Date / operator | Pending |
-| GitHub owner candidate | `huiyuan1986` (unconfirmed) |
+| GitHub administrator | `zhylq`, numeric ID `55230820` (operator-confirmed; public API verified) |
 | Protected origin / deployed SHA / image digests | `https://ci.uyii.cn`; b436ab0; image IDs above |
 | Exact private repository / repository ID | Pending |
 | App ID / installation ID / webhook version | Pending |

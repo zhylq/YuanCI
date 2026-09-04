@@ -1146,3 +1146,19 @@ the batch outcome and remaining work.
   plaintext credentials are excluded from Git and chat. Real GitHub App login,
   exact test repository and signed-webhook/checkout/status evidence are still
   pending. E2E-GH-02 remains the next task and the Alpha gate stays open.
+
+## 2026-09-04 — E2E-GH-02 OAuth connectivity recovery
+
+- Operator confirmed GitHub identity zhylq; public API numeric ID is 55230820.
+  Their first authorization callback returned the safe provider-unavailable
+  502. No plaintext secrets or authorization codes were requested or logged.
+- Reproduced repeated connection timeouts to the server's DNS answer for
+  github.com, while api.github.com remained reachable. Two alternate public
+  DNS answers responded with valid HTTPS; scoped a temporary address override
+  to the YuanCI server container, preserving TLS hostname verification and
+  existing host DNS/security configuration. Backed up Compose before editing.
+- Container GitHub login-page and API connectivity probes passed after restart;
+  Nginx syntax/reload and public readiness/auth-status checks also passed.
+  No application code or credentials changed, and no full suite was repeated.
+  Actual OAuth completion still needs a new operator authorization flow; the
+  failed flow was already consumed. E2E-GH-02 remains open.
