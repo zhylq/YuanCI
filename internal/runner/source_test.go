@@ -77,10 +77,26 @@ func FuzzValidateSourceDescriptor(f *testing.F) {
 	f.Fuzz(func(t *testing.T, provider, repositoryID, cloneURL, commitSHA string) {
 		source := &runnerv1.SourceCheckout{Provider: provider, RepositoryId: repositoryID, CloneUrl: cloneURL, CommitSha: commitSHA}
 		if validateSourceDescriptor(source) == nil {
+			if provider == "gitee" && validGiteeBrokerURL(cloneURL, repositoryID) {
+				return
+			}
 			if provider != "github" || cloneURL != "https://github.com/example/repository.git" &&
 				(strings.ContainsAny(cloneURL, "?#@\\\r\n\x00") || !strings.HasPrefix(cloneURL, "https://github.com/")) {
 				t.Fatalf("ambiguous source accepted: %#v", source)
 			}
 		}
 	})
+}
+
+func TestGiteeSourceRequiresCanonicalBroker(t *testing.T) {
+	source := &runnerv1.SourceCheckout{Provider: "gitee", RepositoryId: "42", CommitSha: strings.Repeat("a", 40), CloneUrl: "https://ci.test/api/v1/checkout/gitee/42.git"}
+	if validateSourceDescriptor(source) != nil {
+		t.Fatal("valid broker")
+	}
+	for _, target := range []string{"https://gitee.com/owner/repo.git", "http://ci.test/api/v1/checkout/gitee/42.git", "https://ci.test/api/v1/checkout/gitee/43.git", "https://user@ci.test/api/v1/checkout/gitee/42.git", "https://ci.test/api/v1/checkout/gitee/42.git?token=x", "https://ci.test/api/v1/checkout/gitee/%34%32.git"} {
+		source.CloneUrl = target
+		if validateSourceDescriptor(source) == nil {
+			t.Fatal("invalid broker accepted")
+		}
+	}
 }

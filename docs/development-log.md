@@ -1382,3 +1382,11 @@ the batch outcome and remaining work.
   HTTP backend. This proves the wire protocol, not Gitee OAuth Git acceptance.
 - PostgreSQL lease guards reject disabled Runners, inactive repositories, expired
   leases, wrong Job/source and completed Jobs. Runner/API wiring follows.
+
+## 2026-09-04 — GE-03 Runner broker capability support
+
+- Added lease-aware Gitee credential issuance to the existing authenticated
+  Runner protocol, preserving persisted SCM source metadata. Runner accepts only
+  canonical HTTPS broker routes and forces Git v0 for the guarded shallow fetch.
+- Runner and gRPC race suites passed, including Gitee source validation, scoped
+  issuer selection, credential cleanup and existing GitHub assignment regressions.

@@ -17,11 +17,26 @@ var (
 )
 
 func validateSourceDescriptor(source *runnerv1.SourceCheckout) error {
-	if source == nil || source.Provider != "github" || !validGitHubRepositoryID(source.RepositoryId) ||
-		!commitSHAPattern.MatchString(source.CommitSha) || !validGitHubCloneURL(source.CloneUrl) {
+	if source == nil || !validGitHubRepositoryID(source.RepositoryId) || !commitSHAPattern.MatchString(source.CommitSha) {
 		return errors.New("invalid Runner source descriptor")
 	}
-	return nil
+	if source.Provider == "github" && validGitHubCloneURL(source.CloneUrl) {
+		return nil
+	}
+	if source.Provider == "gitee" && validGiteeBrokerURL(source.CloneUrl, source.RepositoryId) {
+		return nil
+	}
+	return errors.New("invalid Runner source descriptor")
+}
+
+// Broker URLs come only from the authenticated control plane over Runner mTLS,
+// never from pipeline YAML or webhook URLs. The token is useless at Gitee itself.
+func validGiteeBrokerURL(value, repositoryID string) bool {
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return false
+	}
+	return u.Path == "/api/v1/checkout/gitee/"+repositoryID+".git" && value == "https://"+u.Host+u.Path
 }
 
 func validGitHubRepositoryID(value string) bool {

@@ -51,6 +51,7 @@ func buildCheckoutCommand(volume, network, helperName string, source *localSourc
 	hooksPath = /dev/null
 [protocol]
 	allow = never
+	version = 0
 [protocol "https"]
 	allow = always
 [submodule]

@@ -52,6 +52,10 @@ type CredentialIssuer interface {
 	IssueCheckoutCredential(context.Context, uuid.UUID, string) (githubapp.CheckoutCredential, error)
 }
 
+type AssignmentCredentialIssuer interface {
+	IssueAssignmentCredential(context.Context, uuid.UUID, *runmodel.Assignment) (githubapp.CheckoutCredential, error)
+}
+
 func NewServer(auth *runnerauth.Service, jobs runmodel.RunnerJobStore, rootPEM []byte, tlsConfig *tls.Config,
 	credentialIssuers ...CredentialIssuer) (*grpc.Server, error) {
 	if auth == nil || jobs == nil || len(rootPEM) == 0 || tlsConfig == nil || tlsConfig.MinVersion < tls.VersionTLS13 ||
@@ -307,10 +311,20 @@ func (server *Server) attachSourceCredential(ctx context.Context, runnerID uuid.
 		}
 		return status.Error(codes.Internal, "Runner assignment credential is unavailable")
 	}
-	if server.credentials == nil || source.Provider != "github" || source.RepositoryUUID == uuid.Nil {
+	if server.credentials == nil || (source.Provider != "github" && source.Provider != "gitee") || source.RepositoryUUID == uuid.Nil {
 		return fail(true)
 	}
-	credential, err := server.credentials.IssueCheckoutCredential(ctx, source.RepositoryUUID, source.RepositoryID)
+	var credential githubapp.CheckoutCredential
+	var err error
+	if source.Provider == "gitee" {
+		issuer, ok := server.credentials.(AssignmentCredentialIssuer)
+		if !ok {
+			return fail(true)
+		}
+		credential, err = issuer.IssueAssignmentCredential(ctx, runnerID, assignment)
+	} else {
+		credential, err = server.credentials.IssueCheckoutCredential(ctx, source.RepositoryUUID, source.RepositoryID)
+	}
 	defer clear(credential.Token)
 	if err != nil {
 		return fail(errors.Is(err, githubapp.ErrRepositoryUnavailable) || errors.Is(err, githubapp.ErrCredentialUnavailable))
@@ -321,6 +335,12 @@ func (server *Server) attachSourceCredential(ctx context.Context, runnerID uuid.
 	}
 	message.Source = &runnerv1.SourceCheckout{Provider: source.Provider, RepositoryId: source.RepositoryID,
 		CloneUrl: source.CloneURL, CommitSha: source.CommitSHA}
+	if source.Provider == "gitee" {
+		if credential.CloneURL == "" {
+			return fail(true)
+		}
+		message.Source.CloneUrl = credential.CloneURL
+	}
 	message.Credential = &runnerv1.EphemeralCredential{Token: append([]byte(nil), credential.Token...),
 		ExpiresAt: timestamppb.New(credential.ExpiresAt)}
 	return nil
