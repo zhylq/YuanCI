@@ -5,6 +5,12 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { AuthBoundary, LoginPage } from './auth-boundary'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+test('Gitee instance offers its own login without GitHub dependency', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ mode: 'managed', initialized: true, configured: true, provider: 'gitee' }))))
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><LoginPage /></MemoryRouter></QueryClientProvider>)
+  expect(await screen.findByRole('link', { name: '使用 Gitee 登录' })).toHaveAttribute('href', '/api/v1/auth/gitee/start')
+  expect(screen.queryByRole('link', { name: '使用 GitHub 登录' })).not.toBeInTheDocument()
+})
 test('anonymous authenticated mode navigates to login, not the dashboard', async () => {
   const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(path.endsWith('/auth/status') ? { mode: 'managed', initialized: true, configured: true } : { detail: 'no session' }), { status: path.endsWith('/session') ? 401 : 200 }))
   vi.stubGlobal('fetch', fetch)

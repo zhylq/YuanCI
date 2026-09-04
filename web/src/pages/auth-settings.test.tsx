@@ -15,6 +15,26 @@ function mount(setup = true) {
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
+test('Gitee setup selects its callback and saves without GitHub credentials', async () => {
+  const writes: Array<Record<string, unknown>> = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, options?: RequestInit) => {
+    if (path.endsWith('/auth/status')) return reply(status)
+    if (options?.method === 'POST') { writes.push(JSON.parse(String(options.body))); return reply({ candidate_id: 'fixture-id' }, 201) }
+    return reply({ ...baseSettings, callback_urls: { github: status.callback_url, gitee: 'https://ci.example.test/api/v1/auth/gitee/callback' } })
+  }))
+  mount()
+  fireEvent.change(await screen.findByLabelText('登录平台'), { target: { value: 'gitee' } })
+  expect(screen.getByLabelText('登录回调地址（Callback URL）')).toHaveValue('https://ci.example.test/api/v1/auth/gitee/callback')
+  expect(screen.getByRole('heading', { name: '创建 Gitee OAuth 应用' })).toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: 'gitee-client' } })
+  fireEvent.change(screen.getByLabelText('Client Secret'), { target: { value: 'private-test-secret-123456' } })
+  fireEvent.change(screen.getByLabelText('首次管理员 Gitee 数字 ID'), { target: { value: '100' } })
+  fireEvent.submit(screen.getByRole('form', { name: '填写应用信息' }))
+  await waitFor(() => expect(writes).toHaveLength(1))
+  expect(writes[0].provider).toBe('gitee')
+  expect(screen.getByLabelText('Client Secret')).toHaveValue('')
+})
+
 test('setup unlocks, saves encrypted candidate intent and clears secret without caching it', async () => {
   let unlocked = false
   let saved = false

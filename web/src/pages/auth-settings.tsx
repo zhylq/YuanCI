@@ -9,7 +9,7 @@ const fieldClass = 'mt-2 min-h-11 w-full rounded-md border border-slate-300 bg-w
 const githubDocs = 'https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app'
 const providers = [
   { name: 'GitHub', hint: 'GitHub.com · App 用户登录', href: githubDocs, supported: true },
-  { name: 'Gitee', hint: 'OAuth 应用 · 尚未接入', href: 'https://gitee.com/api/v5/oauth_doc', supported: false },
+  { name: 'Gitee', hint: 'Gitee.com · OAuth 独立登录', href: 'https://gitee.com/api/v5/oauth_doc', supported: true },
   { name: 'GitLab', hint: 'OAuth 应用 · 尚未接入', href: 'https://docs.gitlab.com/integration/oauth_provider/', supported: false },
   { name: 'Gitea', hint: '自托管 OAuth · 尚未接入', href: 'https://docs.gitea.com/development/oauth2-provider/', supported: false },
 ]
@@ -30,6 +30,9 @@ export function AuthSettingsPage({ setup = false }: { setup?: boolean }) {
   const status = useAuthStatus()
   const enabled = status.data?.mode === 'managed'
   const settings = useLoginSettings(setup, enabled)
+  const [selection, setSelection] = useState<string | null>(null)
+  const provider = settings.data?.active?.provider ?? selection ?? settings.data?.candidate?.provider ?? 'github'
+  const label = provider === 'gitee' ? 'Gitee' : 'GitHub'
   return <div className="space-y-7">
     <header className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-medium text-blue-700">{setup ? '首次初始化 · 仅部署管理员' : '设置 / 身份与访问'}</p><h1 className="mt-2 text-balance text-3xl font-semibold">{setup ? '为团队配置安全登录' : 'Git 平台设置'}</h1><p className="mt-3 max-w-3xl text-pretty leading-7 text-slate-600">应用由管理员创建一次，团队成员只需授权登录。密钥加密保存，验证通过后才启用。</p></div><span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-sm text-slate-600">开发预览</span></header>
     {setup ? <ol aria-label="初始化步骤" className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm sm:grid-cols-3"><li>1. 验证部署权限</li><li>2. 创建并配置应用</li><li>3. 授权验证与启用</li></ol> : null}
@@ -40,10 +43,10 @@ export function AuthSettingsPage({ setup = false }: { setup?: boolean }) {
           : settings.isError ? setup && settings.error instanceof ApiError && settings.error.status === 401 ? <UnlockSetup onUnlocked={() => void settings.refetch()} />
             : <section className="rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-balance text-xl font-semibold">无法读取设置</h2><p role="alert" className="mt-3 text-red-800">{errorMessage(settings.error)}</p><div className="mt-5 flex flex-wrap items-center gap-4"><button className={buttonClass} onClick={() => void settings.refetch()}>重试</button><Link to="/login" className={linkClass}>重新登录</Link></div></section>
           : settings.data ? <>
-            {settings.data.active ? <section className="rounded-xl border border-blue-200 bg-blue-50 p-5"><h2 className="text-balance text-lg font-semibold">GitHub 登录已启用</h2><p className="mt-2 break-all text-sm text-slate-700">Client ID：<code>{settings.data.active.client_id}</code></p><p className="mt-2 text-sm text-slate-700">Client Secret：已配置 · 不回显</p><p className="mt-3 text-pretty text-sm leading-6 text-slate-600">替换配置时，当前登录方式会一直保留到新版本验证成功。首次管理员身份不能在此修改。</p></section> : null}
-            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><AppInstructions callback={settings.data.callback_url} /></section>
+            {settings.data.active ? <section className="rounded-xl border border-blue-200 bg-blue-50 p-5"><h2 className="text-balance text-lg font-semibold">{label} 登录已启用</h2><p className="mt-2 break-all text-sm text-slate-700">Client ID：<code>{settings.data.active.client_id}</code></p><p className="mt-2 text-sm text-slate-700">Client Secret：已配置 · 不回显</p><p className="mt-3 text-pretty text-sm leading-6 text-slate-600">替换配置时，当前登录方式会一直保留到新版本验证成功。首次管理员身份不能在此修改。</p></section> : null}
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><label htmlFor="login-provider" className="text-sm font-semibold">登录平台</label><select id="login-provider" value={provider} disabled={Boolean(settings.data.active)} onChange={event => setSelection(event.target.value)} className={`${fieldClass} mb-5`}><option value="github">GitHub</option><option value="gitee">Gitee</option><option value="gitlab" disabled>GitLab（待接入）</option><option value="gitea" disabled>Gitea（待接入）</option></select><AppInstructions provider={provider} callback={settings.data.callback_urls?.[provider] ?? settings.data.callback_url.replace('/github/', `/${provider}/`)} /></section>
             {settings.data.candidate ? <VerifyCandidate settings={settings.data} setup={setup} /> : null}
-            <ConfigurationForm key={settings.data.candidate?.id ?? settings.data.active?.id ?? 'new'} settings={settings.data} setup={setup} onSaved={() => void settings.refetch()} />
+            <ConfigurationForm key={`${provider}:${settings.data.candidate?.id ?? settings.data.active?.id ?? 'new'}`} provider={provider} settings={settings.data} setup={setup} onSaved={() => void settings.refetch()} />
           </> : null}
       </div>
       <ProviderList />
@@ -70,12 +73,13 @@ function UnlockSetup({ onUnlocked }: { onUnlocked: () => void }) {
     </form></section>
 }
 
-function AppInstructions({ callback }: { callback: string }) {
+function AppInstructions({ callback, provider = 'github' }: { callback: string; provider?: string }) {
   const [copyState, setCopyState] = useState('')
   async function copy() {
     try { await navigator.clipboard.writeText(callback); setCopyState('回调地址已复制。') }
     catch { setCopyState('复制未完成，请手动选择上方地址并复制。') }
   }
+  if (provider === 'gitee') return <div><h2 className="text-balance text-xl font-semibold">创建 Gitee OAuth 应用</h2><ol className="mt-4 list-decimal space-y-3 pl-5 leading-7 text-slate-700"><li>在 Gitee 设置 → 第三方应用中创建应用，填写本实例 HTTPS 地址。<a href="https://gitee.com/api/v5/oauth_doc" className={linkClass} target="_blank" rel="noreferrer">查看创建教程</a></li><li>登录权限选择 user_info，仓库授权将在仓库设置中单独完成。</li><li>填写 Client ID、Client Secret 和首次管理员的 Gitee 数字 ID。</li></ol><label htmlFor="callback-url" className="mt-5 block text-sm font-semibold">登录回调地址（Callback URL）</label><input id="callback-url" readOnly value={callback} className={fieldClass} /><button type="button" onClick={() => void copy()} className={`${buttonClass} mt-3`}>复制地址</button><p role="status" className="mt-2 text-sm text-slate-600">{copyState || '回调地址必须与 Gitee 应用配置完全一致。'}</p></div>
   return <div><h2 className="text-balance text-xl font-semibold">创建 GitHub App</h2><ol className="mt-4 list-decimal space-y-3 pl-5 text-pretty leading-7 text-slate-700">
     <li>进入 GitHub 的 Settings → Developer settings → GitHub Apps，创建由你或组织持有的应用。<a href={githubDocs} className={`${linkClass} ml-1`} target="_blank" rel="noreferrer">查看创建教程</a></li>
     <li>Homepage URL 填写本实例的 HTTPS 地址；Callback URL 使用下方地址，不要填写 Webhook URL。</li>
@@ -84,11 +88,13 @@ function AppInstructions({ callback }: { callback: string }) {
   </ol>{callback ? <div className="mt-5 rounded-lg bg-slate-50 p-4"><label htmlFor="callback-url" className="text-sm font-semibold">登录回调地址（Callback URL）</label><div className="mt-2 flex flex-col gap-2 sm:flex-row"><input id="callback-url" value={callback} readOnly className="min-h-11 min-w-0 flex-1 rounded border border-slate-300 bg-white px-3 font-mono text-sm" /><button type="button" onClick={() => void copy()} className={buttonClass}>复制地址</button></div><p role="status" className="mt-2 text-sm text-slate-600">{copyState || '地址由部署配置确定，必须与 GitHub 中填写的内容完全一致。'}</p></div> : <p className="mt-4 rounded-lg bg-slate-100 p-4 text-sm leading-6 text-slate-700">启动受保护模式并配置 HTTPS Origin 后，此处会显示真实回调地址，不会生成不可用的示例地址。</p>}</div>
 }
 
-function ConfigurationForm({ settings, setup, onSaved }: { settings: LoginSettings; setup: boolean; onSaved: () => void }) {
+function ConfigurationForm({ settings, setup, onSaved, provider }: { settings: LoginSettings; setup: boolean; onSaved: () => void; provider: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [invalid, setInvalid] = useState<Record<string, string>>({})
-  const current = settings.candidate ?? settings.active
+  const existing = settings.candidate ?? settings.active
+  const current = (existing?.provider ?? 'github') === provider ? existing : null
+  const label = provider === 'gitee' ? 'Gitee' : 'GitHub'
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = event.currentTarget
@@ -106,7 +112,7 @@ function ConfigurationForm({ settings, setup, onSaved }: { settings: LoginSettin
     ;(form.elements.namedItem('client_secret') as HTMLInputElement).value = ''
     setBusy(true)
     try {
-      await post(setup ? '/api/v1/setup/settings' : '/api/v1/settings/auth/github', { client_id: clientID, client_secret: secret, bootstrap_subject: subject, expected_active: settings.active?.id ?? null }, settings.csrf_token)
+      await post(setup ? '/api/v1/setup/settings' : '/api/v1/settings/auth', { provider, client_id: clientID, client_secret: secret, bootstrap_subject: subject, expected_active: settings.active?.id ?? null }, settings.csrf_token)
       onSaved()
     } catch (error) { setError(errorMessage(error)) }
     finally { setBusy(false) }
@@ -115,7 +121,7 @@ function ConfigurationForm({ settings, setup, onSaved }: { settings: LoginSettin
     <form onSubmit={event => void save(event)} aria-labelledby="config-form-title" aria-busy={busy} noValidate className="mt-6 space-y-5"><fieldset disabled={busy} className="space-y-5">
       <ConfigField name="client_id" label="Client ID" defaultValue={current?.client_id} help="填写应用的 Client ID，不是 App ID。" error={invalid.client_id} />
       <ConfigField name="client_secret" label="Client Secret" secret help="密钥仅加密保存，提交后输入框会清空；失败重试时需要重新填写。" error={invalid.client_secret} />
-      <ConfigField name="bootstrap_subject" label="首次管理员 GitHub 数字 ID" defaultValue={current?.bootstrap_subject} readOnly={!setup} help={setup ? '例如通过 https://api.github.com/users/你的用户名 查看 id。只有此账号能完成首次授权。' : '首次管理员身份已固定，修改应用凭据不会转移或恢复管理员权限。'} error={invalid.bootstrap_subject} />
+      <ConfigField name="bootstrap_subject" label={`首次管理员 ${label} 数字 ID`} defaultValue={current?.bootstrap_subject} readOnly={!setup} help={setup ? `通过 ${provider === 'gitee' ? 'https://gitee.com/api/v5/users/' : 'https://api.github.com/users/'}你的用户名 查看 id。只有此账号能完成首次授权。` : '首次管理员身份已固定，修改应用凭据不会转移或恢复管理员权限。'} error={invalid.bootstrap_subject} />
       {error ? <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm leading-6 text-red-800">{error}</p> : null}
       <button className={buttonClass} disabled={busy}>{busy ? '正在加密保存…' : '保存待验证配置'}</button>
     </fieldset></form>
@@ -125,14 +131,15 @@ function ConfigField({ name, label, help, error, secret, defaultValue, readOnly 
   return <div><label htmlFor={name} className="text-sm font-semibold">{label}</label><input id={name} name={name} type={secret ? 'password' : 'text'} defaultValue={defaultValue ?? ''} required readOnly={readOnly} autoComplete={secret ? 'new-password' : 'off'} inputMode={name === 'bootstrap_subject' ? 'numeric' : undefined} maxLength={secret ? 4096 : name === 'bootstrap_subject' ? 19 : 128} className={fieldClass} aria-describedby={`${name}-help${error ? ` ${name}-error` : ''}`} aria-invalid={Boolean(error)} /><p id={`${name}-help`} className="mt-2 break-words text-sm leading-6 text-slate-600">{help}</p>{error ? <p id={`${name}-error`} role="alert" className="mt-1 text-sm text-red-800">{error}</p> : null}</div>
 }
 function VerifyCandidate({ settings, setup }: { settings: LoginSettings; setup: boolean }) {
+  const label = settings.candidate?.provider === 'gitee' ? 'Gitee' : 'GitHub'
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   async function verify() {
     setBusy(true); setError('')
     try {
-      const result = await post<{ authorization_url: string }>(setup ? '/api/v1/setup/verify' : '/api/v1/settings/auth/github/verify', { candidate_id: settings.candidate!.id }, settings.csrf_token)
+      const result = await post<{ authorization_url: string }>(setup ? '/api/v1/setup/verify' : '/api/v1/settings/auth/verify', { candidate_id: settings.candidate!.id }, settings.csrf_token)
       navigateToAuthorization(result.authorization_url)
     } catch (error) { setError(errorMessage(error)); setBusy(false) }
   }
-  return <section aria-labelledby="verify-title" className="rounded-xl border border-blue-300 bg-blue-50 p-6"><h2 id="verify-title" className="text-balance text-xl font-semibold">配置已保存，等待授权验证</h2><p className="mt-3 break-all text-sm text-slate-700">待验证 Client ID：<code>{settings.candidate!.client_id}</code></p><p className="mt-2 text-pretty text-sm leading-6 text-slate-700">{setup ? `请使用数字 ID 为 ${settings.candidate!.bootstrap_subject} 的 GitHub 账号授权。` : '请使用已绑定到当前管理员账号的 GitHub 身份授权。'} 验证成功后自动启用此版本；失败时保留现有登录配置。</p><p className="mt-2 text-sm text-slate-600">候选配置到期：<time className="tabular-nums" dateTime={settings.candidate!.expires_at}>{new Date(settings.candidate!.expires_at).toLocaleString()}</time></p><button className={`${buttonClass} mt-4`} onClick={() => void verify()} disabled={busy}>{busy ? '正在准备授权…' : '前往 GitHub 验证并启用'}</button>{error ? <p role="alert" className="mt-3 text-sm text-red-800">{error}</p> : null}<p className="mt-3 text-sm leading-6 text-slate-600">请在同一浏览器中完成，勿清除 Cookie 或同时开启多个授权流程。</p></section>
+  return <section aria-labelledby="verify-title" className="rounded-xl border border-blue-300 bg-blue-50 p-6"><h2 id="verify-title" className="text-balance text-xl font-semibold">配置已保存，等待授权验证</h2><p className="mt-3 break-all text-sm text-slate-700">待验证 Client ID：<code>{settings.candidate!.client_id}</code></p><p className="mt-2 text-pretty text-sm leading-6 text-slate-700">{setup ? `请使用数字 ID 为 ${settings.candidate!.bootstrap_subject} 的 ${label} 账号授权。` : `请使用已绑定到当前管理员账号的 ${label} 身份授权。`} 验证成功后自动启用此版本；失败时保留现有登录配置。</p><p className="mt-2 text-sm text-slate-600">候选配置到期：<time className="tabular-nums" dateTime={settings.candidate!.expires_at}>{new Date(settings.candidate!.expires_at).toLocaleString()}</time></p><button className={`${buttonClass} mt-4`} onClick={() => void verify()} disabled={busy}>{busy ? '正在准备授权…' : `前往 ${label} 验证并启用`}</button>{error ? <p role="alert" className="mt-3 text-sm text-red-800">{error}</p> : null}<p className="mt-3 text-sm leading-6 text-slate-600">请在同一浏览器中完成，勿清除 Cookie 或同时开启多个授权流程。</p></section>
 }

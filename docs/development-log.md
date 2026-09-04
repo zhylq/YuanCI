@@ -1254,3 +1254,13 @@ the batch outcome and remaining work.
 - The affected PostgreSQL suite exposed a stale migration-count assertion left
   by GE-01A; updated 16 to 17 and its focused upgrade race test passed. The other
   package tests passed. No full repository gate was run. Next: GE-01D.
+
+## 2026-09-04 — GE-01D Gitee setup and login console
+
+- Added Gitee selection, provider-specific callback/instructions/administrator
+  identity, candidate verification and configured-provider login. Switching an
+  uninitialized form clears its secret; established bootstrap identity stays
+  fixed. Authorization navigation accepts only exact trusted provider origins.
+- Nine focused React tests, TypeScript and focused ESLint passed, covering
+  Gitee-only setup/login, secret clearing, access denial and form accessibility.
+  Embedded output will be rebuilt at GE-04. Next: GE-01E.

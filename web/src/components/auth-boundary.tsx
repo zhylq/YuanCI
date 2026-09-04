@@ -25,12 +25,14 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
 }
 export function LoginPage() {
   const status = useAuthStatus()
+  const provider = status.data?.provider === 'gitee' ? 'gitee' : 'github'
+  const label = provider === 'gitee' ? 'Gitee' : 'GitHub'
   return <section className="mx-auto max-w-xl rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
     <p className="text-sm font-medium text-blue-700">YuanCI · 团队登录</p>
     <h1 className="mt-2 text-balance text-3xl font-semibold">连接你的开发工作流</h1>
-    <p className="mt-3 text-pretty leading-7 text-slate-600">使用团队管理员配置的 GitHub 应用登录。普通成员无需创建应用，项目权限由管理员分配。</p>
-    {status.data?.configured ? <a className={`${buttonClass} mt-6 w-full`} href="/api/v1/auth/github/start">使用 GitHub 登录</a> : <p role="status" className="mt-6 rounded-lg bg-slate-100 p-4">尚未配置可用的登录方式，请联系部署管理员。</p>}
-    <p className="mt-6 text-sm leading-6 text-slate-600">当前为开发预览；Gitee、GitLab 与 Gitea 登录尚未接入。</p>
+    <p className="mt-3 text-pretty leading-7 text-slate-600">使用团队管理员配置的 {label} 应用登录。普通成员无需创建应用，项目权限由管理员分配。</p>
+    {status.data?.configured ? <a className={`${buttonClass} mt-6 w-full`} href={`/api/v1/auth/${provider}/start`}>使用 {label} 登录</a> : <p role="status" className="mt-6 rounded-lg bg-slate-100 p-4">尚未配置可用的登录方式，请联系部署管理员。</p>}
+    <p className="mt-6 text-sm leading-6 text-slate-600">当前为开发预览；GitLab 与 Gitea 登录尚未接入。</p>
     {status.data?.mode === 'evaluation' ? <Link to="/" className={linkClass}>返回本地体验控制台</Link> : null}
   </section>
 }

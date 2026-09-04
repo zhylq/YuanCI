@@ -1,10 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { ApiError, request } from './api'
 
-export type AuthStatus = { mode: 'evaluation' | 'file' | 'managed'; configured: boolean; initialized: boolean; callback_url: string }
+export type AuthStatus = { mode: 'evaluation' | 'file' | 'managed'; configured: boolean; initialized: boolean; callback_url: string; provider?: 'github' | 'gitee' }
 export type Session = { user_id: string; display_name: string; expires_at: string; csrf_token: string }
-export type LoginConfig = { id: string; client_id: string; bootstrap_subject: string; status: string; expires_at: string }
-export type LoginSettings = { active: LoginConfig | null; candidate: LoginConfig | null; csrf_token: string; callback_url: string }
+export type LoginConfig = { id: string; provider?: 'github' | 'gitee'; client_id: string; bootstrap_subject: string; status: string; expires_at: string }
+export type LoginSettings = { active: LoginConfig | null; candidate: LoginConfig | null; csrf_token: string; callback_url: string; callback_urls?: Record<string, string> }
 
 export function useAuthStatus() {
   return useQuery({ queryKey: ['auth-status'], queryFn: () => request<AuthStatus>('/api/v1/auth/status'), retry: false })
@@ -30,6 +30,6 @@ export function errorMessage(error: unknown) {
 }
 export function navigateToAuthorization(value: string) {
   const url = new URL(value)
-  if (url.origin !== 'https://github.com' || url.pathname !== '/login/oauth/authorize') throw new Error('Unexpected authorization URL')
+  if (url.username || url.password || url.hash || !((url.origin === 'https://github.com' && url.pathname === '/login/oauth/authorize') || (url.origin === 'https://gitee.com' && url.pathname === '/oauth/authorize'))) throw new Error('Unexpected authorization URL')
   window.location.assign(url.href)
 }
