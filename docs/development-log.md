@@ -1241,3 +1241,16 @@ the batch outcome and remaining work.
   of header authentication remains part of GE-04.
 - Focused identity race tests passed, including redirects, malformed/oversized
   replies, scope/expiry rejection and secret-safe errors. Next: GE-01C.
+
+## 2026-09-04 — GE-01C Gitee managed initialization and login
+
+- Added provider-bound managed configuration, Gitee callback/start routes and
+  distinct Gitee encryption AAD; preserved legacy GitHub ciphertext and routes.
+  Active-login completion now also checks provider/instance before accepting
+  identity. Public status identifies the configured provider.
+- Isolated PostgreSQL tests prove Gitee-only first initialization and repeated
+  login with all GitHub calls rejected, callback mix-up/replay rejection and
+  existing managed activation/race protections. HTTP/identity race tests passed.
+- The affected PostgreSQL suite exposed a stale migration-count assertion left
+  by GE-01A; updated 16 to 17 and its focused upgrade race test passed. The other
+  package tests passed. No full repository gate was run. Next: GE-01D.

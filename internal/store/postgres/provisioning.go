@@ -45,7 +45,8 @@ func (s *Store) BindManagedMasterKey(ctx context.Context, key []byte) error {
 func (s *Store) ProvisioningStatus(ctx context.Context) (provisioning.Status, error) {
 	var status provisioning.Status
 	err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM oauth_bootstrap WHERE consumed_at IS NOT NULL),
-        EXISTS(SELECT 1 FROM login_configs WHERE status='active')`).Scan(&status.Initialized, &status.Configured)
+        EXISTS(SELECT 1 FROM login_configs WHERE status='active'),
+        COALESCE((SELECT provider FROM login_configs WHERE status='active'),'')`).Scan(&status.Initialized, &status.Configured, &status.Provider)
 	return status, err
 }
 
@@ -416,6 +417,9 @@ func prepareManagedCompletion(ctx context.Context, tx pgx.Tx, configID *uuid.UUI
 		return nil, uuid.Nil, err
 	}
 	if verifySession == nil && len(setupHash) == 0 {
+		if user.Provider != config.Provider || user.Instance != config.Instance {
+			return nil, uuid.Nil, authorization.ErrForbidden
+		}
 		if config.Status != "active" {
 			return nil, uuid.Nil, provisioning.ErrConflict
 		}

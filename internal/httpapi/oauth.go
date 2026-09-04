@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -46,7 +47,7 @@ func (a *API) beginLogin(w http.ResponseWriter, r *http.Request, linkToken strin
 	provider := a.oauth.Provider
 	var err error
 	if a.oauth.Managed != nil {
-		provider, err = a.oauth.Managed.Start(r.Context(), state, nonce, linkToken, uuid.Nil, provisioning.Access{})
+		provider, err = a.oauth.Managed.StartFor(r.Context(), state, nonce, linkToken, uuid.Nil, provisioning.Access{}, loginProvider(r))
 	} else {
 		err = a.oauth.Store.BeginOAuth(r.Context(), state, nonce, linkToken)
 	}
@@ -112,7 +113,7 @@ func (a *API) finishLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	provider := a.oauth.Provider
 	if a.oauth.Managed != nil {
-		provider, err = a.oauth.Managed.Provider(r.Context(), ticket)
+		provider, err = a.oauth.Managed.ProviderFor(r.Context(), ticket, loginProvider(r))
 		if err != nil {
 			oauthError(w, err)
 			return
@@ -163,11 +164,18 @@ func oauthError(w http.ResponseWriter, err error) {
 	case errors.Is(err, identity.ErrIdentityConflict):
 		writeProblem(w, http.StatusConflict, "identity conflict", "identity is already linked to another account")
 	case errors.Is(err, identity.ErrProvider):
-		writeProblem(w, http.StatusBadGateway, "provider unavailable", "could not verify GitHub identity; start again")
+		writeProblem(w, http.StatusBadGateway, "provider unavailable", "could not verify provider identity; start again")
 	case errors.Is(err, identity.ErrFlowCapacity):
 		w.Header().Set("Retry-After", "60")
 		writeProblem(w, http.StatusTooManyRequests, "login capacity reached", "try again later")
 	default:
 		writeProblem(w, http.StatusServiceUnavailable, "login unavailable", "could not complete login")
 	}
+}
+
+func loginProvider(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, "/api/v1/auth/gitee/") {
+		return "gitee"
+	}
+	return "github"
 }

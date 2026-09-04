@@ -13,6 +13,7 @@ func (a *API) authStatus(w http.ResponseWriter, r *http.Request) {
 	mode := "evaluation"
 	configured := false
 	initialized := false
+	provider := "github"
 	if a.sessions != nil {
 		mode = "file"
 		configured = a.oauth != nil
@@ -25,8 +26,9 @@ func (a *API) authStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		configured, initialized = status.Configured, status.Initialized
+		provider = status.Provider
 	}
-	writeJSON(w, 200, map[string]any{"mode": mode, "configured": configured, "initialized": initialized, "callback_url": a.origin + "/api/v1/auth/github/callback"})
+	writeJSON(w, 200, map[string]any{"mode": mode, "configured": configured, "initialized": initialized, "provider": provider, "callback_url": a.origin + "/api/v1/auth/github/callback", "callback_urls": map[string]string{"github": a.origin + "/api/v1/auth/github/callback", "gitee": a.origin + "/api/v1/auth/gitee/callback"}})
 }
 func (a *API) validOrigin(r *http.Request) bool {
 	return len(r.Header.Values("Origin")) == 1 && r.Header.Get("Origin") == a.origin
@@ -91,7 +93,7 @@ func (a *API) loginSettings(w http.ResponseWriter, r *http.Request) {
 	if access.SetupToken != "" {
 		token = access.SetupToken
 	}
-	writeJSON(w, 200, map[string]any{"active": settings.Active, "candidate": settings.Candidate, "csrf_token": identity.CSRFToken(token), "callback_url": a.oauth.Managed.Callback})
+	writeJSON(w, 200, map[string]any{"active": settings.Active, "candidate": settings.Candidate, "csrf_token": identity.CSRFToken(token), "callback_url": a.oauth.Managed.Callback, "callback_urls": map[string]string{"github": a.oauth.Managed.Callback, "gitee": a.oauth.Managed.CallbackFor("gitee")}})
 }
 func (a *API) saveLoginSettings(w http.ResponseWriter, r *http.Request) {
 	var input provisioning.Input

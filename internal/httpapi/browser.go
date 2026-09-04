@@ -48,6 +48,11 @@ func NewAuthenticated(logger *slog.Logger, store runmodel.Store, backend Browser
 		mux.HandleFunc("GET /api/v1/auth/github/callback", a.finishLogin)
 		mux.HandleFunc("POST /api/v1/auth/github/link", a.browserAuth(a.linkIdentity))
 		if a.oauth.Managed != nil {
+			mux.HandleFunc("GET /api/v1/auth/gitee/start", a.startLogin)
+			mux.HandleFunc("GET /api/v1/auth/gitee/callback", a.finishLogin)
+			mux.HandleFunc("POST /api/v1/auth/gitee/link", a.browserAuth(a.linkIdentity))
+			mux.HandleFunc("POST /api/v1/settings/auth", a.browserAuth(a.saveLoginSettings))
+			mux.HandleFunc("POST /api/v1/settings/auth/verify", a.browserAuth(a.verifyLoginSettings))
 			mux.HandleFunc("POST /api/v1/setup/exchange", a.exchangeSetup)
 			mux.HandleFunc("GET /api/v1/setup/settings", a.setupAccess(a.loginSettings))
 			mux.HandleFunc("POST /api/v1/setup/settings", a.setupAccess(a.saveLoginSettings))

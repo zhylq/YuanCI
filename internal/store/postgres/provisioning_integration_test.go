@@ -1,18 +1,149 @@
 package postgres
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/yuanci/yuanci/internal/authorization"
+	"github.com/yuanci/yuanci/internal/httpapi"
 	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/provisioning"
 	"github.com/yuanci/yuanci/internal/secrets"
 )
+
+type giteeLoginFixture struct{}
+
+func (giteeLoginFixture) AuthorizationURL(state, verifier string) string {
+	return "https://gitee.com/oauth/authorize?state=" + state
+}
+func (giteeLoginFixture) Exchange(context.Context, string, string) (identity.ExternalUser, error) {
+	return identity.ExternalUser{Provider: "gitee", Instance: identity.GiteeInstance, Subject: "100", Login: "fixture"}, nil
+}
+
+func TestManagedGiteeHTTPCallbackBinding(t *testing.T) {
+	s, service, setup := managedFixture(t)
+	service.Factory = func(string, string, string) (identity.OAuthProvider, error) {
+		t.Fatal("unexpected GitHub request")
+		return nil, identity.ErrProvider
+	}
+	service.GiteeFactory = func(string, string, string) (identity.OAuthProvider, error) { return giteeLoginFixture{}, nil }
+	input := candidateInput(nil)
+	input.Provider = "gitee"
+	id, err := service.Save(t.Context(), provisioning.Access{SetupToken: setup}, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := httpapi.NewAuthenticated(slog.New(slog.NewTextHandler(io.Discard, nil)), s, s, 1<<20, "https://ci.example.test", httpapi.GitHubLogin{Store: s, Managed: service})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"github", "gitee"} {
+		r := httptest.NewRequest("POST", "https://ci.example.test/api/v1/setup/verify", strings.NewReader(`{"candidate_id":"`+id.String()+`"}`))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Origin", "https://ci.example.test")
+		r.Header.Set("X-CSRF-Token", identity.CSRFToken(setup))
+		r.AddCookie(provisioning.Cookie(setup))
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatalf("verify status=%d body=%s", w.Code, w.Body.String())
+		}
+		var reply struct {
+			URL string `json:"authorization_url"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil {
+			t.Fatal(err)
+		}
+		u, _ := url.Parse(reply.URL)
+		callback := httptest.NewRequest("GET", "https://ci.example.test/api/v1/auth/"+provider+"/callback?state="+u.Query().Get("state")+"&code=fixture", nil)
+		for _, cookie := range w.Result().Cookies() {
+			callback.AddCookie(cookie)
+		}
+		callback.AddCookie(provisioning.Cookie(setup))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, callback)
+		want := http.StatusBadRequest
+		if provider == "gitee" {
+			want = http.StatusSeeOther
+		}
+		if response.Code != want {
+			t.Fatalf("%s status=%d body=%s", provider, response.Code, response.Body.String())
+		}
+		replay := httptest.NewRecorder()
+		handler.ServeHTTP(replay, callback)
+		if replay.Code != 400 {
+			t.Fatal("callback replay accepted")
+		}
+	}
+}
+
+func TestManagedGiteeLoginWithoutGitHub(t *testing.T) {
+	s, service, setup := managedFixture(t)
+	service.Factory = func(string, string, string) (identity.OAuthProvider, error) {
+		t.Fatal("Gitee login called GitHub")
+		return nil, identity.ErrProvider
+	}
+	service.GiteeFactory = func(_, _, callback string) (identity.OAuthProvider, error) {
+		if callback != "https://ci.example.test/api/v1/auth/gitee/callback" {
+			t.Fatal("wrong callback")
+		}
+		return giteeLoginFixture{}, nil
+	}
+	input := candidateInput(nil)
+	input.Provider = "gitee"
+	access := provisioning.Access{SetupToken: setup}
+	id, err := service.Save(t.Context(), access, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticket := candidateTicket(t, s, service, id, access)
+	if _, err := service.ProviderFor(t.Context(), ticket, "github"); !errors.Is(err, identity.ErrOAuthFlow) {
+		t.Fatal("cross-provider callback accepted")
+	}
+	provider, err := service.ProviderFor(t.Context(), ticket, "gitee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := provider.Exchange(t.Context(), "code", identity.NewToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := s.FinishManagedOAuth(t.Context(), ticket, user, "", setup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.FinishManagedOAuth(t.Context(), ticket, user, "", setup); !errors.Is(err, identity.ErrOAuthFlow) {
+		t.Fatal("replay accepted")
+	}
+	state, nonce := identity.NewToken(), identity.NewToken()
+	if _, err := service.StartFor(t.Context(), state, nonce, "", uuid.Nil, provisioning.Access{}, "gitee"); err != nil {
+		t.Fatal(err)
+	}
+	ticket, err = s.ConsumeOAuth(t.Context(), state, nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.FinishManagedOAuth(t.Context(), ticket, githubUser("100"), "", ""); !errors.Is(err, authorization.ErrForbidden) {
+		t.Fatal("active Gitee config accepted GitHub identity")
+	}
+	if _, err := s.FinishManagedOAuth(t.Context(), ticket, user, credentials.Token, ""); err != nil {
+		t.Fatal(err)
+	}
+	status, err := s.ProvisioningStatus(t.Context())
+	if err != nil || status.Provider != "gitee" || !status.Initialized {
+		t.Fatalf("status=%+v err=%v", status, err)
+	}
+}
 
 func managedFixture(t *testing.T) (*Store, *provisioning.Service, string) {
 	t.Helper()

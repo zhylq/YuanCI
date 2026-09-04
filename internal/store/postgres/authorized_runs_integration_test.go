@@ -308,7 +308,7 @@ func TestIdentityMigrationPreservesEvaluationRuns(t *testing.T) {
 		t.Fatal("additive upgrade lost or reassigned evaluation run")
 	}
 	var count int
-	if err := connection.QueryRow(t.Context(), `SELECT count(*) FROM schema_migrations`).Scan(&count); err != nil || count != 16 {
+	if err := connection.QueryRow(t.Context(), `SELECT count(*) FROM schema_migrations`).Scan(&count); err != nil || count != 17 {
 		t.Fatal("upgrade did not apply exactly the additive migration")
 	}
 }
