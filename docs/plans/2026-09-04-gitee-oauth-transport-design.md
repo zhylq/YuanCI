@@ -29,3 +29,12 @@ Gitee represents a repository without a first commit with an empty
 `default_branch`. Repository discovery skips only that incomplete repository,
 because it cannot be a pipeline source yet; it continues to return valid,
 admin-accessible repositories. Direct import validation remains strict.
+
+## Repository URL normalization
+
+Gitee returns `html_url` with a trailing `.git`, while its browser repository
+identity is otherwise the same canonical `https://gitee.com/{owner}/{name}`.
+Normalize only that optional suffix before comparing the URL to the provider,
+namespace and repository path. Keep rejecting different origins, paths,
+embedded credentials, query strings and fragments. Contract tests cover both
+accepted canonical forms and a rejected substituted URL.
