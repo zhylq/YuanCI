@@ -30,6 +30,8 @@ type Status struct {
 }
 type Info struct {
 	ID               uuid.UUID `json:"id"`
+	Provider         string    `json:"provider"`
+	Instance         string    `json:"instance"`
 	ClientID         string    `json:"client_id"`
 	BootstrapSubject string    `json:"bootstrap_subject"`
 	Status           string    `json:"status"`

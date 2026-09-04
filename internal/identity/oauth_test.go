@@ -24,3 +24,19 @@ func TestPKCEAndSubjectBinding(t *testing.T) {
 		t.Fatal("unsafe flow cookie")
 	}
 }
+
+func TestExternalUserValidationIsScopedToProviderAndInstance(t *testing.T) {
+	valid := ExternalUser{Provider: "gitee", Instance: GiteeInstance, Subject: "42", Login: "fixture"}
+	if !valid.Valid() {
+		t.Fatal("valid Gitee identity rejected")
+	}
+	valid.Instance = GitHubInstance
+	if valid.Valid() {
+		t.Fatal("Gitee subject accepted for the GitHub instance")
+	}
+	valid.Provider = "unknown"
+	valid.Instance = "https://example.test"
+	if valid.Valid() {
+		t.Fatal("unknown provider accepted")
+	}
+}

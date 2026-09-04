@@ -172,7 +172,7 @@ func settingsAccess(ctx context.Context, tx pgx.Tx, access provisioning.Access, 
 func configRow(row pgx.Row) (provisioning.Config, error) {
 	var config provisioning.Config
 	var encrypted []byte
-	err := row.Scan(&config.ID, &config.ClientID, &config.BootstrapSubject, &config.Status, &config.CreatedAt, &config.ExpiresAt, &encrypted, &config.ExpectedActive)
+	err := row.Scan(&config.ID, &config.Provider, &config.Instance, &config.ClientID, &config.BootstrapSubject, &config.Status, &config.CreatedAt, &config.ExpiresAt, &encrypted, &config.ExpectedActive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return config, provisioning.ErrConflict
 	}
@@ -185,7 +185,7 @@ func configRow(row pgx.Row) (provisioning.Config, error) {
 	return config, nil
 }
 
-const configColumns = `id,client_id,bootstrap_subject,status,created_at,expires_at,encrypted_secret,expected_active`
+const configColumns = `id,provider,provider_instance,client_id,bootstrap_subject,status,created_at,expires_at,encrypted_secret,expected_active`
 
 func activeID(ctx context.Context, tx pgx.Tx) (*uuid.UUID, error) {
 	var id uuid.UUID
@@ -239,7 +239,12 @@ func (s *Store) LoginSettings(ctx context.Context, access provisioning.Access) (
 }
 
 func (s *Store) SaveLoginCandidate(ctx context.Context, access provisioning.Access, config provisioning.Config) error {
-	if config.ID == uuid.Nil || !identity.ValidGitHubSubject(config.BootstrapSubject) {
+	// Legacy callers create GitHub-only configs without provider metadata. New
+	// provider entries must name their canonical instance explicitly.
+	if config.Provider == "" && config.Instance == "" {
+		config.Provider, config.Instance = "github", identity.GitHubInstance
+	}
+	if config.ID == uuid.Nil || !identity.ValidProviderInstance(config.Provider, config.Instance) || !identity.ValidGitHubSubject(config.BootstrapSubject) {
 		return provisioning.ErrConfig
 	}
 	encrypted, err := json.Marshal(config.Encrypted)
@@ -267,10 +272,11 @@ func (s *Store) SaveLoginCandidate(ctx context.Context, access provisioning.Acce
 	}
 	if actor.session.UserID != uuid.Nil {
 		var subject string
-		if err := tx.QueryRow(ctx, `SELECT github_subject FROM oauth_bootstrap WHERE consumed_at IS NOT NULL`).Scan(&subject); err != nil {
+		var provider, instance string
+		if err := tx.QueryRow(ctx, `SELECT provider,provider_instance,github_subject FROM oauth_bootstrap WHERE consumed_at IS NOT NULL`).Scan(&provider, &instance, &subject); err != nil {
 			return provisioning.ErrConflict
 		}
-		if config.BootstrapSubject != subject {
+		if config.Provider != provider || config.Instance != instance || config.BootstrapSubject != subject {
 			return provisioning.ErrConfig
 		} // Bootstrap identity is immutable.
 	}
@@ -285,8 +291,8 @@ func (s *Store) SaveLoginCandidate(ctx context.Context, access provisioning.Acce
 	if pending >= 100 {
 		return identity.ErrFlowCapacity
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO login_configs(id,client_id,encrypted_secret,bootstrap_subject,expected_active,created_by,setup_hash)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)`, config.ID, config.ClientID, encrypted, config.BootstrapSubject, config.ExpectedActive, actorOwner(actor), actor.setupHash)
+	_, err = tx.Exec(ctx, `INSERT INTO login_configs(id,provider,provider_instance,client_id,encrypted_secret,bootstrap_subject,expected_active,created_by,setup_hash)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, config.ID, config.Provider, config.Instance, config.ClientID, encrypted, config.BootstrapSubject, config.ExpectedActive, actorOwner(actor), actor.setupHash)
 	if err != nil {
 		return err
 	}
@@ -433,13 +439,16 @@ func prepareManagedCompletion(ctx context.Context, tx pgx.Tx, configID *uuid.UUI
 		return nil, uuid.Nil, err
 	}
 	if verifySession == nil {
-		if user.Subject != config.BootstrapSubject {
+		if user.Provider != config.Provider || user.Instance != config.Instance || user.Subject != config.BootstrapSubject {
 			return nil, uuid.Nil, authorization.ErrForbidden
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO oauth_bootstrap(github_subject) VALUES ($1)`, config.BootstrapSubject); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO oauth_bootstrap(github_subject,provider,provider_instance) VALUES ($1,$2,$3)`, config.BootstrapSubject, config.Provider, config.Instance); err != nil {
 			return nil, uuid.Nil, provisioning.ErrConflict
 		}
 	} else {
+		if user.Provider != config.Provider || user.Instance != config.Instance {
+			return nil, uuid.Nil, authorization.ErrForbidden
+		}
 		var owner uuid.UUID
 		err := tx.QueryRow(ctx, `SELECT user_id FROM external_identities WHERE provider=$1 AND provider_instance=$2 AND external_id=$3`, user.Provider, user.Instance, user.Subject).Scan(&owner)
 		if err != nil || owner != actor.session.UserID {

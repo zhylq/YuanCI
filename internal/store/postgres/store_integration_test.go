@@ -1,7 +1,9 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"os"
@@ -12,9 +14,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/yuanci/yuanci/db/migrations"
+	"github.com/yuanci/yuanci/internal/authorization"
+	"github.com/yuanci/yuanci/internal/identity"
 	"github.com/yuanci/yuanci/internal/pipeline"
+	"github.com/yuanci/yuanci/internal/provisioning"
 	runmodel "github.com/yuanci/yuanci/internal/run"
 	"github.com/yuanci/yuanci/internal/run/storetest"
+	"github.com/yuanci/yuanci/internal/secrets"
 )
 
 // newTestDatabase never connects to or cleans the application's database.
@@ -427,6 +433,24 @@ func TestRunnerIdentityMigrationRecoversLegacyJobs(t *testing.T) {
 	if _, err := connection.Exec(t.Context(), `INSERT INTO users(id,display_name) VALUES ($1,'preserved user')`, userID); err != nil {
 		t.Fatal(err)
 	}
+	legacyLoginID := uuid.New()
+	cipher, err := secrets.NewCipher(bytes.Repeat([]byte("k"), 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacySecret, err := cipher.Seal([]byte("legacy-github-secret"), []byte("yuanci:login:github:"+legacyLoginID.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedSecret, err := json.Marshal(legacySecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(t.Context(), `INSERT INTO login_configs
+		(id,client_id,encrypted_secret,bootstrap_subject,setup_hash)
+		VALUES ($1,'legacy-github-client',$2,'100',decode(repeat('aa',32),'hex'))`, legacyLoginID, encodedSecret); err != nil {
+		t.Fatal(err)
+	}
 
 	assignedRun, runningRun, queuedRun, terminalRun := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	assignedJob, runningJob, downstreamJob, queuedJob, terminalJob := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
@@ -482,7 +506,16 @@ func TestRunnerIdentityMigrationRecoversLegacyJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	legacyConfig, err := configRow(reopened.pool.QueryRow(t.Context(), `SELECT `+configColumns+` FROM login_configs WHERE id=$1`, legacyLoginID))
+	if err != nil {
+		reopened.Close()
+		t.Fatal(err)
+	}
+	plain, err := cipher.Open(legacyConfig.Encrypted, []byte("yuanci:login:github:"+legacyLoginID.String()))
 	reopened.Close()
+	if err != nil || string(plain) != "legacy-github-secret" || legacyConfig.Provider != "github" || legacyConfig.Instance != identity.GitHubInstance {
+		t.Fatalf("legacy GitHub login config changed: provider=%q instance=%q secret=%q err=%v", legacyConfig.Provider, legacyConfig.Instance, plain, err)
+	}
 
 	assertJob := func(id uuid.UUID, wantStatus, wantReason string, wantRunner bool) {
 		t.Helper()
@@ -533,7 +566,7 @@ func TestRunnerIdentityMigrationRecoversLegacyJobs(t *testing.T) {
 	if err := connection.QueryRow(t.Context(), `SELECT status,certificate_serial FROM runners WHERE id=$1`, runnerID).Scan(&runnerStatus, &legacySerial); err != nil {
 		t.Fatal(err)
 	}
-	if leaseCount != 0 || migrationCount != 16 || userCount != 1 || recoveryAuditCount != 2 || runnerStatus != "offline" || legacySerial != nil {
+	if leaseCount != 0 || migrationCount != 17 || userCount != 1 || recoveryAuditCount != 2 || runnerStatus != "offline" || legacySerial != nil {
 		t.Fatalf("upgrade preservation: leases=%d migrations=%d users=%d audits=%d runner=%s serial=%v", leaseCount, migrationCount, userCount, recoveryAuditCount, runnerStatus, legacySerial)
 	}
 
@@ -586,4 +619,41 @@ func valueOrEmpty(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func TestManagedGiteeBootstrapIsProviderInstanceBound(t *testing.T) {
+	s, _, setup := managedFixture(t)
+	access := provisioning.Access{SetupToken: setup}
+	config := provisioning.Config{Info: provisioning.Info{
+		ID:               uuid.New(),
+		Provider:         "gitee",
+		Instance:         identity.GiteeInstance,
+		ClientID:         "gitee-fixture",
+		BootstrapSubject: "100",
+	}}
+	if err := s.SaveLoginCandidate(t.Context(), access, config); err != nil {
+		t.Fatal(err)
+	}
+	state, nonce := identity.NewToken(), identity.NewToken()
+	if _, err := s.BeginManagedOAuth(t.Context(), state, nonce, "", config.ID, access); err != nil {
+		t.Fatal(err)
+	}
+	ticket, err := s.ConsumeOAuth(t.Context(), state, nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.FinishManagedOAuth(t.Context(), ticket, githubUser("100"), "", setup); !errors.Is(err, authorization.ErrForbidden) {
+		t.Fatalf("GitHub identity activated Gitee configuration: %v", err)
+	}
+	giteeUser := identity.ExternalUser{Provider: "gitee", Instance: identity.GiteeInstance, Subject: "100", Login: "fixture"}
+	if _, err := s.FinishManagedOAuth(t.Context(), ticket, giteeUser, "", setup); err != nil {
+		t.Fatal(err)
+	}
+	var provider, instance string
+	if err := s.pool.QueryRow(t.Context(), `SELECT provider,provider_instance FROM oauth_bootstrap`).Scan(&provider, &instance); err != nil {
+		t.Fatal(err)
+	}
+	if provider != "gitee" || instance != identity.GiteeInstance {
+		t.Fatalf("bootstrap stored %q at %q", provider, instance)
+	}
 }

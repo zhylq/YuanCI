@@ -12,7 +12,10 @@ import (
 	"time"
 )
 
-const GitHubInstance = "https://github.com"
+const (
+	GitHubInstance = "https://github.com"
+	GiteeInstance  = "https://gitee.com"
+)
 const FlowCookieName = "__Host-yuanci_oauth"
 const FlowTTL = 5 * time.Minute
 
@@ -34,8 +37,21 @@ func ValidGitHubSubject(subject string) bool {
 	return err == nil && id > 0 && strconv.FormatInt(id, 10) == subject
 }
 
+// ValidProviderInstance restricts currently enabled public providers to their
+// canonical HTTPS origins. Self-hosted Gitea remains unavailable until GT-01.
+func ValidProviderInstance(provider, instance string) bool {
+	switch provider {
+	case "github":
+		return instance == GitHubInstance
+	case "gitee":
+		return instance == GiteeInstance
+	default:
+		return false
+	}
+}
+
 func (user ExternalUser) Valid() bool {
-	return user.Provider == "github" && user.Instance == GitHubInstance && ValidGitHubSubject(user.Subject) &&
+	return ValidProviderInstance(user.Provider, user.Instance) && ValidGitHubSubject(user.Subject) &&
 		len(user.Login) > 0 && len(user.Login) <= 100 && len(user.Name) <= 256 && !strings.ContainsAny(user.Login+user.Name, "\r\n\x00")
 }
 

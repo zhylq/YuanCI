@@ -218,12 +218,12 @@ func (s *Store) finishOAuth(ctx context.Context, ticket string, user identity.Ex
 		}
 		owner = existingOwner
 	}
-	var bootstrapSubject string
+	var bootstrapProvider, bootstrapInstance, bootstrapSubject string
 	var bootstrapped bool
-	if err := tx.QueryRow(ctx, `SELECT github_subject,consumed_at IS NOT NULL FROM oauth_bootstrap FOR UPDATE`).Scan(&bootstrapSubject, &bootstrapped); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT provider,provider_instance,github_subject,consumed_at IS NOT NULL FROM oauth_bootstrap FOR UPDATE`).Scan(&bootstrapProvider, &bootstrapInstance, &bootstrapSubject, &bootstrapped); err != nil {
 		return identity.Credentials{}, identity.ErrBootstrap
 	}
-	if !bootstrapped && user.Subject != bootstrapSubject {
+	if !bootstrapped && (user.Provider != bootstrapProvider || user.Instance != bootstrapInstance || user.Subject != bootstrapSubject) {
 		return identity.Credentials{}, authorization.ErrForbidden
 	}
 	newBinding := errors.Is(err, pgx.ErrNoRows)

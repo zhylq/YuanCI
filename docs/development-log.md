@@ -1215,3 +1215,17 @@ the batch outcome and remaining work.
 - Documentation links/task dependencies and diff whitespace were checked. No
   application changes, tests, migration execution, deployment or full suite
   were performed. Proposed next task: GE-01A, subject to accepting the split.
+
+## 2026-09-04 — GE-01A provider/instance identity contract
+
+- Added a forward-only migration that preserves existing GitHub bootstrap and
+  encrypted login-config data while binding both records to a provider and its
+  canonical instance. Active-login uniqueness now includes the instance.
+- Extended persisted login metadata and identity validation for `gitee.com`.
+  Bootstrap and managed-config completion now require provider, instance and
+  immutable subject to match, preventing a same-number GitHub identity from
+  activating a Gitee configuration. Self-hosted providers remain disabled.
+- Focused Go identity tests and PostgreSQL package tests passed against the
+  disposable isolated test database. The upgrade test proves legacy GitHub
+  ciphertext still opens with its original AAD. No phase-gate full suite was
+  run. Next task: GE-01B.
