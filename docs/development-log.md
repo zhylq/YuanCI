@@ -1360,3 +1360,13 @@ the batch outcome and remaining work.
   normalization, fork policy, durable idempotency and immutable config paths are
   implemented; real webhook delivery remains a GE-04 acceptance check.
 - Next: GE-03 scoped Runner checkout and Gitee Check Runs status delivery.
+
+## 2026-09-04 — GE-03 Gitee Check Runs delivery
+
+- Routed the durable status worker to Gitee Check Runs, with immutable SHA,
+  live repository authorization, per-Run names, bounded retry reconciliation
+  and protection against late pending delivery regressing a completed check.
+- Gitee, commit-status and server race suites passed. Official Gitee v5 Checks
+  schema informed the adapter; real API acceptance remains GE-04. Gitee does
+  not document an idempotency key, so remote exactly-once creation is not claimed.
+- GE-03 scoped private checkout remains in progress.

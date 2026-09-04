@@ -126,7 +126,7 @@ func main() {
 			logger.Error("GitHub status provider initialization failed")
 			os.Exit(2)
 		}
-		statusWorker, workerErr := commitstatus.NewWorker(database, statusProvider, logger)
+		statusWorker, workerErr := commitstatus.NewWorker(database, statusRouter{github: statusProvider, gitee: giteePipeline}, logger)
 		if workerErr != nil {
 			logger.Error("commit status worker initialization failed")
 			os.Exit(2)

@@ -2,11 +2,27 @@ package main
 
 import (
 	"context"
+	"github.com/yuanci/yuanci/internal/commitstatus"
 
 	"github.com/yuanci/yuanci/internal/gitee"
 	"github.com/yuanci/yuanci/internal/githubapp"
 	"github.com/yuanci/yuanci/internal/scm"
 )
+
+type statusRouter struct {
+	github commitstatus.DeliveryProvider
+	gitee  *gitee.Service
+}
+
+func (s statusRouter) Deliver(ctx context.Context, item commitstatus.Item) error {
+	if item.Provider == "gitee" && s.gitee != nil {
+		return s.gitee.Deliver(ctx, item)
+	}
+	if item.Provider == "github" && s.github != nil {
+		return s.github.Deliver(ctx, item)
+	}
+	return commitstatus.ErrInvalid
+}
 
 type pipelineRouter struct {
 	github *githubapp.Service
