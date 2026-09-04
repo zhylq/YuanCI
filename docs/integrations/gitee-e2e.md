@@ -8,6 +8,11 @@ The account name `huiyuan1986` is not a repository selection or proof of
 authorization. No Gitee credentials have been requested in chat or fabricated.
 This does not close the four-SCM gate or establish production readiness.
 
+The existing `ci.uyii.cn` GitHub managed sandbox was upgraded to the GE-03 code
+on 2026-09-04, but its persisted active provider is GitHub. It remains a GitHub
+sandbox. Do not replace that configuration or database with a Gitee application:
+create an isolated Gitee managed stack and use its own HTTPS origin/callback.
+
 ## Deterministic evidence
 
 - Gitee OAuth tests and PostgreSQL fixtures exercise independent initialization,

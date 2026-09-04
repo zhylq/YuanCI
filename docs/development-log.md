@@ -1417,3 +1417,20 @@ the batch outcome and remaining work.
 - GE-04 and the four-SCM gate remain OPEN. Next exact task: GE-04 real Gitee
   acceptance after the operator supplies the private repository URL, YuanCI URL
   and authorization status. Remote CI is reported separately for the final SHA.
+
+## 2026-09-04 — Gitee code deployed; independent sandbox still required
+
+- Operator requested an update of the existing `ci.uyii.cn` sandbox after
+  creating a Gitee third-party application. Built the verified `d1c2b1e` Server
+  and Runner images locally, imported them through the existing authorized SSH
+  connection, and updated only the `yuanci-sandbox` Compose image references.
+- Took a protected PostgreSQL custom-format backup and a Compose backup before
+  restart. Server and Runner both reached Compose health checks; public `/readyz`
+  returned ready. Existing database, master-key, runner PKI and GitHub settings
+  were retained. The interrupted first image transfer was never imported; it did
+  not affect running containers.
+- Auth status confirms this is an initialized GitHub managed instance. Provider
+  selection is correctly locked after initialization, so Gitee cannot be added
+  by overwriting the GitHub config or editing its database. GE-04 requires a new
+  isolated Gitee managed stack and HTTPS origin, then OAuth/repository/webhook
+  acceptance using the separate Gitee application.
