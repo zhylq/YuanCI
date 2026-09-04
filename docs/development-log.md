@@ -1087,3 +1087,22 @@ the batch outcome and remaining work.
   searching generated output. Added the reproducible test/boundary guide.
 - UIA-02 remote Verify passed at run 33825493622. Real sandbox acceptance remains
   the separate operator-owned E2E-GH-02 gate.
+
+## 2026-09-04 — E2E-GH-02 sandbox checklist prepared; real gate open
+
+- Added the operator-owned protected GitHub App sandbox setup, minimal pipeline,
+  execution/checklist and evidence table. Cases include private checkout,
+  immutable source, signed/replayed delivery, final statuses, Run actions, PR
+  trust, secret replacement, project isolation and cleanup. Updated the stale
+  integration overview to describe the implemented control plane accurately.
+- The documented pipeline compiled successfully with the gate-built
+  `yuancictl`; guide links and diff whitespace checks passed. Documentation-only
+  work did not repeat the E2E-GH-01 full suite or image builds.
+- The user supplied `huiyuan1986`, recorded only as an unconfirmed owner
+  candidate. Complete owner/repository, protected HTTPS origin and online
+  Runner details are still missing. No real sandbox actions/results or
+  credentials were invented. Every real evidence row remains unexecuted;
+  E2E-GH-02 and the GitHub Alpha gate are NOT complete.
+- Next task ID: E2E-GH-02, to execute and record the checklist once the operator
+  supplies the sandbox. CI-01 is the following development task, outside this
+  request. E2E-GH-01 implementation commit: 46c65a5.

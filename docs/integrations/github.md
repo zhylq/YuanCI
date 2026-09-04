@@ -19,10 +19,15 @@ Webhook payloads must include `X-Hub-Signature-256`, `X-GitHub-Delivery` and
 `X-GitHub-Event`. Tag pushes are normalized to YuanCI's `tag` event, while branch
 pushes remain `push` events.
 
-## Not wired into the server yet
+## GitHub CI Alpha
 
-The adapter is covered by contract tests but is not yet exposed through the
-control-plane HTTP API. Before enabling it, Milestone 1 must add GitHub App
-installation authentication, encrypted token and webhook-secret storage,
-repository synchronization, delivery idempotency and automatic pipeline/status
-orchestration. Do not use a personal access token as a production substitute.
+The managed control plane now exposes GitHub App configuration, encrypted key
+and webhook-secret storage, selected repository import, project automation,
+signed delivery idempotency, immutable configuration/private checkout, Runner
+execution/logs and commit-status orchestration. Setup readiness describes local
+configuration; it does not prove that a real App installation works.
+
+The [GitHub CI acceptance guide](github-e2e.md) documents the deterministic E2E
+test and the operator-owned real sandbox checklist/evidence. The real GitHub
+Alpha gate remains open until that evidence is complete. Use a GitHub App;
+do not substitute a personal access token for its scoped installation tokens.
