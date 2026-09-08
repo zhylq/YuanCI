@@ -101,11 +101,17 @@ func TestRepositoriesSkipEmptyRepositories(t *testing.T) {
 	c.http.Transport = transport(func(r *http.Request) (*http.Response, error) {
 		return response(r, 200, `[
 {"id":41,"path":"empty","namespace":{"id":7,"path":"owner"},"html_url":"https://gitee.com/owner/empty","permission":{"admin":true}},
-{"id":42,"path":"ready","namespace":{"id":7,"path":"owner"},"default_branch":"main","html_url":"https://gitee.com/owner/ready","permission":{"admin":true}}
+{"id":42,"path":"ready","namespace":{"id":7,"path":"owner"},"default_branch":"main","html_url":"https://gitee.com/owner/ready.git","permission":{"admin":true}}
 ]`), nil
 	})
 	page, err := c.Repositories(t.Context(), "access", 1)
 	if err != nil || len(page.Items) != 1 || page.Items[0].Name != "ready" {
 		t.Fatalf("page=%+v err=%v", page, err)
+	}
+	c.http.Transport = transport(func(r *http.Request) (*http.Response, error) {
+		return response(r, 200, `{"id":42,"path":"ready","namespace":{"id":7,"path":"owner"},"default_branch":"main","html_url":"https://attacker.test/owner/ready.git","permission":{"admin":true}}`), nil
+	})
+	if _, err := c.Repository(t.Context(), "access", "owner", "ready"); err == nil {
+		t.Fatal("repository URL substitution accepted")
 	}
 }

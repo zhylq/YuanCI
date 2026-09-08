@@ -64,7 +64,8 @@ func (r remoteRepository) normalized() (Repository, error) {
 	if !r.Permission.Admin {
 		return Repository{}, scm.ErrUnauthorized
 	}
-	if r.ID <= 0 || r.Namespace.ID <= 0 || !ValidComponent(r.Path) || !ValidComponent(r.Namespace.Path) || r.Branch == "" || len(r.Branch) > 255 || strings.ContainsAny(r.Branch, "\r\n\x00") || r.URL != identity.GiteeInstance+"/"+r.Namespace.Path+"/"+r.Path {
+	canonicalURL := identity.GiteeInstance + "/" + r.Namespace.Path + "/" + r.Path
+	if r.ID <= 0 || r.Namespace.ID <= 0 || !ValidComponent(r.Path) || !ValidComponent(r.Namespace.Path) || r.Branch == "" || len(r.Branch) > 255 || strings.ContainsAny(r.Branch, "\r\n\x00") || (r.URL != canonicalURL && r.URL != canonicalURL+".git") {
 		return Repository{}, ErrRemote
 	}
 	return Repository{ID: strconv.FormatInt(r.ID, 10), AccountID: strconv.FormatInt(r.Namespace.ID, 10), Owner: r.Namespace.Path, Name: r.Path, DefaultBranch: r.Branch, Private: r.Private}, nil

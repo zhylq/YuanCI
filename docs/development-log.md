@@ -1493,3 +1493,7 @@ the batch outcome and remaining work.
   discovery now skips only those not-yet-initialized repositories rather than
   failing the complete page; importing an incomplete repository remains
   disallowed. A focused regression covers a mixed empty and ready response.
+- Real Gitee repository responses use a canonical `html_url` ending in `.git`.
+  URL identity validation now accepts exactly the canonical browser form or
+  that form with one `.git` suffix; different origins and substituted paths
+  remain rejected. Focused discovery tests cover the real form and rejection.
