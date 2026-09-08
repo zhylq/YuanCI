@@ -1,5 +1,14 @@
 # Development log
 
+## 2026-09-08 — Checkout helper and diagnostics
+
+- Fixed the Git helper entrypoint to `sh` and enabled stdin forwarding for
+  ephemeral Git authentication configuration. The actual alpine/git image
+  successfully executed the corrected shell entrypoint on the sandbox host.
+- Forward checkout output through credential redaction into Job logs (first
+  step) as well as local Runner logs. Emit an explicit checkout-stage failure
+  marker before any user step. Retain bounded log transport and cleanup.
+
 ## 2026-09-08 — Gitee Webhook password generation
 
 - Added browser-side cryptographic generation of a 32-byte secret encoded as

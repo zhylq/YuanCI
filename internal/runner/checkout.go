@@ -63,13 +63,13 @@ func buildCheckoutCommand(volume, network, helperName string, source *localSourc
 	required = true
 `, escaped)
 	environment := []string{"GIT_TERMINAL_PROMPT=0", "GIT_LFS_SKIP_SMUDGE=1", "GIT_CONFIG_NOSYSTEM=1"}
-	args := []string{"run", "--rm", "--name", helperName, "--network", network, "--log-driver", "none",
+	args := []string{"run", "--rm", "--name", helperName, "--interactive", "--entrypoint", "sh", "--network", network, "--log-driver", "none",
 		"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "128",
 		"--read-only", "--tmpfs", "/run/yuanci:rw,nosuid,nodev,noexec,size=65536",
 		"--volume", volume + ":/workspace", "--workdir", "/workspace"}
 	for _, value := range environment {
 		args = append(args, "--env", value)
 	}
-	args = append(args, checkoutHelperImage, "sh", "-euc", checkoutScript, "yuanci-checkout", source.cloneURL, source.commitSHA)
+	args = append(args, checkoutHelperImage, "-euc", checkoutScript, "yuanci-checkout", source.cloneURL, source.commitSHA)
 	return checkoutCommand{args: args, environment: environment}, input.Bytes(), nil
 }

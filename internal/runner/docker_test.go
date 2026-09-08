@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -99,6 +100,8 @@ func TestDockerCheckoutCompletesBeforeUserStepsAndClearsCredential(t *testing.T)
 func TestDockerCheckoutMismatchStopsStepsAndCleansResources(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "docker-calls.log")
 	executor := NewDockerExecutor(os.Stdout, os.Stderr)
+	var failureLog bytes.Buffer
+	executor.Stderr = &failureLog
 	executor.command = dockerHelperCommandWith(t, logFile, "DOCKER_HELPER_FAIL_CHECKOUT=1")
 	jobID := uuid.MustParse("a120348a-b47b-4e92-91a4-5d2e266dc680")
 	source := &localSource{cloneURL: "https://github.com/example/repository.git",
@@ -107,6 +110,9 @@ func TestDockerCheckoutMismatchStopsStepsAndCleansResources(t *testing.T) {
 		Steps: []pipeline.Step{{Name: "must-not-run", Commands: []string{"false"}}}}, source)
 	if err == nil || !strings.Contains(err.Error(), "source checkout failed") {
 		t.Fatalf("checkout mismatch returned %v", err)
+	}
+	if !strings.Contains(failureLog.String(), "[checkout] Source checkout failed") {
+		t.Fatal("missing checkout failure diagnostic")
 	}
 	body, readErr := os.ReadFile(logFile)
 	if readErr != nil {

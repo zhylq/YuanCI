@@ -23,6 +23,7 @@ func TestCheckoutCommandKeepsCredentialOutOfArgsAndEnvironment(t *testing.T) {
 		t.Fatal("checkout credential was not provided on stdin")
 	}
 	for _, expected := range []string{
+		"--interactive", "--entrypoint sh", checkoutHelperImage + " -euc",
 		"--read-only", "--tmpfs", "/run/yuanci:rw,nosuid,nodev,noexec,size=65536",
 		"--env", "GIT_TERMINAL_PROMPT=0", "--env", "GIT_LFS_SKIP_SMUDGE=1",
 		"--volume", "workspace:/workspace", "--network", "network",

@@ -83,6 +83,8 @@ func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipe
 	}
 	if source != nil {
 		if err := e.checkout(jobCtx, jobID, volume, network, source); err != nil {
+			_, failureLog := jobLogWriters(jobCtx, 0, e.Stdout, e.Stderr)
+			_, _ = io.WriteString(failureLog, "[checkout] Source checkout failed before user steps.\n")
 			return fmt.Errorf("source checkout failed: %w", err)
 		}
 	}
@@ -130,9 +132,29 @@ func (e *DockerExecutor) checkout(ctx context.Context, jobID uuid.UUID, volume, 
 	defer clear(input)
 	command := e.commandFor(ctx, e.Binary, commandSpec.args...)
 	command.Stdin = bytes.NewReader(input)
-	command.Stdout = e.Stdout
-	command.Stderr = e.Stderr
-	return command.Run()
+	out, errOut := jobLogWriters(ctx, 0, e.Stdout, e.Stderr)
+	if _, ok := ctx.Value(logContextKey{}).(*logBuffer); ok {
+		out = io.MultiWriter(out, e.Stdout)
+		errOut = io.MultiWriter(errOut, e.Stderr)
+	}
+	values := checkoutRedactionValues(source)
+	defer func() {
+		for _, value := range values {
+			clear(value)
+		}
+	}()
+	stdout, err := newRedactingWriter(out, values)
+	if err != nil {
+		return err
+	}
+	stderr, err := newRedactingWriter(errOut, values)
+	if err != nil {
+		stdout.destroy()
+		return err
+	}
+	command.Stdout, command.Stderr = stdout, stderr
+	_, _ = io.WriteString(stdout, "[checkout] Fetching source at assigned commit.\n")
+	return errors.Join(command.Run(), stdout.Close(), stderr.Close())
 }
 
 func buildDockerArgs(volume, network string, jobID uuid.UUID, index int, image string, job pipeline.PlanJob, step pipeline.Step) []string {
