@@ -1,5 +1,14 @@
 # Development log
 
+## 2026-09-08 — Gitee Webhook password generation
+
+- Added browser-side cryptographic generation of a 32-byte secret encoded as
+  64 hexadecimal characters and a clipboard button. Generation does not submit
+  or rotate the saved secret; the operator copies it to Gitee before saving.
+- Focused Webhook component test passed, covering generation without a write,
+  copying, revision-bound saving and clearing the password. Frontend build
+  passed; embedded assets regenerated without inspecting generated content.
+
 ## 2026-08-28 — start controlled incremental delivery
 
 - Baseline: `dce4030` on `main`; no uncommitted changes at inspection.
