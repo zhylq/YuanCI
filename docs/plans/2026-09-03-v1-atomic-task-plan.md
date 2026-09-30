@@ -159,3 +159,18 @@ Current user-authorized Gitee workstream (2026-09-04): GE-01 through GE-03 are
 implemented; next is `GE-04` operator-owned real sandbox acceptance. Local
 verification alone does not close GE-04 or the four-SCM gate. See
 [Gitee acceptance evidence/checklist](../integrations/gitee-e2e.md).
+
+## Latest execution status — 2026-09-30
+
+- GE-04 now has real private-repository push, checkout, successful execution,
+  persisted proof logs and full-rerun evidence. Its remaining status delivery,
+  security and failure scenarios are still open; see the updated acceptance
+  evidence above. No production qualification is claimed.
+- CI-01 is implemented and real Docker tests have passed for image healthchecks,
+  service aliases, PostgreSQL queries, unhealthy refusal, active-step cancellation
+  and cleanup including anonymous database volumes. Compiler and Runner both
+  validate bounded service settings. See [service usage and limitations](../ci-services.md)
+  and the development log for exact verification results.
+- The next implementation task is **CI-02**. Keep remaining GE-04 acceptance
+  visible while following the complete-CI dependency chain; CI-01 depends on
+  completed E2E-GH-01, not closure of the real-provider acceptance gates.

@@ -167,6 +167,11 @@ func validateJobs(path string, jobs []Job) ValidationErrors {
 		}
 		names[job.Name] = struct{}{}
 		deps[job.Name] = job.DependsOn
+		if err := ValidateServices(job.Services); err != nil {
+			for _, problem := range err.(ValidationErrors) {
+				problems = append(problems, ValidationError{jobPath + "." + problem.Path, problem.Message})
+			}
+		}
 		if len(job.Steps) == 0 {
 			problems = append(problems, ValidationError{jobPath + ".steps", "must contain at least one step"})
 		}
@@ -213,6 +218,41 @@ func validateJobs(path string, jobs []Job) ValidationErrors {
 	}
 	return append(problems, validateDependencies(path+".jobs", names, deps)...)
 }
+
+// ValidateServices is also used at the Runner boundary for persisted plans.
+func ValidateServices(services []Service) error {
+	var problems ValidationErrors
+	if len(services) > 16 {
+		return ValidationErrors{{"services", "must contain at most 16 services"}}
+	}
+	names := make(map[string]bool, len(services))
+	for i, service := range services {
+		path := fmt.Sprintf("services[%d]", i)
+		alias := strings.ToLower(service.Name)
+		if !namePattern.MatchString(service.Name) || names[alias] {
+			problems = append(problems, ValidationError{path + ".name", "must be valid and unique within the job (case insensitive)"})
+		}
+		names[alias] = true
+		if service.Image == "" || len(service.Image) > 512 || strings.HasPrefix(service.Image, "-") || strings.ContainsAny(service.Image, " \t\r\n\x00") {
+			problems = append(problems, ValidationError{path + ".image", "must be a non-empty image reference, not an option"})
+		}
+		if len(service.Environment) > 128 {
+			problems = append(problems, ValidationError{path + ".environment", "must contain at most 128 variables"})
+		}
+		for key, value := range service.Environment {
+			if !environmentNamePattern.MatchString(key) || len(key) > 128 || len(value) > 32768 || strings.ContainsRune(value, 0) {
+				problems = append(problems, ValidationError{path + ".environment", "contains an invalid variable"})
+				break
+			}
+		}
+	}
+	if len(problems) > 0 {
+		return problems
+	}
+	return nil
+}
+
+var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func parseByteSize(raw string) (int64, error) {
 	if raw == "" {

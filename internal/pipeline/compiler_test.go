@@ -46,6 +46,39 @@ func TestCompileValidPipeline(t *testing.T) {
 	}
 }
 
+func TestCompileServices(t *testing.T) {
+	base, err := Parse([]byte(validPipeline))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, services := range map[string][]Service{
+		"duplicate alias":     {{Name: "db", Image: "postgres:17"}, {Name: "DB", Image: "redis:7"}},
+		"invalid alias":       {{Name: "bad alias", Image: "redis:7"}},
+		"empty image":         {{Name: "db"}},
+		"option image":        {{Name: "db", Image: "--privileged"}},
+		"invalid environment": {{Name: "db", Image: "redis:7", Environment: map[string]string{"BAD=KEY": "value"}}},
+		"nul environment":     {{Name: "db", Image: "redis:7", Environment: map[string]string{"KEY": "bad\x00value"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			value := base
+			value.Stages = append([]Stage(nil), base.Stages...)
+			value.Stages[0].Jobs = append([]Job(nil), base.Stages[0].Jobs...)
+			value.Stages[0].Jobs[0].Services = services
+			if err := Validate(value); err == nil || !strings.Contains(err.Error(), "services") {
+				t.Fatalf("unsafe services accepted: %v", err)
+			}
+		})
+	}
+	base.Stages[0].Jobs[0].Services = []Service{{Name: "db", Image: "postgres:17", Environment: map[string]string{"POSTGRES_DB": "test"}}}
+	if err := Validate(base); err != nil {
+		t.Fatal(err)
+	}
+	base.Stages[0].Jobs[0].Services = make([]Service, 17)
+	if err := Validate(base); err == nil {
+		t.Fatal("unbounded service list accepted")
+	}
+}
+
 func TestCompileNormalizesRunnerRequirementsAndDisk(t *testing.T) {
 	source := strings.Replace(validPipeline, "        timeout: 10m", `        timeout: 10m
         runs_on:

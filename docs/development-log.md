@@ -1,5 +1,39 @@
 # Development log
 
+## 2026-09-30 — CI-01 isolated Job service lifecycle
+
+- Jobs with `services` now create and start dependency containers on their own
+  bridge network, with service-name aliases and no host ports, build workspace,
+  host directories or Docker socket exposure. Image HEALTHCHECK readiness is
+  bounded to a shared 60-second deadline; images without one require explicit
+  application probes in user steps. The Job deadline and lease cancellation
+  remain authoritative. Startup failures emit safe first-step diagnostics.
+- Compiler/schema and Runner validation bound service/environment counts and
+  reject invalid/duplicate aliases, CLI-option images and unsafe environment
+  fields. Service startup supports image ownership initialization and user
+  switching with five explicitly retained capabilities; no privileged mode.
+  CPU/memory/PID limits apply per service, not an aggregate Job budget.
+- Deterministic cleanup removes service containers and their anonymous image
+  volumes before the Job network/workspace. Regressions cover partial creation,
+  failed startup/step, unhealthy/exited state, oversized inspection output,
+  timeout, cancellation and suppressed service-environment output. Process/host
+  crash cleanup remains outside this normal lifecycle guarantee.
+- Windows affected-package tests (`internal/runner`, `internal/pipeline`, `api`),
+  Runner/pipeline vet and diff checks passed. Actual Docker integration passed
+  for healthy HTTP/name resolution, PostgreSQL query, unhealthy refusal,
+  active-step cancellation and resource removal including PostgreSQL's anonymous
+  volume. The first HTTP fixture lacked Alpine's optional httpd applet; fixed
+  its test image with official busybox-extras and reran successfully.
+- Linux Runner/pipeline race tests and vet passed in a network-disabled official
+  Go container using a source allowlist snapshot and local module cache. The
+  first Alpine verification image could not download GCC (I/O error); switched
+  to the official Go image with its compiler included. Full repository release
+  qualification was not repeated for this ordinary task.
+- Added `docs/ci-services.md` with usage, limits and opt-in Docker tests, and
+  refreshed the atomic plan's execution status. CI-01 is complete locally;
+  next implementation is CI-02. This code is not pushed or deployed, and hosted
+  CI has not run for this local commit. GE-04's remaining scenarios stay open.
+
 ## 2026-09-30 — GE-04 real private Gitee push and rerun evidence
 
 - The operator supplied `zhyuu/test` and authorized its Gitee login/testing.

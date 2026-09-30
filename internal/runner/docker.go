@@ -18,11 +18,13 @@ import (
 )
 
 type DockerExecutor struct {
-	Binary         string
-	Stdout         io.Writer
-	Stderr         io.Writer
-	CleanupTimeout time.Duration
-	command        func(context.Context, string, ...string) *exec.Cmd
+	Binary              string
+	Stdout              io.Writer
+	Stderr              io.Writer
+	CleanupTimeout      time.Duration
+	ServiceReadyTimeout time.Duration
+	ServicePollInterval time.Duration
+	command             func(context.Context, string, ...string) *exec.Cmd
 }
 
 func NewDockerExecutor(stdout, stderr io.Writer) *DockerExecutor {
@@ -61,8 +63,8 @@ func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipe
 	if source != nil {
 		defer clear(source.credential)
 	}
-	if len(spec.Services) > 0 {
-		return errors.New("service containers are declared but not implemented by the milestone-0 executor")
+	if err := pipeline.ValidateServices(spec.Services); err != nil {
+		return fmt.Errorf("invalid service configuration: %w", err)
 	}
 	jobCtx := ctx
 	if spec.Timeout > 0 {
@@ -77,7 +79,7 @@ func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipe
 	if err := e.run(jobCtx, "volume", "create", volume); err != nil {
 		return err
 	}
-	defer e.cleanup(jobID, len(spec.Steps), volume, network)
+	defer e.cleanup(jobID, len(spec.Steps), volume, network, len(spec.Services))
 	if err := e.run(jobCtx, "network", "create", "--driver", "bridge", network); err != nil {
 		return err
 	}
@@ -87,6 +89,11 @@ func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipe
 			_, _ = io.WriteString(failureLog, "[checkout] Source checkout failed before user steps.\n")
 			return fmt.Errorf("source checkout failed: %w", err)
 		}
+	}
+	if err := e.startServices(jobCtx, jobID, network, spec); err != nil {
+		_, failureLog := jobLogWriters(jobCtx, 0, e.Stdout, e.Stderr)
+		_, _ = fmt.Fprintf(failureLog, "[services] Startup failed: %v\n", err)
+		return err
 	}
 	for index, step := range spec.Steps {
 		if err := jobCtx.Err(); err != nil {
@@ -201,7 +208,7 @@ func (e *DockerExecutor) run(ctx context.Context, args ...string) error {
 	return nil
 }
 
-func (e *DockerExecutor) cleanup(jobID uuid.UUID, steps int, volume, network string) {
+func (e *DockerExecutor) cleanup(jobID uuid.UUID, steps int, volume, network string, services int) {
 	timeout := e.CleanupTimeout
 	if timeout <= 0 {
 		timeout = 15 * time.Second
@@ -213,6 +220,13 @@ func (e *DockerExecutor) cleanup(jobID uuid.UUID, steps int, volume, network str
 		containerArgs = append(containerArgs, dockerContainerName(jobID, index))
 	}
 	e.runQuiet(ctx, containerArgs...)
+	if services > 0 {
+		serviceArgs := []string{"container", "rm", "-f", "-v"}
+		for index := 0; index < services; index++ {
+			serviceArgs = append(serviceArgs, dockerServiceContainerName(jobID, index))
+		}
+		e.runQuiet(ctx, serviceArgs...)
+	}
 	var cleanup sync.WaitGroup
 	cleanup.Add(2)
 	go func() {
