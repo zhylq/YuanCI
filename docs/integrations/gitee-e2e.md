@@ -2,11 +2,40 @@
 
 ## Current status
 
-GE-01 through GE-03 are implemented. GE-04 deterministic tests and local
-verification are separate from **operator-owned real Gitee acceptance, pending**.
+GE-01 through GE-03 are implemented. As of 2026-09-30, real private-repository
+push, checkout, execution, persisted logs and full rerun have been observed.
+GE-04 remains **OPEN** for the remaining provider/security acceptance scenarios.
+Deterministic tests and local verification do not close those scenarios.
 The account name `huiyuan1986` is not a repository selection or proof of
 authorization. No Gitee credentials have been requested in chat or fabricated.
 This does not close the four-SCM gate or establish production readiness.
+
+### Real sandbox evidence — 2026-09-30 (Asia/Shanghai)
+
+The operator selected `https://gitee.com/zhyuu/test` and explicitly authorized
+Gitee login/testing. The browser session can access the private repository and
+its imported YuanCI project on `https://ci.uyii.cn`. No OAuth secret, webhook
+password or deployment credential was read or changed during this acceptance.
+The deployment descriptions below are historical checkpoints, not current
+release-image or configuration verification.
+
+| Evidence | Observed result |
+| --- | --- |
+| Repository identity | Gitee repository `21597491`; YuanCI project `c72ddfd1-7a0d-4655-bde7-58aff6118cd8` |
+| Existing success | Run `76fb3ee5-3927-4635-8091-f8422cddfbab`, source `da69262e23f7086f270fec49b93518cde30b83b5`; old logs have expired |
+| Full rerun | Run `0ddde179-7fc6-42e5-91d3-9c9b942b23da` succeeded at the same source SHA; fresh logs contain the checkout marker and existing proof contents |
+| New real push | Added a non-secret marker to `proof.txt` on the test repository's `main`; commit `52533b4c053402a1b3b808fbaf6ace9aab4bd614` |
+| Automatic build | Run `d63cded1-de28-4f5c-b0e3-8f2af90cf743` created automatically at 2026-09-30 16:36:28 Asia/Shanghai and succeeded; no manual Run trigger was used for this commit |
+| Config identity | `15402bff33e5cd95cec33e480f5eac9514785032c543614ef24aef8015b13a26` for the observed runs |
+| Source/log proof | The new Run log includes `[checkout] Fetching source at assigned commit.` and `yuanci-ge04-2026-09-30-auto-build-proof` from the new commit |
+
+Remaining: pending/final Gitee Check Runs and permissions, moving-ref isolation,
+duplicate delivery, deliberate failure/failed-Job rerun, cancellation cleanup,
+same-repository PR/tag/rejected fork, password replacement and grant revocation,
+bounded leak checks, and deployed code/image/Runner identity verification.
+The Gitee commit page did not expose a Check Runs result during this read-only
+inspection; status delivery is unverified, not presumed successful. Keep GE-04
+open until each required scenario has recorded evidence.
 
 The existing `ci.uyii.cn` GitHub managed sandbox was upgraded to the GE-03 code
 on 2026-09-04, but its persisted active provider is GitHub. It remains a GitHub

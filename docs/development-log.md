@@ -1,5 +1,22 @@
 # Development log
 
+## 2026-09-30 — GE-04 real private Gitee push and rerun evidence
+
+- The operator supplied `zhyuu/test` and authorized its Gitee login/testing.
+  Its private repository is already imported and automation is enabled in the
+  protected `ci.uyii.cn` Gitee sandbox. Found a real 2026-09-08 success omitted
+  from the prior handoff; do not infer that all GE-04 scenarios passed.
+- Full rerun `0ddde179-7fc6-42e5-91d3-9c9b942b23da` succeeded at immutable
+  source `da69262e23f7086f270fec49b93518cde30b83b5`, with fresh checkout/proof logs.
+- Added a non-secret proof marker to the designated test repository. Real push
+  `52533b4c053402a1b3b808fbaf6ace9aab4bd614` automatically created successful
+  Run `d63cded1-de28-4f5c-b0e3-8f2af90cf743`; persisted logs show that marker.
+  Recorded IDs and remaining scenarios in `docs/integrations/gitee-e2e.md`.
+- No provider secret, webhook password, grant, deployment configuration or
+  production image was changed. GE-04 remains OPEN, especially Check Runs and
+  security/failure scenarios. Existing E2E-GH-01 completion permits independent
+  CI-01 implementation while remaining real-provider acceptance is tracked.
+
 ## 2026-09-08 — Checkout helper and diagnostics
 
 - Fixed the Git helper entrypoint to `sh` and enabled stdin forwarding for
