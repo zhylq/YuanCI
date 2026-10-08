@@ -25,7 +25,7 @@ func TestCheckRunDeliveryContract(t *testing.T) {
 					if r.Method != "GET" || r.URL.Query().Get("check_name") != "YuanCI/"+item.RunID.String() {
 						t.Fatal("missing deterministic name")
 					}
-					return response(r, 200, `[{"id":19,"name":"YuanCI/`+item.RunID.String()+`","head_sha":"`+item.CommitSHA+`","status":"queued"}]`), nil
+					return response(r, 200, `{"total_count":1,"check_runs":[{"id":19,"name":"YuanCI/`+item.RunID.String()+`","head_sha":"`+item.CommitSHA+`","status":"queued"}]}`), nil
 				}
 				if r.Method != "PATCH" || !strings.HasSuffix(r.URL.Path, "/check-runs/19") {
 					t.Fatal("must reuse check")

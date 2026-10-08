@@ -62,6 +62,29 @@ type checkRun struct {
 	Status string `json:"status"`
 }
 
+// Gitee returns a GitHub-compatible envelope. Accept older array responses too.
+type checkRunList []checkRun
+
+func (checks *checkRunList) UnmarshalJSON(body []byte) error {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return ErrRemote
+	}
+	if body[0] == '[' {
+		return json.Unmarshal(body, (*[]checkRun)(checks))
+	}
+	var envelope struct {
+		CheckRuns json.RawMessage `json:"check_runs"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return err
+	}
+	if len(envelope.CheckRuns) == 0 || bytes.Equal(bytes.TrimSpace(envelope.CheckRuns), []byte("null")) {
+		return ErrRemote
+	}
+	return json.Unmarshal(envelope.CheckRuns, (*[]checkRun)(checks))
+}
+
 func (c *Client) DeliverCheck(ctx context.Context, token string, repo Repository, item commitstatus.Item, target string) error {
 	if !validToken(token) || !ValidComponent(repo.Owner) || !ValidComponent(repo.Name) || item.RunID == uuid.Nil || !shaPattern.MatchString(item.CommitSHA) || !item.State.Valid() {
 		return commitstatus.ErrInvalid
@@ -73,7 +96,7 @@ func (c *Client) DeliverCheck(ctx context.Context, token string, repo Repository
 	// Gitee has no documented idempotency key: concurrent remote creates cannot be
 	// claimed exactly-once. The durable worker lease serializes normal delivery.
 	for page := 1; page <= 10; page++ {
-		var checks []checkRun
+		var checks checkRunList
 		query := url.Values{"check_name": {name}, "filter": {"all"}, "per_page": {"100"}, "page": {strconv.Itoa(page)}}
 		if err := c.get(ctx, base+"/commits/"+item.CommitSHA+"/check-runs?"+query.Encode(), token, &checks, 1<<20); err != nil {
 			return err
