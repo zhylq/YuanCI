@@ -144,6 +144,9 @@ func TestGiteeWebhookCreatesSharedRun(t *testing.T) {
 	if err != nil || status == nil {
 		t.Fatal("claim status", err)
 	}
+	if status.SourceEvent != "push" || status.SourceRef != "refs/heads/main" {
+		t.Fatalf("pending check lost trusted run provenance: event=%q ref=%q", status.SourceEvent, status.SourceRef)
+	}
 	if err := service.Deliver(t.Context(), *status); err != nil {
 		t.Fatal("pending delivery", err)
 	}
@@ -208,6 +211,9 @@ func TestGiteeWebhookCreatesSharedRun(t *testing.T) {
 	final, err := s.ClaimCommitStatus(t.Context(), time.Minute)
 	if err != nil || final == nil || final.State != commitstatus.StateSuccess {
 		t.Fatal("final outbox", err)
+	}
+	if final.SourceEvent != status.SourceEvent || final.SourceRef != status.SourceRef {
+		t.Fatal("terminal check provenance changed")
 	}
 	if err := service.Deliver(t.Context(), *final); err != nil {
 		t.Fatal("final delivery", err)

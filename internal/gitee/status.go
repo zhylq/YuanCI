@@ -105,7 +105,14 @@ func (c *Client) DeliverCheck(ctx context.Context, token string, repo Repository
 	case commitstatus.StateError:
 		conclusion = "cancelled"
 	}
-	body := map[string]any{"name": name, "status": status, "details_url": target, "output": map[string]any{"title": "YuanCI", "summary": item.Description, "annotations": []any{}, "images": []any{}}, "actions": []any{}}
+	// This marker comes from persisted Run metadata, never pipeline environment.
+	// Host-side deployment consumers reject old checks without this provenance.
+	provenance, err := json.Marshal(map[string]string{"event": item.SourceEvent, "ref": item.SourceRef, "commit": item.CommitSHA})
+	if err != nil {
+		return ErrRemote
+	}
+	summary := item.Description + "\nYUANCI_SOURCE_V1 " + string(provenance)
+	body := map[string]any{"name": name, "status": status, "details_url": target, "output": map[string]any{"title": "YuanCI", "summary": summary, "annotations": []any{}, "images": []any{}}, "actions": []any{}}
 	if conclusion != "" {
 		body["conclusion"] = conclusion
 		body["completed_at"] = time.Now().UTC().Format(time.RFC3339)

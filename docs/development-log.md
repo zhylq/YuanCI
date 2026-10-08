@@ -1,5 +1,19 @@
 # Development log
 
+## 2026-10-08 — Gitee deployment source provenance
+
+- Commit-status claims now read immutable event/ref from their persisted Run.
+  Gitee Check Run summaries include a `YUANCI_SOURCE_V1` JSON marker with event,
+  ref and commit SHA, allowing a host publisher to distinguish main push checks
+  from checks of the same SHA on another branch. No schema migration is needed.
+- Consumers must require exact project/Run URLs, SHA, source metadata and the
+  latest completed/success check. This marker is not a digital signature;
+  repository and Check Run writers remain part of the deployment trust boundary.
+- Gitee/commitstatus/postgres package tests and vet passed. Three real temporary
+  PostgreSQL integration tests passed, including pending/final Run provenance.
+  Windows Git fixtures ran with test-only autocrlf disabled. Actual Gitee output
+  consumption and production publisher activation remain pending project setup.
+
 ## 2026-09-30 — CI-01 isolated Job service lifecycle
 
 - Jobs with `services` now create and start dependency containers on their own
