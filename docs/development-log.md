@@ -1587,3 +1587,10 @@ the batch outcome and remaining work.
 - YuanPlan's pipeline validated online and branch push/PR automation was enabled. A real main push created Run cc1fb012-4935-4f06-b8e4-07479ce98194. Its failure was correctly delivered to Gitee with the exact commit/event/ref source marker.
 - That run exposed Docker's rejection of the supported pipeline memory value `4Gi`. Normalize the IEC `i` marker for both job and service Docker arguments, preserving the binary memory limit. Updated the security argument regression and exercised `256Mi` with actual Docker job/service integration tests.
 - Runner tests, vet and real Docker service integration passed. Production publication remains gated on successful main CI and administrator installation/activation.
+
+## 2026-10-08 — YuanPlan real main push verification passed
+
+- Gitee main commit `ad94d5c5e24cd19459d80bbc4331a7bb63890950` automatically created Run `a7e397f8-6a4e-490a-8c03-5d2ab8187eff`. The isolated PostgreSQL service, typecheck, 97 tests across 11 files, application build and API/web/JavaScript startup smoke checks all passed.
+- Prewarmed the locked public npm artifacts in `yuanplan-ci:node22-pg17-warm`; the final image contains no application source or production credentials. Offline installation with lifecycle scripts passed locally, and the real Runner installed dependencies in 19 seconds. Lockfile integrity checks remain active.
+- Gitee Check Run `26946057` reports completed/success for the exact main commit with the trusted push/ref source marker and the correct YuanCI Run URL. The installed publisher's read-only eligibility check selected this check successfully.
+- The administrator installed the protected containerized publisher, configuration and systemd units. The timer is still disabled pending administrator activation; first production publication has not yet been verified. Existing npm audit output reports 2 high and 2 critical findings; dependency remediation remains separate work.
