@@ -7,6 +7,15 @@ import (
 	"github.com/yuanci/yuanci/internal/scm"
 )
 
+// ValidateTriggers validates event policy independently of executable stages so
+// unrelated configuration errors cannot turn excluded events into failed runs.
+func ValidateTriggers(triggers []Trigger) error {
+	if problems := validateTriggers(triggers); len(problems) > 0 {
+		return problems
+	}
+	return nil
+}
+
 func validateTriggers(triggers []Trigger) ValidationErrors {
 	var problems ValidationErrors
 	allowedEvents := map[string]bool{"push": true, "pull_request": true, "tag": true, "manual": true, "cron": true, "api": true}

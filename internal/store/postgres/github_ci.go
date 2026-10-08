@@ -168,7 +168,7 @@ func (s *Store) CommitWebhookFailedRun(ctx context.Context, request githubci.Fai
 	}
 	failedPlan := pipeline.Plan{
 		Version: pipeline.APIVersion, Name: request.PipelinePath, ConfigSHA256: request.ConfigSHA256,
-		CompiledAt: request.CreatedAt.UTC(), Stages: []pipeline.PlanStage{},
+		CompiledAt: request.CreatedAt.UTC(), Triggers: request.Triggers, Stages: []pipeline.PlanStage{},
 	}
 	planJSON, err := json.Marshal(failedPlan)
 	if err != nil {
@@ -191,7 +191,7 @@ func (s *Store) CommitWebhookFailedRun(ctx context.Context, request githubci.Fai
 	}
 	event := request.Delivery.Event
 	if event.Provider == scm.Gitee {
-		if err := lockGiteeDelivery(ctx, tx, request.Delivery, request.RepositoryID, request.PipelinePath, false); err != nil {
+		if err := lockGiteeDelivery(ctx, tx, request.Delivery, request.RepositoryID, request.PipelinePath, len(request.Triggers) > 0); err != nil {
 			return githubci.RunResult{}, err
 		}
 	}
@@ -295,6 +295,10 @@ func validateWebhookFailedRunCommit(request githubci.FailedRunCommit) error {
 		return githubci.ErrInvalidCommit
 	}
 	if decoded, err := hex.DecodeString(request.ConfigSHA256); err != nil || len(decoded) != sha256.Size {
+		return githubci.ErrInvalidCommit
+	}
+	if pipeline.ValidateTriggers(request.Triggers) != nil || !pipeline.MatchTriggers(request.Triggers, event) ||
+		(request.ErrorCode == "pipeline_not_found" && len(request.Triggers) > 0) {
 		return githubci.ErrInvalidCommit
 	}
 	return nil

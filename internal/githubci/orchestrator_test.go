@@ -211,6 +211,55 @@ func TestOrchestratorUsesLegacyEventSettingsOnlyWithoutYAMLTriggers(t *testing.T
 	}
 }
 
+func TestOrchestratorEvaluatesTriggerPolicyBeforeConfigurationFailures(t *testing.T) {
+	invalidStages := "version: v1\nname: webhook\nstages: []\n"
+	for _, provider := range []scm.Provider{scm.GitHub, scm.Gitee} {
+		for _, test := range []struct {
+			name, source, ref string
+			fetchErr          error
+			legacyEnabled     bool
+			want              Outcome
+			code              string
+		}{
+			{"missing pipeline", "", "refs/heads/main", scm.ErrNotFound, false, OutcomeIgnoredTrigger, "trigger_disabled"},
+			{"unavailable pipeline", "", "refs/heads/main", errors.New("temporarily unavailable"), false, OutcomeIgnoredTrigger, "trigger_disabled"},
+			{"invalid YAML", "invalid: [", "refs/heads/main", nil, false, OutcomeIgnoredTrigger, "trigger_disabled"},
+			{"invalid stages absent triggers", invalidStages, "refs/heads/main", nil, false, OutcomeIgnoredTrigger, "trigger_disabled"},
+			{"invalid stages empty triggers", invalidStages + "triggers: []\n", "refs/heads/main", nil, false, OutcomeIgnoredTrigger, "trigger_disabled"},
+			{"invalid trigger policy", invalidStages + "triggers:\n  - event: push\n    paths: [src/**]\n", "refs/heads/main", nil, false, OutcomeIgnoredTrigger, "trigger_disabled"},
+			{"invalid stages excluded branch", invalidStages + "triggers:\n  - event: push\n    branches: [main]\n", "refs/heads/feature", nil, true, OutcomeIgnoredTrigger, "trigger_mismatch"},
+			{"explicit excluded branch legacy disabled", invalidStages + "triggers:\n  - event: push\n    branches: [main]\n", "refs/heads/feature", nil, false, OutcomeIgnoredTrigger, "trigger_mismatch"},
+			{"valid matching policy invalid stages", invalidStages + "triggers:\n  - event: push\n    branches: [main]\n", "refs/heads/main", nil, false, OutcomeFailedRunCreated, "pipeline_invalid"},
+			{"missing pipeline legacy enabled", "", "refs/heads/main", scm.ErrNotFound, true, OutcomeFailedRunCreated, "pipeline_not_found"},
+		} {
+			t.Run(string(provider)+"/"+test.name, func(t *testing.T) {
+				repositoryID := uuid.New()
+				settings := project.DefaultAutomationSettings()
+				settings.Enabled, settings.TriggerPush = true, test.legacyEnabled
+				store := &orchestratorStore{repositoryID: repositoryID, settings: settings, failedCommitResult: RunResult{ID: uuid.New(), Created: true}}
+				fetcher := &pipelineFetcher{repository: githubapp.Repository{ID: repositoryID}, source: []byte(test.source), err: test.fetchErr}
+				orchestrator, _ := NewOrchestrator(store, fetcher)
+				event := webhookEvent(scm.EventPush)
+				event.Provider, event.Ref = provider, test.ref
+				outcome, err := orchestrator.Process(t.Context(), workItem(event))
+				if err != nil || outcome != test.want {
+					t.Fatalf("outcome=%s want=%s err=%v", outcome, test.want, err)
+				}
+				if store.commit.RepositoryID != uuid.Nil {
+					t.Fatal("configuration failure created an executable run")
+				}
+				if test.want == OutcomeIgnoredTrigger {
+					if store.failedCommit.RepositoryID != uuid.Nil || len(store.finalized) != 1 || store.finalized[0].State != githubhook.FinalIgnored || store.finalized[0].ErrorCode != test.code {
+						t.Fatalf("disabled or excluded event created a failure run: failed=%+v finalized=%+v", store.failedCommit, store.finalized)
+					}
+				} else if store.failedCommit.ErrorCode != test.code {
+					t.Fatalf("configuration failure lost classification: %+v", store.failedCommit)
+				}
+			})
+		}
+	}
+}
+
 func TestOrchestratorPullRequestBranchTriggerUsesTargetBranch(t *testing.T) {
 	for _, base := range []string{"main", "other"} {
 		t.Run(base, func(t *testing.T) {
