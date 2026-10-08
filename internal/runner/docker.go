@@ -177,7 +177,7 @@ func buildDockerArgs(volume, network string, jobID uuid.UUID, index int, image s
 		args = append(args, "--cpus", job.Resources.CPU)
 	}
 	if safeResource(job.Resources.Memory) {
-		args = append(args, "--memory", job.Resources.Memory)
+		args = append(args, "--memory", dockerMemory(job.Resources.Memory))
 	}
 	environment := make(map[string]string, len(job.Environment)+len(step.Environment))
 	for key, value := range job.Environment {
@@ -270,6 +270,9 @@ func dockerCheckoutContainerName(jobID uuid.UUID) string {
 var resourcePattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?(?:[kmgtKMGT]i?[bB]?)?$`)
 
 func safeResource(value string) bool { return value != "" && resourcePattern.MatchString(value) }
+
+// Docker's memory units are binary but do not accept the IEC "i" marker.
+func dockerMemory(value string) string { return strings.ReplaceAll(value, "i", "") }
 func defaultString(value, fallback string) string {
 	if value == "" {
 		return fallback

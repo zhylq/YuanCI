@@ -1580,3 +1580,10 @@ the batch outcome and remaining work.
   URL identity validation now accepts exactly the canonical browser form or
   that form with one `.git` suffix; different origins and substituted paths
   remain rejected. Focused discovery tests cover the real form and rejection.
+
+## 2026-10-08 — Real YuanPlan Gitee acceptance and Docker memory units
+
+- Updated the Gitee sandbox Server/Runner to a882e8d after a protected database/config backup; PostgreSQL and authorization/identity volumes were retained. Public readiness and Runner online checks passed.
+- YuanPlan's pipeline validated online and branch push/PR automation was enabled. A real main push created Run cc1fb012-4935-4f06-b8e4-07479ce98194. Its failure was correctly delivered to Gitee with the exact commit/event/ref source marker.
+- That run exposed Docker's rejection of the supported pipeline memory value `4Gi`. Normalize the IEC `i` marker for both job and service Docker arguments, preserving the binary memory limit. Updated the security argument regression and exercised `256Mi` with actual Docker job/service integration tests.
+- Runner tests, vet and real Docker service integration passed. Production publication remains gated on successful main CI and administrator installation/activation.

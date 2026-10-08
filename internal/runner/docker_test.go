@@ -19,7 +19,7 @@ func TestDockerArgsApplySecurityDefaults(t *testing.T) {
 		pipeline.PlanJob{Resources: pipeline.Resources{CPU: "2", Memory: "1Gi"}},
 		pipeline.Step{Name: "test", Commands: []string{"echo ok"}})
 	joined := strings.Join(args, " ")
-	for _, expected := range []string{"--network network", "--cap-drop ALL", "no-new-privileges", "--read-only", "--pids-limit 256", "--cpus 2", "--memory 1Gi"} {
+	for _, expected := range []string{"--network network", "--cap-drop ALL", "no-new-privileges", "--read-only", "--pids-limit 256", "--cpus 2", "--memory 1G"} {
 		if !strings.Contains(joined, expected) {
 			t.Errorf("expected %q in %q", expected, joined)
 		}
