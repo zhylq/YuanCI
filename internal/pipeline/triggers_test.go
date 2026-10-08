@@ -22,6 +22,9 @@ func TestMatchTriggersMatchesActualEventAndExactBranch(t *testing.T) {
 		{"PR head irrelevant", []Trigger{{Event: "pull_request", Branches: []string{"main"}}}, scm.Event{Type: scm.EventPullRequest, Ref: "refs/heads/main", Metadata: map[string]string{"base_ref": "release"}}, false},
 		{"missing PR base", []Trigger{{Event: "pull_request"}}, scm.Event{Type: scm.EventPullRequest, Ref: "refs/heads/feature"}, false},
 		{"tag event", []Trigger{{Event: "tag"}}, scm.Event{Type: scm.EventTag, Ref: "refs/tags/v1.0"}, true},
+		{"tag named refs release", []Trigger{{Event: "tag"}}, scm.Event{Type: scm.EventTag, Ref: "refs/tags/refs/release"}, true},
+		{"tag named at sign", []Trigger{{Event: "tag"}}, scm.Event{Type: scm.EventTag, Ref: "refs/tags/@"}, true},
+		{"tag starts with hyphen", []Trigger{{Event: "tag"}}, scm.Event{Type: scm.EventTag, Ref: "refs/tags/-release"}, true},
 		{"tag does not match push", []Trigger{{Event: "push"}}, scm.Event{Type: scm.EventTag, Ref: "refs/tags/main"}, false},
 		{"push must not contain tag ref", []Trigger{{Event: "push"}}, scm.Event{Type: scm.EventPush, Ref: "refs/tags/main"}, false},
 		{"tag must not contain branch ref", []Trigger{{Event: "tag"}}, scm.Event{Type: scm.EventTag, Ref: "refs/heads/main"}, false},
@@ -32,6 +35,16 @@ func TestMatchTriggersMatchesActualEventAndExactBranch(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := MatchTriggers(test.triggers, test.event); got != test.want {
 				t.Fatalf("MatchTriggers()=%v want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestMatchTriggersRejectsMalformedTagRefs(t *testing.T) {
+	for _, ref := range []string{"", "v1", "refs/tags/", "refs/tags//release", "refs/tags/release/", "refs/tags/release.", "refs/tags/.hidden", "refs/tags/release.lock", "refs/tags/release..next", "refs/tags/release@{next}", "refs/tags/release*", "refs/tags/release\n", "refs/tags/release\\next"} {
+		t.Run(ref, func(t *testing.T) {
+			if MatchTriggers([]Trigger{{Event: "tag"}}, scm.Event{Type: scm.EventTag, Ref: ref}) {
+				t.Fatalf("invalid tag matched: %q", ref)
 			}
 		})
 	}

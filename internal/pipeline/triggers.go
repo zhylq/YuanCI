@@ -65,7 +65,7 @@ func MatchTriggers(triggers []Trigger, event scm.Event) bool {
 			return false
 		}
 	case scm.EventTag:
-		if !strings.HasPrefix(event.Ref, "refs/tags/") || !validBranchName(strings.TrimPrefix(event.Ref, "refs/tags/")) {
+		if !strings.HasPrefix(event.Ref, "refs/tags/") || !validGitRef(event.Ref) {
 			return false
 		}
 	default:
@@ -88,16 +88,21 @@ func MatchTriggers(triggers []Trigger, event scm.Event) bool {
 }
 
 func validBranchName(branch string) bool {
-	if branch == "" || len(branch) > 255 || branch == "@" || strings.HasPrefix(branch, "-") || strings.HasPrefix(branch, "refs/") ||
-		strings.HasSuffix(branch, ".") || strings.Contains(branch, "..") || strings.Contains(branch, "@{") || strings.ContainsAny(branch, "~^:?*[\\") {
+	return branch != "" && len(branch) <= 255 && branch != "@" && !strings.HasPrefix(branch, "-") && !strings.HasPrefix(branch, "refs/") && validGitRef("refs/heads/"+branch)
+}
+
+// Full tag refs permit names such as @, -release and refs/release. Only branch
+// filters require unqualified branch names and their additional restrictions.
+func validGitRef(ref string) bool {
+	if !strings.Contains(ref, "/") || strings.HasSuffix(ref, ".") || strings.Contains(ref, "..") || strings.Contains(ref, "@{") || strings.ContainsAny(ref, "~^:?*[\\") {
 		return false
 	}
-	for _, r := range branch {
+	for _, r := range ref {
 		if r <= ' ' || r == 127 {
 			return false
 		}
 	}
-	for _, part := range strings.Split(branch, "/") {
+	for _, part := range strings.Split(ref, "/") {
 		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
 			return false
 		}

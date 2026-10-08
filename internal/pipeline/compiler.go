@@ -42,6 +42,9 @@ func (e ValidationErrors) Error() string {
 }
 
 func Parse(source []byte) (Pipeline, error) {
+	if _, err := decodePipelineDocument(source); err != nil {
+		return Pipeline{}, err
+	}
 	var value Pipeline
 	decoder := yaml.NewDecoder(strings.NewReader(string(source)))
 	decoder.KnownFields(true)

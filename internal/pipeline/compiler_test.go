@@ -166,6 +166,20 @@ func TestCompileRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestCompileRejectsAmbiguousTriggerYAML(t *testing.T) {
+	for name, source := range map[string]string{
+		"multiple documents": validPipeline + "\n---\ntriggers: [{event: tag}]\n",
+		"root merge":         strings.Replace(validPipeline, "version: v1", "<<: {version: v1}", 1),
+		"trigger aliases":    strings.Replace(validPipeline, "  - event: push", "  - event: push\n    branches: &branches [main]\n  - event: pull_request\n    branches: *branches", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Compile([]byte(source), time.Now()); err == nil {
+				t.Fatal("ambiguous YAML compiled to an executable plan")
+			}
+		})
+	}
+}
+
 func TestValidateRejectsDependencyCycle(t *testing.T) {
 	source := `version: v1
 name: cycle

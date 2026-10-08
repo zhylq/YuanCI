@@ -83,6 +83,8 @@ func (p failingTriggerGiteePipeline) File(context.Context, string, gitee.Reposit
 
 func TestGiteeTriggerPolicyConfigurationFailures(t *testing.T) {
 	invalidStages := "version: v1\nname: webhook\nstages: []\n"
+	unknownJobField := strings.Replace(githubCIPipeline, "        image: alpine:3.23", "        image: alpine:3.23\n        unknown_job_field: true", 1) + "triggers:\n  - event: push\n    branches: [main]\n"
+	badStageType := "version: v1\nname: webhook\nstages: invalid\ntriggers:\n  - event: push\n    branches: [main]\n"
 	for _, test := range []struct {
 		name, source, branch   string
 		missing, legacyEnabled bool
@@ -95,6 +97,10 @@ func TestGiteeTriggerPolicyConfigurationFailures(t *testing.T) {
 		{"legacy disabled invalid policy", invalidStages + "triggers:\n  - event: push\n    paths: [src/**]\n", "main", false, false, githubci.OutcomeIgnoredTrigger},
 		{"explicit excluded branch", invalidStages + "triggers:\n  - event: push\n    branches: [main]\n", "feature", false, true, githubci.OutcomeIgnoredTrigger},
 		{"explicit match legacy disabled", invalidStages + "triggers:\n  - event: push\n    branches: [main]\n", "main", false, false, githubci.OutcomeFailedRunCreated},
+		{"unknown job field excluded branch", unknownJobField, "feature", false, true, githubci.OutcomeIgnoredTrigger},
+		{"unknown job field matching disabled legacy", unknownJobField, "main", false, false, githubci.OutcomeFailedRunCreated},
+		{"wrong stage type excluded branch", badStageType, "feature", false, true, githubci.OutcomeIgnoredTrigger},
+		{"wrong stage type matching disabled legacy", badStageType, "main", false, false, githubci.OutcomeFailedRunCreated},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s, service, session, id := giteeProjectFixture(t)
@@ -120,11 +126,7 @@ func TestGiteeTriggerPolicyConfigurationFailures(t *testing.T) {
 			}
 			orchestrator, _ := githubci.NewOrchestrator(s, service)
 			if test.want == githubci.OutcomeFailedRunCreated {
-				parsed, err := pipeline.Parse([]byte(test.source))
-				if err != nil {
-					t.Fatal(err)
-				}
-				request := githubci.FailedRunCommit{Delivery: *delivery, RepositoryID: id, PipelinePath: ".yuanci.yml", ConfigSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(test.source))), ErrorCode: "pipeline_invalid", ErrorSummary: "Pipeline configuration is invalid", Triggers: parsed.Triggers, CreatedAt: time.Now()}
+				request := githubci.FailedRunCommit{Delivery: *delivery, RepositoryID: id, PipelinePath: ".yuanci.yml", ConfigSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(test.source))), ErrorCode: "pipeline_invalid", ErrorSummary: "Pipeline configuration is invalid", Triggers: []pipeline.Trigger{{Event: "push", Branches: []string{"main"}}}, CreatedAt: time.Now()}
 				for _, boundary := range []struct{ deny, restore string }{
 					{`UPDATE repository_automation_settings SET enabled=false WHERE repository_id=$1`, `UPDATE repository_automation_settings SET enabled=true WHERE repository_id=$1`},
 					{`UPDATE gitee_webhook_configs SET revision=revision+1 WHERE repository_id=$1`, `UPDATE gitee_webhook_configs SET revision=revision-1 WHERE repository_id=$1`},

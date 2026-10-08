@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -213,6 +214,8 @@ func TestOrchestratorUsesLegacyEventSettingsOnlyWithoutYAMLTriggers(t *testing.T
 
 func TestOrchestratorEvaluatesTriggerPolicyBeforeConfigurationFailures(t *testing.T) {
 	invalidStages := "version: v1\nname: webhook\nstages: []\n"
+	unknownJobField := strings.Replace(orchestratorPipeline, "        image: alpine:3.20", "        image: alpine:3.20\n        unknown_job_field: true", 1) + "triggers:\n  - event: push\n    branches: [main]\n"
+	badStageType := "version: v1\nname: webhook\nstages: invalid\ntriggers:\n  - event: push\n    branches: [main]\n"
 	for _, provider := range []scm.Provider{scm.GitHub, scm.Gitee} {
 		for _, test := range []struct {
 			name, source, ref string
@@ -231,6 +234,10 @@ func TestOrchestratorEvaluatesTriggerPolicyBeforeConfigurationFailures(t *testin
 			{"explicit excluded branch legacy disabled", invalidStages + "triggers:\n  - event: push\n    branches: [main]\n", "refs/heads/feature", nil, false, OutcomeIgnoredTrigger, "trigger_mismatch"},
 			{"valid matching policy invalid stages", invalidStages + "triggers:\n  - event: push\n    branches: [main]\n", "refs/heads/main", nil, false, OutcomeFailedRunCreated, "pipeline_invalid"},
 			{"missing pipeline legacy enabled", "", "refs/heads/main", scm.ErrNotFound, true, OutcomeFailedRunCreated, "pipeline_not_found"},
+			{"unknown job field excluded branch", unknownJobField, "refs/heads/feature", nil, true, OutcomeIgnoredTrigger, "trigger_mismatch"},
+			{"unknown job field matching disabled legacy", unknownJobField, "refs/heads/main", nil, false, OutcomeFailedRunCreated, "pipeline_invalid"},
+			{"wrong stage type excluded branch", badStageType, "refs/heads/feature", nil, true, OutcomeIgnoredTrigger, "trigger_mismatch"},
+			{"wrong stage type matching disabled legacy", badStageType, "refs/heads/main", nil, false, OutcomeFailedRunCreated, "pipeline_invalid"},
 		} {
 			t.Run(string(provider)+"/"+test.name, func(t *testing.T) {
 				repositoryID := uuid.New()

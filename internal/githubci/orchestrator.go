@@ -116,9 +116,9 @@ func (o *Orchestrator) process(ctx context.Context, delivery githubhook.WorkItem
 	// A valid explicit policy is authoritative even when executable stages are
 	// invalid. Absent, empty or ambiguous policy falls back to project switches.
 	var triggers []pipeline.Trigger
-	parsed, parseErr := pipeline.Parse(source)
-	if parseErr == nil && len(parsed.Triggers) > 0 && pipeline.ValidateTriggers(parsed.Triggers) == nil {
-		triggers = parsed.Triggers
+	policy, policyErr := pipeline.ExtractTriggers(source)
+	if policyErr == nil && len(policy) > 0 {
+		triggers = policy
 		if !pipeline.MatchTriggers(triggers, delivery.Event) {
 			return o.ignore(ctx, delivery, OutcomeIgnoredTrigger, "trigger_mismatch", "Event does not match pipeline triggers")
 		}
