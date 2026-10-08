@@ -9,10 +9,12 @@
 **Tech Stack:** Go, PostgreSQL, Docker, mTLS Runner protocol, React/TypeScript.
 
 ### Trigger matching
-- [ ] Add failing matcher/orchestrator tests for events and exact/glob branch filtering.
-- [ ] Preserve triggers in compiled plans and filter before task creation; reject unsupported path filters instead of silently ignoring them.
-- [ ] Add delayed-push regression and verify immutable repository commit instead of mutable branch HEAD.
-- [ ] Run affected Go package tests.
+- [x] Add failing matcher/orchestrator tests for events and exact branch filtering; reject unsupported globs.
+- [x] Preserve triggers in compiled plans and filter before task creation; reject unsupported path filters instead of silently ignoring them.
+- [x] Add delayed-push regression and verify immutable repository commit instead of mutable branch HEAD.
+- [x] Run affected Go package tests.
+
+Trigger delivery: commits `29555ae`, `8145a33`, `1a20c7a`. Independent specification and quality reviews approved. Unit packages and real disposable PostgreSQL trigger/failure-policy integrations passed. Trigger extraction is independent of executable YAML decoding; ambiguous policy and multiple documents are rejected consistently. Valid tag refs and legacy disabled-event behavior remain supported.
 
 ### Deployment persistence and FIFO queue
 - [ ] Add additive migration for unique repository/environment/SHA identity and execution cleanup tracking.
