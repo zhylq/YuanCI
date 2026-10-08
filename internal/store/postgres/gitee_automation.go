@@ -147,7 +147,7 @@ func (s *Store) RecordGiteeValidation(ctx context.Context, token string, expecte
 
 var _ gitee.AutomationStore = (*Store)(nil)
 
-func lockGiteeDelivery(ctx context.Context, tx pgx.Tx, delivery githubhook.WorkItem, id uuid.UUID, path string) error {
+func lockGiteeDelivery(ctx context.Context, tx pgx.Tx, delivery githubhook.WorkItem, id uuid.UUID, path string, yamlTriggers bool) error {
 	if delivery.Event.Type == scm.EventPullRequest && delivery.Event.Metadata["fork"] != "false" {
 		return githubci.ErrInvalidCommit
 	}
@@ -164,8 +164,8 @@ func lockGiteeDelivery(ctx context.Context, tx pgx.Tx, delivery githubhook.WorkI
 	WHERE r.id=$1 AND r.active AND r.provider='gitee' AND r.provider_instance='https://gitee.com'
 	AND r.external_id=d.normalized_event->'repository'->>'external_id'
 	AND h.revision::text=d.normalized_event->'metadata'->>'webhook_revision' AND s.pipeline_path=$4
-	AND ((d.event_type='push' AND s.trigger_push) OR (d.event_type='tag' AND s.trigger_tag) OR (d.event_type='pull_request' AND s.trigger_pull_request))
-	AND `+liveGiteeGrant+` FOR UPDATE OF r,h,g,s`, id, delivery.ID, normalized, path).Scan(&found)
+	AND ($5 OR (d.event_type='push' AND s.trigger_push) OR (d.event_type='tag' AND s.trigger_tag) OR (d.event_type='pull_request' AND s.trigger_pull_request))
+	AND `+liveGiteeGrant+` FOR UPDATE OF r,h,g,s`, id, delivery.ID, normalized, path, yamlTriggers).Scan(&found)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return githubci.ErrInvalidCommit
 	}

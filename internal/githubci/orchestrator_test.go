@@ -26,6 +26,58 @@ stages:
             commands: [echo ok]
 `
 
+func TestOrchestratorHonorsYAMLBranchTriggersBeforeCommit(t *testing.T) {
+	for _, provider := range []scm.Provider{scm.GitHub, scm.Gitee} {
+		for _, test := range []struct {
+			name              string
+			event             scm.EventType
+			ref, base, action string
+			want              Outcome
+		}{
+			{"direct push", scm.EventPush, "refs/heads/main", "", "", OutcomeRunCreated},
+			{"merge push", scm.EventPush, "refs/heads/main", "", "merge", OutcomeRunCreated},
+			{"other branch", scm.EventPush, "refs/heads/feature", "", "", OutcomeIgnoredTrigger},
+			{"branch case mismatch", scm.EventPush, "refs/heads/Main", "", "", OutcomeIgnoredTrigger},
+			{"tag", scm.EventTag, "refs/tags/main", "", "", OutcomeIgnoredTrigger},
+			{"tag disguised as push", scm.EventPush, "refs/tags/main", "", "", OutcomeIgnoredTrigger},
+			{"short ref", scm.EventPush, "main", "", "", OutcomeIgnoredTrigger},
+			{"malformed ref", scm.EventPush, "refs/heads/main//next", "", "", OutcomeIgnoredTrigger},
+			{"PR excluded", scm.EventPullRequest, "refs/heads/main", "main", "", OutcomeIgnoredTrigger},
+		} {
+			t.Run(string(provider)+"/"+test.name, func(t *testing.T) {
+				repositoryID := uuid.New()
+				settings := project.DefaultAutomationSettings()
+				settings.Enabled = true
+				store := &orchestratorStore{repositoryID: repositoryID, settings: settings, commitResult: RunResult{ID: uuid.New(), Created: true}}
+				source := orchestratorPipeline + "triggers:\n  - event: push\n    branches: [main]\n"
+				fetcher := &pipelineFetcher{repository: githubapp.Repository{ID: repositoryID}, source: []byte(source)}
+				orchestrator, _ := NewOrchestrator(store, fetcher)
+				event := webhookEvent(test.event)
+				event.Provider, event.Ref, event.Action = provider, test.ref, test.action
+				event.Metadata["base_ref"] = test.base
+				outcome, err := orchestrator.Process(t.Context(), workItem(event))
+				if err != nil || outcome != test.want {
+					t.Fatalf("outcome=%q err=%v", outcome, err)
+				}
+				if test.want == OutcomeIgnoredTrigger {
+					if store.commit.RepositoryID != uuid.Nil || len(store.finalized) != 1 || store.finalized[0].ErrorCode != "trigger_mismatch" {
+						t.Fatalf("filtered event scheduled or not finalized: commit=%+v final=%+v", store.commit, store.finalized)
+					}
+				} else if store.commit.Plan.Name != "webhook" {
+					t.Fatal("matching event did not commit compiled plan")
+				}
+			})
+		}
+	}
+}
+
+func (s *orchestratorStore) RuntimeAutomationForProvider(ctx context.Context, provider scm.Provider, externalID string) (uuid.UUID, project.AutomationSettings, error) {
+	if provider != scm.Gitee {
+		return uuid.Nil, project.AutomationSettings{}, errors.New("unexpected provider")
+	}
+	return s.RuntimeAutomationForGitHub(ctx, externalID)
+}
+
 type orchestratorStore struct {
 	repositoryID       uuid.UUID
 	settings           project.AutomationSettings
@@ -96,9 +148,6 @@ func TestOrchestratorClassifiesIgnoredDeliveriesBeforeFetching(t *testing.T) {
 	}{
 		{"disabled", project.DefaultAutomationSettings(), webhookEvent(scm.EventPush), OutcomeIgnoredDisabled, "automation_disabled"},
 		{"external fork", base, forkEvent(), OutcomeIgnoredFork, "external_fork"},
-		{"push disabled", withoutTrigger(base, scm.EventPush), webhookEvent(scm.EventPush), OutcomeIgnoredTrigger, "trigger_disabled"},
-		{"tag disabled", withoutTrigger(base, scm.EventTag), webhookEvent(scm.EventTag), OutcomeIgnoredTrigger, "trigger_disabled"},
-		{"pull request disabled", withoutTrigger(base, scm.EventPullRequest), webhookEvent(scm.EventPullRequest), OutcomeIgnoredTrigger, "trigger_disabled"},
 		{"unsupported event", base, webhookEvent(scm.EventType("deployment")), OutcomeIgnoredTrigger, "trigger_disabled"},
 	}
 	for _, test := range tests {
@@ -118,6 +167,101 @@ func TestOrchestratorClassifiesIgnoredDeliveriesBeforeFetching(t *testing.T) {
 			}
 			if store.finalized[0].State != githubhook.FinalIgnored || store.finalized[0].ErrorCode != test.code {
 				t.Fatalf("unexpected finalization: %#v", store.finalized[0])
+			}
+		})
+	}
+}
+
+func TestOrchestratorUsesLegacyEventSettingsOnlyWithoutYAMLTriggers(t *testing.T) {
+	for _, eventType := range []scm.EventType{scm.EventPush, scm.EventTag, scm.EventPullRequest} {
+		for _, explicit := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/explicit=%v", eventType, explicit), func(t *testing.T) {
+				repositoryID := uuid.New()
+				settings := project.DefaultAutomationSettings()
+				settings.Enabled = true
+				settings = withoutTrigger(settings, eventType)
+				store := &orchestratorStore{repositoryID: repositoryID, settings: settings, commitResult: RunResult{ID: uuid.New(), Created: true}}
+				source := orchestratorPipeline
+				if explicit {
+					source += "triggers:\n  - event: " + string(eventType) + "\n"
+				}
+				fetcher := &pipelineFetcher{repository: githubapp.Repository{ID: repositoryID}, source: []byte(source)}
+				orchestrator, _ := NewOrchestrator(store, fetcher)
+				event := webhookEvent(eventType)
+				if eventType == scm.EventTag {
+					event.Ref = "refs/tags/v1"
+				}
+				event.Metadata["base_ref"] = "main"
+				outcome, err := orchestrator.Process(t.Context(), workItem(event))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if fetcher.calls != 1 {
+					t.Fatalf("did not load YAML policy: calls=%d", fetcher.calls)
+				}
+				if explicit {
+					if outcome != OutcomeRunCreated || store.commit.RepositoryID != repositoryID {
+						t.Fatalf("legacy toggle overrode YAML: %s", outcome)
+					}
+				} else if outcome != OutcomeIgnoredTrigger || store.commit.RepositoryID != uuid.Nil || store.finalized[0].ErrorCode != "trigger_disabled" {
+					t.Fatalf("legacy event policy ignored: %s", outcome)
+				}
+			})
+		}
+	}
+}
+
+func TestOrchestratorPullRequestBranchTriggerUsesTargetBranch(t *testing.T) {
+	for _, base := range []string{"main", "other"} {
+		t.Run(base, func(t *testing.T) {
+			repositoryID := uuid.New()
+			settings := project.DefaultAutomationSettings()
+			settings.Enabled = true
+			store := &orchestratorStore{repositoryID: repositoryID, settings: settings, commitResult: RunResult{ID: uuid.New(), Created: true}}
+			fetcher := &pipelineFetcher{repository: githubapp.Repository{ID: repositoryID}, source: []byte(orchestratorPipeline + "triggers:\n  - event: pull_request\n    branches: [main]\n")}
+			orchestrator, _ := NewOrchestrator(store, fetcher)
+			event := webhookEvent(scm.EventPullRequest)
+			event.Ref, event.Metadata["base_ref"] = "refs/heads/feature", base
+			outcome, err := orchestrator.Process(t.Context(), workItem(event))
+			want := OutcomeIgnoredTrigger
+			if base == "main" {
+				want = OutcomeRunCreated
+			}
+			if err != nil || outcome != want {
+				t.Fatalf("outcome=%s want=%s err=%v", outcome, want, err)
+			}
+		})
+	}
+}
+
+func TestOrchestratorExplicitTriggersPreserveGlobalAndTrustGates(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		enabled, fork bool
+		fetchErr      error
+		want          Outcome
+	}{
+		{"automation disabled", false, false, nil, OutcomeIgnoredDisabled},
+		{"external fork", true, true, nil, OutcomeIgnoredFork},
+		{"revoked credential", true, false, scm.ErrUnauthorized, OutcomeDeadLettered},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repositoryID := uuid.New()
+			settings := project.DefaultAutomationSettings()
+			settings.Enabled = test.enabled
+			store := &orchestratorStore{repositoryID: repositoryID, settings: settings}
+			fetcher := &pipelineFetcher{repository: githubapp.Repository{ID: repositoryID}, source: []byte(orchestratorPipeline + "triggers:\n  - event: push\n  - event: pull_request\n"), err: test.fetchErr}
+			orchestrator, _ := NewOrchestrator(store, fetcher)
+			event := webhookEvent(scm.EventPush)
+			if test.fork {
+				event = forkEvent()
+			}
+			outcome, err := orchestrator.Process(t.Context(), workItem(event))
+			if err != nil || outcome != test.want || store.commit.RepositoryID != uuid.Nil {
+				t.Fatalf("trust gate bypassed: outcome=%s err=%v commit=%+v", outcome, err, store.commit)
+			}
+			if (!test.enabled || test.fork) && fetcher.calls != 0 {
+				t.Fatal("untrusted or disabled automation fetched YAML")
 			}
 		})
 	}

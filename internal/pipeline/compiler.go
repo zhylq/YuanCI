@@ -84,12 +84,7 @@ func Validate(value Pipeline) error {
 	}
 	problems = append(problems, validateDependencies("stages", stageNames, stageDependencies(value.Stages))...)
 
-	allowedEvents := map[string]struct{}{"push": {}, "pull_request": {}, "tag": {}, "manual": {}, "cron": {}, "api": {}}
-	for i, trigger := range value.Triggers {
-		if _, ok := allowedEvents[trigger.Event]; !ok {
-			problems = append(problems, ValidationError{fmt.Sprintf("triggers[%d].event", i), "is not supported"})
-		}
-	}
+	problems = append(problems, validateTriggers(value.Triggers)...)
 
 	if len(problems) > 0 {
 		return problems
@@ -116,6 +111,7 @@ func Compile(source []byte, now time.Time) (Plan, error) {
 		Name:         value.Name,
 		ConfigSHA256: hex.EncodeToString(digest[:]),
 		CompiledAt:   now.UTC(),
+		Triggers:     value.Triggers,
 		Stages:       make([]PlanStage, 0, len(value.Stages)),
 	}
 	for _, stage := range value.Stages {

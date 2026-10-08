@@ -81,6 +81,7 @@ type Plan struct {
 	Name         string      `json:"name"`
 	ConfigSHA256 string      `json:"config_sha256"`
 	CompiledAt   time.Time   `json:"compiled_at"`
+	Triggers     []Trigger   `json:"triggers,omitempty"`
 	Stages       []PlanStage `json:"stages"`
 }
 

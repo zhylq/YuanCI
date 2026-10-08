@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"github.com/yuanci/yuanci/internal/githubci"
 	"github.com/yuanci/yuanci/internal/httpapi"
 	"github.com/yuanci/yuanci/internal/identity"
+	"github.com/yuanci/yuanci/internal/pipeline"
 	"github.com/yuanci/yuanci/internal/project"
 	"github.com/yuanci/yuanci/internal/provisioning"
 	runmodel "github.com/yuanci/yuanci/internal/run"
@@ -54,6 +56,75 @@ func giteeProjectFixture(t *testing.T) (*Store, *gitee.Service, identity.Credent
 		t.Fatal(err)
 	}
 	return s, service, session, imported[0].ID
+}
+
+type branchGiteePipeline struct{ *giteeProviderFixture }
+
+func (p branchGiteePipeline) File(_ context.Context, _ string, _ gitee.Repository, _ string, sha string) ([]byte, error) {
+	if sha != strings.Repeat("a", 40) {
+		return nil, scm.ErrNotFound
+	}
+	return []byte(githubCIPipeline + "triggers:\n  - event: push\n    branches: [main]\n"), nil
+}
+
+func TestGiteeExplicitYAMLTriggerOverridesLegacyPushToggleTransactionally(t *testing.T) {
+	s, service, session, id := giteeProjectFixture(t)
+	service.Provider = branchGiteePipeline{service.Provider.(*giteeProviderFixture)}
+	secret := []byte(strings.Repeat("s", 32))
+	if err := service.SaveWebhook(t.Context(), session.Token, id, 0, secret); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ValidateProject(t.Context(), session.Token, id, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateProjectAutomation(t.Context(), session.Token, id, project.AutomationUpdate{Enabled: true, PipelinePath: ".yuanci.yml", TriggerPush: false, TriggerPullRequest: true}); err != nil {
+		t.Fatal(err)
+	}
+	headers := http.Header{"X-Gitee-Token": {string(secret)}, "X-Gitee-Timestamp": {fmt.Sprint(time.Now().UnixMilli())}, "X-Gitee-Event": {"Push Hook"}}
+	body := []byte(`{"ref":"refs/heads/main","after":"` + strings.Repeat("a", 40) + `","repository":{"id":42}}`)
+	if _, err := service.ReceiveWebhook(t.Context(), "42", headers, body); err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := s.ClaimWebhook(t.Context(), time.Minute)
+	if err != nil || delivery == nil {
+		t.Fatalf("claim=%+v err=%v", delivery, err)
+	}
+	source := []byte(githubCIPipeline + "triggers:\n  - event: push\n    branches: [main]\n")
+	plan, err := pipeline.Compile(source, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := githubci.RunCommit{Delivery: *delivery, RepositoryID: id, PipelinePath: ".yuanci.yml", PipelineSource: source, Plan: plan, CreatedAt: time.Now()}
+	// YAML policy overrides only the legacy toggle. Changes to authorization,
+	// global enablement, pipeline path and the authenticated hook still fence it.
+	for _, boundary := range []struct{ deny, restore string }{
+		{`UPDATE repository_automation_settings SET enabled=false WHERE repository_id=$1`, `UPDATE repository_automation_settings SET enabled=true WHERE repository_id=$1`},
+		{`UPDATE repository_automation_settings SET pipeline_path='other.yml' WHERE repository_id=$1`, `UPDATE repository_automation_settings SET pipeline_path='.yuanci.yml' WHERE repository_id=$1`},
+		{`UPDATE gitee_webhook_configs SET revision=revision+1 WHERE repository_id=$1`, `UPDATE gitee_webhook_configs SET revision=revision-1 WHERE repository_id=$1`},
+		{`UPDATE gitee_authorizations SET expires_at=clock_timestamp()-interval '1 second' WHERE id=(SELECT gitee_authorization_id FROM repositories WHERE id=$1)`, `UPDATE gitee_authorizations SET expires_at=clock_timestamp()+interval '1 hour' WHERE id=(SELECT gitee_authorization_id FROM repositories WHERE id=$1)`},
+	} {
+		if _, err := s.pool.Exec(t.Context(), boundary.deny, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.CommitWebhookRun(t.Context(), request); !errors.Is(err, githubci.ErrInvalidCommit) {
+			t.Fatalf("explicit YAML bypassed binding gate: %v", err)
+		}
+		if _, err := s.pool.Exec(t.Context(), boundary.restore, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	orchestrator, err := githubci.NewOrchestrator(s, service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := orchestrator.Process(t.Context(), *delivery)
+	if err != nil || outcome != githubci.OutcomeRunCreated {
+		t.Fatalf("YAML matching push was blocked by legacy toggle: outcome=%s err=%v", outcome, err)
+	}
+	var count int
+	if err := s.pool.QueryRow(t.Context(), `SELECT count(*) FROM runs WHERE repository_id=$1 AND commit_sha=$2 AND compiled_plan->'triggers'->0->>'event'='push'`, id, strings.Repeat("a", 40)).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("run/trigger policy not persisted: count=%d err=%v", count, err)
+	}
 }
 func TestGiteeWebhookDurabilityValidationAndSecretReplacement(t *testing.T) {
 	s, service, session, id := giteeProjectFixture(t)

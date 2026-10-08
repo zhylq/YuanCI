@@ -88,7 +88,7 @@ func (s *Store) CommitWebhookRun(ctx context.Context, request githubci.RunCommit
 	}
 	event := request.Delivery.Event
 	if event.Provider == scm.Gitee {
-		if err := lockGiteeDelivery(ctx, tx, request.Delivery, request.RepositoryID, request.PipelinePath); err != nil {
+		if err := lockGiteeDelivery(ctx, tx, request.Delivery, request.RepositoryID, request.PipelinePath, len(request.Plan.Triggers) > 0); err != nil {
 			return githubci.RunResult{}, err
 		}
 	}
@@ -191,7 +191,7 @@ func (s *Store) CommitWebhookFailedRun(ctx context.Context, request githubci.Fai
 	}
 	event := request.Delivery.Event
 	if event.Provider == scm.Gitee {
-		if err := lockGiteeDelivery(ctx, tx, request.Delivery, request.RepositoryID, request.PipelinePath); err != nil {
+		if err := lockGiteeDelivery(ctx, tx, request.Delivery, request.RepositoryID, request.PipelinePath, false); err != nil {
 			return githubci.RunResult{}, err
 		}
 	}
@@ -276,6 +276,9 @@ func validateWebhookRunCommit(request githubci.RunCommit) error {
 		request.Plan.Version != pipeline.APIVersion || request.Plan.Name == "" || len(request.Plan.ConfigSHA256) != 64 ||
 		len(request.PipelineSource) == 0 || len(request.PipelineSource) > 1<<20 || request.CreatedAt.IsZero() ||
 		project.ValidatePipelinePath(request.PipelinePath) != nil {
+		return githubci.ErrInvalidCommit
+	}
+	if !pipeline.MatchTriggers(request.Plan.Triggers, event) {
 		return githubci.ErrInvalidCommit
 	}
 	return nil

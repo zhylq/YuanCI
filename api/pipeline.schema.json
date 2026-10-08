@@ -21,15 +21,20 @@
     },
     "triggers": {
       "type": "array",
+      "description": "Alternative event policies. Explicit triggers replace project event switches; an absent or empty list retains those switches. Global automation enablement and source trust checks always apply.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["event"],
         "properties": {
           "event": { "enum": ["push", "pull_request", "tag", "manual", "cron", "api"] },
-          "branches": { "type": "array", "items": { "type": "string" } },
-          "paths": { "type": "array", "items": { "type": "string" } }
-        }
+          "branches": { "type": "array", "description": "Exact, case-sensitive branch names. Supported for push and pull_request (target branch); glob patterns are not supported.", "items": { "$ref": "#/$defs/branch" } },
+          "paths": { "type": "array", "description": "Path filters are not yet supported.", "maxItems": 0 }
+        },
+        "allOf": [{
+          "if": { "required": ["branches"], "properties": { "branches": { "minItems": 1 } } },
+          "then": { "properties": { "event": { "enum": ["push", "pull_request"] } } }
+        }]
       }
     },
     "stages": {
@@ -39,6 +44,7 @@
     }
   },
   "$defs": {
+    "branch": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^(?!refs/)(?!-)(?!@$)(?!.*\\.\\.)(?!.*@\\{)(?!.*[\\u0000-\\u0020\\u007f~^:?*\\[\\\\])(?!\\.)(?!.*/\\.)(?!.*\\.lock(?:/|$))(?!.*//)(?!.*[/.]$)[^/].*$" },
     "name": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$" },
     "environment": { "type": "object", "additionalProperties": { "type": "string" } },
     "stage": {

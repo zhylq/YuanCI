@@ -96,8 +96,8 @@ func (o *Orchestrator) process(ctx context.Context, delivery githubhook.WorkItem
 	if delivery.Event.Type == scm.EventPullRequest && delivery.Event.Metadata["fork"] != "false" {
 		return o.ignore(ctx, delivery, OutcomeIgnoredFork, "external_fork", "External fork pull request is not trusted")
 	}
-	if !triggerEnabled(settings, delivery.Event.Type) {
-		return o.ignore(ctx, delivery, OutcomeIgnoredTrigger, "trigger_disabled", "Event type is not enabled for this project")
+	if delivery.Event.Type != scm.EventPush && delivery.Event.Type != scm.EventTag && delivery.Event.Type != scm.EventPullRequest {
+		return o.ignore(ctx, delivery, OutcomeIgnoredTrigger, "trigger_disabled", "Event type is not supported for automation")
 	}
 	repository, source, err := o.fetcher.FetchPipeline(ctx, delivery.Event, settings.PipelinePath)
 	if err != nil {
@@ -114,6 +114,15 @@ func (o *Orchestrator) process(ctx context.Context, delivery githubhook.WorkItem
 	if err != nil {
 		return o.commitConfigurationFailure(ctx, delivery, repositoryID, settings.PipelinePath, source,
 			classifyFailure(fmt.Errorf("%w: %v", ErrInvalidPipeline, err)))
+	}
+	// Explicit YAML triggers are authoritative. Existing project event switches
+	// retain their behavior for pipelines that do not declare triggers.
+	if len(plan.Triggers) == 0 {
+		if !triggerEnabled(settings, delivery.Event.Type) {
+			return o.ignore(ctx, delivery, OutcomeIgnoredTrigger, "trigger_disabled", "Event type is not enabled for this project")
+		}
+	} else if !pipeline.MatchTriggers(plan.Triggers, delivery.Event) {
+		return o.ignore(ctx, delivery, OutcomeIgnoredTrigger, "trigger_mismatch", "Event does not match pipeline triggers")
 	}
 	result, err := o.store.CommitWebhookRun(ctx, RunCommit{
 		Delivery: delivery, RepositoryID: repositoryID, PipelinePath: settings.PipelinePath,

@@ -155,6 +155,21 @@ func (c *Client) Commit(ctx context.Context, token string, repo Repository, ref 
 	return strings.ToLower(reply.SHA), nil
 }
 func (c *Client) VerifyEvent(ctx context.Context, token string, repo Repository, event scm.Event) error {
+	if !shaPattern.MatchString(event.AfterSHA) || !validRef(event.Ref) {
+		return scm.ErrInvalidHook
+	}
+	switch event.Type {
+	case scm.EventPush, scm.EventPullRequest:
+		if !strings.HasPrefix(event.Ref, "refs/heads/") || !validRef(strings.TrimPrefix(event.Ref, "refs/heads/")) {
+			return scm.ErrInvalidHook
+		}
+	case scm.EventTag:
+		if !strings.HasPrefix(event.Ref, "refs/tags/") || !validRef(strings.TrimPrefix(event.Ref, "refs/tags/")) {
+			return scm.ErrInvalidHook
+		}
+	default:
+		return scm.ErrInvalidHook
+	}
 	current, err := c.Repository(ctx, token, repo.Owner, repo.Name)
 	if err != nil {
 		return err
@@ -179,7 +194,9 @@ func (c *Client) VerifyEvent(ctx context.Context, token string, repo Repository,
 		}
 		return nil
 	}
-	sha, err := c.Commit(ctx, token, repo, event.Ref)
+	// Deliveries may wait in the inbox after the branch advances. Verify the
+	// immutable event commit in the bound repository, not its current branch HEAD.
+	sha, err := c.Commit(ctx, token, repo, event.AfterSHA)
 	if err != nil {
 		return err
 	}
