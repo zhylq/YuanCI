@@ -8,6 +8,12 @@
   "properties": {
     "version": { "const": "v1" },
     "name": { "$ref": "#/$defs/name" },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment"],
+      "properties": { "environment": { "$ref": "#/$defs/name" } }
+    },
     "environment": { "$ref": "#/$defs/environment" },
     "concurrency": {
       "type": "object",
@@ -43,6 +49,13 @@
       "items": { "$ref": "#/$defs/stage" }
     }
   },
+  "allOf": [{
+    "if": { "required": ["deployment"] },
+    "then": { "properties": {
+      "concurrency": { "properties": { "limit": { "maximum": 1 }, "cancel_previous": { "const": false } } },
+      "stages": { "items": { "properties": { "jobs": { "items": { "properties": { "retry": { "const": 0 } } } } } } }
+    } }
+  }],
   "$defs": {
     "branch": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^(?!refs/)(?!-)(?!@$)(?!.*\\.\\.)(?!.*@\\{)(?!.*[\\u0000-\\u0020\\u007f~^:?*\\[\\\\])(?!\\.)(?!.*/\\.)(?!.*\\.lock(?:/|$))(?!.*//)(?!.*[/.]$)[^/].*$" },
     "name": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$" },

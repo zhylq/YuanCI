@@ -92,6 +92,16 @@ func (s *Store) CommitWebhookRun(ctx context.Context, request githubci.RunCommit
 			return githubci.RunResult{}, err
 		}
 	}
+	// Revalidate the compiled deployment marker before registration. This lookup
+	// follows the provider authorization checks and runs under the registration lock.
+	if request.Plan.Deployment != nil {
+		if _, err := decodeDeployment(runmodel.Record{Plan: planJSON, ProjectID: &request.RepositoryID, CommitSHA: event.AfterSHA}); err != nil {
+			return githubci.RunResult{}, err
+		}
+		if err := lockDeploymentEnvironment(ctx, tx, request.RepositoryID, request.Plan.Deployment.Environment); err != nil {
+			return githubci.RunResult{}, err
+		}
+	}
 	idempotencyKey := string(event.Provider) + "-webhook:" + request.Delivery.ID.String()
 	result := githubci.RunResult{ID: uuid.New(), Created: true}
 	var existingRepositoryID *uuid.UUID
@@ -108,6 +118,16 @@ func (s *Store) CommitWebhookRun(ctx context.Context, request githubci.RunCommit
 		result.Created = false
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return githubci.RunResult{}, fmt.Errorf("read idempotent GitHub run: %w", err)
+	}
+	if result.Created && request.Plan.Deployment != nil {
+		var existingID uuid.UUID
+		err := tx.QueryRow(ctx, `SELECT run_id FROM deployment_runs WHERE repository_id=$1 AND environment=$2 AND commit_sha=$3`, request.RepositoryID, request.Plan.Deployment.Environment, event.AfterSHA).Scan(&existingID)
+		if err == nil {
+			result.ID, result.Created = existingID, false
+		}
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return githubci.RunResult{}, err
+		}
 	}
 	if !result.Created {
 		if err := finishWebhookRun(ctx, tx, request, result.ID); err != nil {
@@ -270,6 +290,9 @@ func finishWebhookRun(ctx context.Context, tx pgx.Tx, request githubci.RunCommit
 }
 
 func validateWebhookRunCommit(request githubci.RunCommit) error {
+	if pipeline.ValidatePlanDeployment(request.Plan) != nil {
+		return githubci.ErrInvalidCommit
+	}
 	event := request.Delivery.Event
 	if request.Delivery.ID == uuid.Nil || request.Delivery.LeaseID == uuid.Nil || request.RepositoryID == uuid.Nil ||
 		(event.Provider != scm.GitHub && event.Provider != scm.Gitee) || event.DeliveryID == "" || event.AfterSHA == "" ||

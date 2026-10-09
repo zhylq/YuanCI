@@ -21,6 +21,13 @@ func (s *Store) RerunAuthorizedRun(ctx context.Context, token string, projectID,
 	if err != nil {
 		return runmodel.Record{}, err
 	}
+	var deployment bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM deployment_runs WHERE run_id=$1)`, runID).Scan(&deployment); err != nil {
+		return runmodel.Record{}, err
+	}
+	if deployment {
+		return runmodel.Record{}, runmodel.ErrRunConflict
+	}
 	if !original.Status.Terminal() || (mode == "failed" && original.Status != runmodel.StatusFailed) {
 		return runmodel.Record{}, runmodel.ErrRunConflict
 	}

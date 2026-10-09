@@ -5,12 +5,17 @@ import "time"
 const APIVersion = "v1"
 
 type Pipeline struct {
+	Deployment  *Deployment       `yaml:"deployment,omitempty" json:"deployment,omitempty"`
 	Version     string            `yaml:"version" json:"version"`
 	Name        string            `yaml:"name" json:"name"`
 	Concurrency *Concurrency      `yaml:"concurrency,omitempty" json:"concurrency,omitempty"`
 	Triggers    []Trigger         `yaml:"triggers,omitempty" json:"triggers,omitempty"`
 	Environment map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
 	Stages      []Stage           `yaml:"stages" json:"stages"`
+}
+
+type Deployment struct {
+	Environment string `yaml:"environment" json:"environment"`
 }
 
 type Concurrency struct {
@@ -77,6 +82,7 @@ type RunnerRequirements struct {
 }
 
 type Plan struct {
+	Deployment   *Deployment `json:"deployment,omitempty"`
 	Version      string      `json:"version"`
 	Name         string      `json:"name"`
 	ConfigSHA256 string      `json:"config_sha256"`
@@ -92,6 +98,7 @@ type PlanStage struct {
 }
 
 type PlanJob struct {
+	Deployment        string              `json:"deployment,omitempty"`
 	Name              string              `json:"name"`
 	Image             string              `json:"image,omitempty"`
 	DependsOn         []string            `json:"depends_on,omitempty"`

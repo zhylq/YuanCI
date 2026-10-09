@@ -56,6 +56,21 @@ func Parse(source []byte) (Pipeline, error) {
 
 func Validate(value Pipeline) error {
 	var problems ValidationErrors
+	if value.Deployment != nil {
+		if !namePattern.MatchString(value.Deployment.Environment) {
+			problems = append(problems, ValidationError{"deployment.environment", "must be a valid 1-63 character name"})
+		}
+		if value.Concurrency != nil && (value.Concurrency.CancelPrevious || value.Concurrency.Limit > 1) {
+			problems = append(problems, ValidationError{"concurrency", "deployments require FIFO execution without cancellation or parallel runs"})
+		}
+		for _, stage := range value.Stages {
+			for _, job := range stage.Jobs {
+				if job.Retry != 0 {
+					problems = append(problems, ValidationError{"retry", "deployments cannot retry"})
+				}
+			}
+		}
+	}
 	if value.Version != APIVersion {
 		problems = append(problems, ValidationError{"version", "must be v1"})
 	}
@@ -110,6 +125,7 @@ func Compile(source []byte, now time.Time) (Plan, error) {
 	}
 	digest := sha256.Sum256(canonical)
 	plan := Plan{
+		Deployment:   value.Deployment,
 		Version:      value.Version,
 		Name:         value.Name,
 		ConfigSHA256: hex.EncodeToString(digest[:]),
@@ -144,6 +160,9 @@ func Compile(source []byte, now time.Time) (Plan, error) {
 				Environment: job.Environment, Services: job.Services, Resources: job.Resources,
 				Secrets: job.Secrets, Steps: job.Steps, RunsOn: runsOn, RequiredDiskBytes: diskBytes,
 			})
+			if value.Deployment != nil {
+				compiledStage.Jobs[len(compiledStage.Jobs)-1].Deployment = value.Deployment.Environment
+			}
 		}
 		plan.Stages = append(plan.Stages, compiledStage)
 	}

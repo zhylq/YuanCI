@@ -17,7 +17,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuanci/yuanci/db/migrations"
-	"github.com/yuanci/yuanci/internal/pipeline"
 	runmodel "github.com/yuanci/yuanci/internal/run"
 )
 
@@ -65,19 +64,36 @@ func (s *Store) Create(ctx context.Context, record runmodel.Record) (runmodel.Re
 }
 
 func insertRun(ctx context.Context, tx pgx.Tx, record runmodel.Record) error {
+	plan, err := decodeDeployment(record)
+	if err != nil {
+		return err
+	}
+	if plan.Deployment != nil {
+		if err := lockDeploymentEnvironment(ctx, tx, *record.ProjectID, plan.Deployment.Environment); err != nil {
+			return err
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM deployment_runs WHERE repository_id=$1 AND environment=$2 AND commit_sha=$3)`, *record.ProjectID, plan.Deployment.Environment, record.CommitSHA).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			return runmodel.ErrRunConflict
+		}
+	}
 	const query = `INSERT INTO runs
 		(id, pipeline_version_id, pipeline_name, event, ref, commit_sha, status, config_sha256,
 		 compiled_plan, idempotency_key, created_at, repository_id, created_by)
 		VALUES ($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),$7,$8,$9,NULLIF($10,''),$11,$12,$13)`
-	_, err := tx.Exec(ctx, query, record.ID, record.PipelineVersionID, record.PipelineName, record.Event, record.Ref,
+	_, err = tx.Exec(ctx, query, record.ID, record.PipelineVersionID, record.PipelineName, record.Event, record.Ref,
 		record.CommitSHA, record.Status, record.ConfigSHA256, record.Plan, record.IdempotencyKey,
 		record.CreatedAt, record.ProjectID, record.CreatedBy)
 	if err != nil {
 		return fmt.Errorf("create run: %w", err)
 	}
-	var plan pipeline.Plan
-	if err := json.Unmarshal(record.Plan, &plan); err != nil {
-		return fmt.Errorf("decode compiled plan: %w", err)
+	if plan.Deployment != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO deployment_runs(run_id,repository_id,environment,commit_sha) VALUES($1,$2,$3,$4)`, record.ID, *record.ProjectID, plan.Deployment.Environment, record.CommitSHA); err != nil {
+			return err
+		}
 	}
 	stageJobs := make(map[string][]string, len(plan.Stages))
 	for _, stage := range plan.Stages {
@@ -110,12 +126,16 @@ func insertRun(ctx context.Context, tx pgx.Tx, record runmodel.Record) error {
 			if err != nil {
 				return fmt.Errorf("encode Runner labels: %w", err)
 			}
+			poolType := "standard"
+			if plan.Deployment != nil {
+				poolType = "deployment"
+			}
 			_, err = tx.Exec(ctx, `INSERT INTO jobs
                     (id, run_id, stage_name, job_name, job_key, dependencies, spec, status, attempt,
                      required_pool_type,required_os,required_architecture,required_executor,required_labels,required_disk_bytes)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,'standard',$9,NULLIF($10,''),$11,$12,$13)`,
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,$14,$9,NULLIF($10,''),$11,$12,$13)`,
 				uuid.New(), record.ID, stage.Name, job.Name, stage.Name+"/"+job.Name, dependencies, spec, status,
-				job.RunsOn.OS, job.RunsOn.Architecture, job.RunsOn.Executor, encodedLabels, job.RequiredDiskBytes)
+				job.RunsOn.OS, job.RunsOn.Architecture, job.RunsOn.Executor, encodedLabels, job.RequiredDiskBytes, poolType)
 			if err != nil {
 				return fmt.Errorf("create job %s/%s: %w", stage.Name, job.Name, err)
 			}
@@ -169,6 +189,7 @@ func (s *Store) ClaimJob(ctx context.Context, request runmodel.ClaimRequest) (*r
 	// Run and may unblock/skip sibling jobs. Other Runs remain claimable.
 	err = tx.QueryRow(ctx, `SELECT r.id FROM runs r
         WHERE r.status IN ('queued','running')
+		AND NOT EXISTS (SELECT 1 FROM deployment_runs WHERE run_id=r.id)
         AND EXISTS (SELECT 1 FROM jobs j WHERE j.run_id=r.id AND j.status='queued')
         ORDER BY r.created_at, r.id FOR UPDATE OF r SKIP LOCKED LIMIT 1`).Scan(&assignment.RunID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -219,7 +240,7 @@ func (s *Store) ClaimJob(ctx context.Context, request runmodel.ClaimRequest) (*r
 func (s *Store) StartJob(ctx context.Context, id uuid.UUID, token string) error {
 	digest := sha256.Sum256([]byte(token))
 	result, err := s.pool.Exec(ctx, `UPDATE jobs SET status='running', started_at=COALESCE(started_at, now())
-        WHERE id=$1 AND status='assigned' AND lease_token_hash=$2 AND lease_expires_at > clock_timestamp()`, id, digest[:])
+        WHERE id=$1 AND status='assigned' AND required_pool_type<>'deployment' AND lease_token_hash=$2 AND lease_expires_at > clock_timestamp()`, id, digest[:])
 	if err != nil {
 		return fmt.Errorf("start job: %w", err)
 	}
@@ -253,7 +274,7 @@ func (s *Store) CompleteJob(ctx context.Context, id uuid.UUID, token string, sta
 		return fmt.Errorf("lock completing run: %w", err)
 	}
 	err = tx.QueryRow(ctx, `UPDATE jobs SET status=$3, finished_at=now(), lease_token_hash=NULL,
-        lease_expires_at=NULL WHERE id=$1 AND status IN ('assigned','running')
+        lease_expires_at=NULL WHERE id=$1 AND required_pool_type<>'deployment' AND status IN ('assigned','running')
         AND lease_token_hash=$2 AND lease_expires_at > clock_timestamp() RETURNING run_id`, id, digest[:], status).Scan(&runID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return runmodel.ErrLeaseInvalid

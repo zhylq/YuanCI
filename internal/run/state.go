@@ -32,6 +32,10 @@ func ValidateTransition(from, to Status) error {
 
 type JobStatus string
 
+func (s JobStatus) Terminal() bool {
+	return s == JobSucceeded || s == JobFailed || s == JobCanceled || s == JobSkipped
+}
+
 const (
 	JobBlocked   JobStatus = "blocked"
 	JobQueued    JobStatus = "queued"

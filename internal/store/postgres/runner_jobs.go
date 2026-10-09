@@ -44,7 +44,8 @@ func (s *Store) ClaimRunnerJob(ctx context.Context, request runmodel.RunnerClaim
 	}
 	var active int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE runner_id=$1
-        AND status IN ('assigned','running') AND lease_expires_at > clock_timestamp()`, request.RunnerID).Scan(&active); err != nil {
+        AND ((status IN ('assigned','running') AND lease_expires_at > clock_timestamp())
+        OR (started_at IS NOT NULL AND execution_finished_at IS NULL AND EXISTS(SELECT 1 FROM deployment_runs WHERE run_id=jobs.run_id)))`, request.RunnerID).Scan(&active); err != nil {
 		return nil, fmt.Errorf("count Runner jobs: %w", err)
 	}
 	if active >= capacity {
@@ -54,7 +55,17 @@ func (s *Store) ClaimRunnerJob(ctx context.Context, request runmodel.RunnerClaim
 	var assignment runmodel.Assignment
 	var spec []byte
 	err = tx.QueryRow(ctx, `SELECT run.id FROM runs AS run
-		WHERE run.status IN ('queued','running') AND EXISTS (
+		WHERE run.status IN ('queued','running')
+		AND (NOT EXISTS (SELECT 1 FROM deployment_runs WHERE run_id=run.id) OR
+		  ($1='deployment' AND $7>=3 AND EXISTS (
+		    SELECT 1 FROM deployment_runs AS deployment JOIN repositories AS repository ON repository.id=deployment.repository_id
+		    WHERE deployment.run_id=run.id AND deployment.released_at IS NULL
+		    AND ($5::jsonb ->> ('yuanci.deploy.' || repository.provider || '.' || repository.external_id))='true'
+		    AND NOT EXISTS (SELECT 1 FROM deployment_runs AS prior WHERE prior.repository_id=deployment.repository_id
+		      AND prior.environment=deployment.environment AND prior.released_at IS NULL AND prior.queue_order<deployment.queue_order)
+		    AND NOT EXISTS (SELECT 1 FROM jobs AS active WHERE active.run_id=run.id
+		      AND (active.status IN ('assigned','running') OR (active.started_at IS NOT NULL AND active.execution_finished_at IS NULL))))))
+		AND EXISTS (
             SELECT 1 FROM jobs AS job WHERE job.run_id=run.id AND job.status='queued'
               AND job.required_pool_type=$1 AND job.required_os=$2
               AND (job.required_architecture IS NULL OR job.required_architecture=$3)
@@ -68,6 +79,17 @@ func (s *Store) ClaimRunnerJob(ctx context.Context, request runmodel.RunnerClaim
 	}
 	if err != nil {
 		return nil, fmt.Errorf("lock matching run: %w", err)
+	}
+	// The selecting statement can have a snapshot from before another claimant
+	// committed. On an already-running Run that claimant need not update the Run
+	// row, so acquiring its lock alone does not refresh sibling execution state.
+	// Recheck in a new statement after holding the parent lock.
+	eligible, err := runnerDeploymentEligible(ctx, tx, assignment.RunID, poolType, protocolVersion, labels)
+	if err != nil {
+		return nil, fmt.Errorf("recheck deployment eligibility: %w", err)
+	}
+	if !eligible {
+		return nil, nil
 	}
 	var sourceRepositoryUUID, sourceProvider, sourceRepositoryID, sourceCloneURL, sourceCommitSHA sql.NullString
 	err = tx.QueryRow(ctx, `SELECT job.id,job.run_id,job.stage_name,job.job_name,job.attempt,job.spec,
@@ -105,6 +127,7 @@ func (s *Store) ClaimRunnerJob(ctx context.Context, request runmodel.RunnerClaim
 	assignment.LeaseToken = secureToken()
 	digest := sha256.Sum256([]byte(assignment.LeaseToken))
 	err = tx.QueryRow(ctx, `UPDATE jobs SET status='assigned',runner_id=$2,lease_token_hash=$3,
+		execution_token_hash=CASE WHEN required_pool_type='deployment' THEN $3::bytea ELSE NULL END,
         accepted_at=NULL,lease_renewed_at=clock_timestamp(),lease_expires_at=clock_timestamp()+interval '30 seconds'
         WHERE id=$1 AND status='queued' RETURNING lease_expires_at`, assignment.JobID, request.RunnerID, digest[:]).
 		Scan(&assignment.LeaseExpires)
@@ -127,7 +150,7 @@ func (s *Store) ReleaseRunnerJob(ctx context.Context, request runmodel.LeaseRequ
 	}
 	digest := sha256.Sum256([]byte(request.LeaseToken))
 	result, err := s.pool.Exec(ctx, `UPDATE jobs SET status='queued',runner_id=NULL,accepted_at=NULL,
-		lease_token_hash=NULL,lease_renewed_at=NULL,lease_expires_at=NULL
+		lease_token_hash=NULL,execution_token_hash=NULL,lease_renewed_at=NULL,lease_expires_at=NULL
 		WHERE id=$1 AND runner_id=$2 AND status='assigned' AND accepted_at IS NULL
 		  AND lease_token_hash=$3 AND lease_expires_at > clock_timestamp()`,
 		request.JobID, request.RunnerID, digest[:])
@@ -165,7 +188,8 @@ func (s *Store) StartRunnerJob(ctx context.Context, request runmodel.LeaseReques
 	}
 	digest := sha256.Sum256([]byte(request.LeaseToken))
 	state := runmodel.LeaseState{JobID: request.JobID}
-	err := s.pool.QueryRow(ctx, `UPDATE jobs SET status='running',started_at=COALESCE(started_at,clock_timestamp())
+	err := s.pool.QueryRow(ctx, `UPDATE jobs SET status='running',started_at=COALESCE(started_at,clock_timestamp()),
+		execution_token_hash=CASE WHEN required_pool_type='deployment' THEN lease_token_hash ELSE execution_token_hash END
         WHERE id=$1 AND runner_id=$2 AND status IN ('assigned','running') AND accepted_at IS NOT NULL
           AND lease_token_hash=$3 AND lease_expires_at > clock_timestamp() RETURNING lease_expires_at`,
 		request.JobID, request.RunnerID, digest[:]).Scan(&state.LeaseExpires)
@@ -259,6 +283,16 @@ func (s *Store) CompleteRunnerJob(ctx context.Context, request runmodel.RunnerCo
 	if _, err := tx.Exec(ctx, `SELECT id FROM runs WHERE id=$1 FOR UPDATE`, runID); err != nil {
 		return fmt.Errorf("lock completing run: %w", err)
 	}
+	var deployment bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM deployment_runs WHERE run_id=$1)`, runID).Scan(&deployment); err != nil {
+		return err
+	}
+	if deployment {
+		if err := completeDeploymentJob(ctx, tx, runID, request, digest[:]); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
 	err = tx.QueryRow(ctx, `UPDATE jobs SET status=$4,finished_at=clock_timestamp(),lease_token_hash=NULL,
         lease_expires_at=NULL WHERE id=$1 AND runner_id=$2 AND lease_token_hash=$3
           AND status IN ('assigned','running') AND lease_expires_at > clock_timestamp() RETURNING run_id`,
@@ -308,13 +342,17 @@ func finalizeRunJobs(ctx context.Context, tx pgx.Tx, runID uuid.UUID, status run
 	} else if canceled > 0 {
 		finalStatus = runmodel.StatusCanceled
 	}
-	if _, err := tx.Exec(ctx, `UPDATE runs SET status=$2,finished_at=clock_timestamp() WHERE id=$1`, runID, finalStatus); err != nil {
+	updated, err := tx.Exec(ctx, `UPDATE runs SET status=$2,finished_at=clock_timestamp()
+	 WHERE id=$1 AND status IN ('queued','running','waiting_approval')`, runID, finalStatus)
+	if err != nil {
 		return fmt.Errorf("finalize run: %w", err)
 	}
-	if err := enqueueCommitStatusForRun(ctx, tx, runID, finalStatus); err != nil {
-		return err
+	if updated.RowsAffected() == 1 {
+		if err := enqueueCommitStatusForRun(ctx, tx, runID, finalStatus); err != nil {
+			return err
+		}
 	}
-	return nil
+	return releaseDeploymentRun(ctx, tx, runID)
 }
 
 func validateRunnerLeaseRequest(request runmodel.LeaseRequest) error {

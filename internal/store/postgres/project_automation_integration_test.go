@@ -62,8 +62,9 @@ func TestProjectAutomationValidationProofGatesEnablement(t *testing.T) {
 	enabled := automationUpdate(0)
 	enabled.Enabled = true
 	enabled.PipelinePath = project.DefaultPipelinePath
+	enabled.TriggerPush, enabled.TriggerTag, enabled.TriggerPullRequest = false, false, false
 	settings, err := f.store.UpdateProjectAutomation(t.Context(), f.memberSession.Token, f.project, enabled)
-	if err != nil || !settings.Enabled || settings.Revision != 1 {
+	if err != nil || !settings.Enabled || settings.Revision != 1 || settings.TriggerPush || settings.TriggerTag || settings.TriggerPullRequest {
 		t.Fatalf("validated enable: %#v %v", settings, err)
 	}
 	disabled := enabled
