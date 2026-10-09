@@ -14,13 +14,20 @@ the separately transferred `images.tar.gz` (112,778,968 bytes). The archive is
 excluded from Git; `yuanplan/SHA256SUMS` pins its content along with the installer,
 Compose override, policy, image identities and proposed YAML.
 
-Run the package's `install.sh` in the administrator terminal. It backs up the
+For a fresh installation, run the server package's `install-v2.sh` in the
+administrator terminal (the repository calls this file `yuanplan/install.sh`).
+It supports older systemd versions by parsing property-prefixed output instead
+of the newer `--value` option. It backs up the
 existing database/configuration to a root-protected directory, loads pinned
 images, registers a separate deployment identity, and checks protocol v3 grants.
 It stops the legacy timer, waits for the oneshot publisher and container to exit,
 holds the application's release lock, and checks application/database health
 before declaring the handoff ready. It does not push YAML or force a release.
-A failed readiness check leaves the YAML migration pending.
+A failed readiness check leaves the YAML migration pending. If the original
+installer already upgraded and enrolled the Runners but stopped at the old
+systemd check, run `finish-cutover.sh` instead. It repeats readiness and handoff
+checks without repeating migrations or restarting CI. The repaired scripts were
+uploaded separately and passed `SHA256SUMS.v2` verification.
 
 The Server/CLI were built from `6322c0f48403dcc36b06272dceee06cbd182740d`;
 the unchanged reviewed Runner was built from

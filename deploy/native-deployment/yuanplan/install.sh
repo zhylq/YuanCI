@@ -71,8 +71,11 @@ if systemctl cat yuanplan-publish.timer >/dev/null 2>&1; then
   systemctl stop yuanplan-publish.timer
   publisher_idle() {
     local state pid containers
-    state=$(systemctl show yuanplan-publish.service --property=ActiveState --value) || return 1
-    pid=$(systemctl show yuanplan-publish.service --property=MainPID --value) || return 1
+    state=$(systemctl show yuanplan-publish.service --property=ActiveState) || return 1
+    pid=$(systemctl show yuanplan-publish.service --property=MainPID) || return 1
+    [[ "$state" = ActiveState=* && "$pid" = MainPID=* ]] || return 1
+    state=${state#ActiveState=}
+    pid=${pid#MainPID=}
     [[ "$pid" = 0 && ( "$state" = inactive || "$state" = failed ) ]] || return 1
     containers=$(docker container ls --all --filter 'name=^/yuanplan-publisher$' --format '{{.Names}}') || return 1
     [[ -z "$containers" ]] || return 1
