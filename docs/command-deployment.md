@@ -13,8 +13,38 @@ application builds, databases, and optional service containers are your choices.
 There is no external publishing service dependency. Step images must provide `sh`;
 YuanCI overrides their ENTRYPOINT so it can run the commands.
 
-Configure a dedicated deployment Runner with a registration token for a deployment
-pool and these environment variables:
+Before enrolling a dedicated Runner, create its pool using an administrator database
+connection (`psql "$YUANCI_DATABASE_URL" -v ON_ERROR_STOP=1`). Only the `standard`
+pool is seeded automatically. This transaction creates a deployment pool or verifies
+that an existing pool of the same name already has the correct type:
+
+```sql
+BEGIN;
+INSERT INTO runner_pools(name, pool_type, labels)
+VALUES ('deployment-production', 'deployment', '{}'::jsonb)
+ON CONFLICT (name) DO NOTHING;
+DO $$
+BEGIN
+  PERFORM 1 FROM runner_pools
+    WHERE name = 'deployment-production' AND pool_type = 'deployment'
+    FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'deployment-production already exists with a different pool type';
+  END IF;
+END $$;
+COMMIT;
+```
+
+Never repurpose a standard pool. Issue a short-lived token with the existing admin
+CLI, with `YUANCI_DATABASE_URL` supplied securely in the environment:
+
+```sh
+yuancictl runner-token issue -pool deployment-production \
+  -file /secure/bootstrap/registration-token -ttl 10m -uses 1
+```
+
+Configure the new deployment Runner with this token, the existing mTLS root CA and
+server address, and these environment variables:
 
 ```sh
 YUANCI_RUNNER_ISOLATION_LEVEL=deployment
@@ -24,6 +54,10 @@ YUANCI_RUNNER_DEPLOYMENT_POLICY_FILE=/etc/yuanci/deployment-policy.json
 Use a separate Runner identity/state directory or volume for this pool. Deployment
 enrollment and heartbeat use protocol v3; an existing standard v2 identity cannot
 be changed into a deployment identity by editing its environment variables.
+When using `deploy/compose.runner.yml`, use a new Compose project name (for example
+`docker compose -p yuanci-deployment-production ...`) so its `runner-state` volume
+is separate from the standard Runner. Apply the same project name and override
+files on every start, stop and upgrade.
 
 Copy `deploy/deployment-policy.example.json` outside the repository workspace.
 Replace the numeric provider repository ID and optional host mount paths. The
@@ -56,6 +90,45 @@ retry after transport reconnects; commands do not retry. Runner loss also does
 not replay deployment commands. After unconfirmed cleanup or Runner loss, an
 administrator must inspect the host; the queue stays held until cleanup is
 explicitly resolved. A timer or Runner restart does not release it or replay it.
+
+For exceptional recovery, an administrator with the database credential must:
+
+1. Identify the exact cleanup-pending job UUID, its Run and assigned Runner. Use
+   the Run detail and administrator database inspection; verify the repository,
+   commit and environment before operating on the host.
+2. Stop that Runner process/service and prevent it from restarting during recovery.
+   For Compose, stop the `runner` service using its original project name and all
+   original override files. Confirm the process is stopped before inspecting Docker.
+3. On that Runner's actual Docker daemon, stop/remove the exact job's retained
+   containers, network and workspace volume. With the job UUID's hyphens removed,
+   names are `yuanci-JOB-checkout`, `yuanci-JOB-STEP_INDEX`,
+   `yuanci-JOB-service-SERVICE_INDEX`, `yuanci-network-JOB` and
+   `yuanci-workspace-JOB`. Inspect all configured step and service indices from the
+   immutable job specification. Query the daemon successfully and verify every
+   named resource is absent; a failed query is not proof of absence.
+4. Independently verify user-authored remote commands, detached processes and
+   external operations have stopped. Docker cleanup alone cannot prove this.
+   Application resources intentionally created by a script may remain; verify
+   that no old deployment operation can still modify the target.
+5. Record the verification evidence without passwords or tokens, then execute:
+
+   ```sh
+   yuancictl deployment confirm-stopped -job EXACT_JOB_UUID -verified \
+     -reason 'Runner stopped; exact Docker resources absent; remote operation terminated; incident ABC'
+   ```
+
+`YUANCI_DATABASE_URL` must be set securely to an administrator database connection.
+`-verified` is an explicit operator attestation of steps 2–4. The reason must be
+nonempty and at most 1024 UTF-8 bytes. The CLI performs no cleanup or verification
+itself. It rejects live Runs/jobs, ordinary CI and jobs that never started. Once the
+Run and started job are terminal, it records cleanup confirmation and a
+`deployment.cleanup_confirmed` audit with job, Run, Runner, reason and database
+operator identity in one transaction. Audit failure rolls back the confirmation.
+An acknowledged confirmation is idempotent and produces no additional audit.
+The environment releases only after every job is terminal and every started job
+has confirmed cleanup. Run/job results, terminal timestamps, deployment identity
+and execution token remain intact. The command never retries or redispatches the
+old commit. Restart the dedicated Runner only after recovery is resolved.
 
 Stopping does not roll back external changes. Scripts own their remote API calls,
 detached processes and application resources. YuanCI guarantees at most one
