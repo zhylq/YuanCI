@@ -32,7 +32,7 @@ func buildServiceArgs(network string, jobID uuid.UUID, index int, service pipeli
 		args = append(args, "--cpus", resources.CPU)
 	}
 	if safeResource(resources.Memory) {
-		args = append(args, "--memory", resources.Memory)
+		args = append(args, "--memory", dockerMemory(resources.Memory))
 	}
 	keys := make([]string, 0, len(service.Environment))
 	for key := range service.Environment {

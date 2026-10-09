@@ -30,7 +30,7 @@ const (
 	heartbeatInterval   = 10 * time.Second
 	leaseDuration       = 30 * time.Second
 	minimumProtocol     = uint32(1)
-	currentProtocol     = uint32(2)
+	currentProtocol     = uint32(3)
 )
 
 func supportedProtocol(version uint32) bool {
@@ -159,7 +159,18 @@ func (server *Server) Work(stream grpc.BidiStreamingServer[runnerv1.WorkRequest,
 			}
 		case *runnerv1.WorkRequest_JobCompleted:
 			if err := server.handleCompletion(stream.Context(), identity.RunnerID, body.JobCompleted); err != nil {
+				if errors.Is(err, runmodel.ErrLeaseInvalid) {
+					if err := stream.Send(&runnerv1.WorkResponse{Body: &runnerv1.WorkResponse_JobRejected{JobRejected: &runnerv1.JobRejected{JobId: body.JobCompleted.JobId, Reason: runnerv1.JobRejectReason_JOB_REJECT_REASON_STALE_LEASE}}}); err != nil {
+						return err
+					}
+					continue
+				}
 				return err
+			}
+			if identity.Capabilities.ProtocolVersion >= 3 {
+				if err := stream.Send(&runnerv1.WorkResponse{Body: &runnerv1.WorkResponse_JobCompletionAcknowledged{JobCompletionAcknowledged: &runnerv1.JobCompletionAcknowledged{JobId: body.JobCompleted.JobId}}}); err != nil {
+					return err
+				}
 			}
 		case *runnerv1.WorkRequest_LogChunk:
 			if err := server.handleLog(stream, identity.RunnerID, body.LogChunk); err != nil {
@@ -363,6 +374,9 @@ func (server *Server) handleReceipt(stream grpc.BidiStreamingServer[runnerv1.Wor
 		lease, err = server.jobs.AcknowledgeRunnerJob(stream.Context(), request)
 	}
 	if err != nil {
+		if errors.Is(err, runmodel.ErrLeaseInvalid) {
+			return stream.Send(&runnerv1.WorkResponse{Body: &runnerv1.WorkResponse_JobRejected{JobRejected: &runnerv1.JobRejected{JobId: jobID.String(), Reason: runnerv1.JobRejectReason_JOB_REJECT_REASON_STALE_LEASE}}})
+		}
 		return workStoreError(err)
 	}
 	return stream.Send(&runnerv1.WorkResponse{Body: &runnerv1.WorkResponse_LeaseRenewed{LeaseRenewed: &runnerv1.LeaseRenewed{
@@ -387,7 +401,10 @@ func (server *Server) handleCompletion(ctx context.Context, runnerID uuid.UUID, 
 		return status.Error(codes.InvalidArgument, "invalid Runner completion")
 	}
 	if err := server.jobs.CompleteRunnerJob(ctx, runmodel.RunnerCompletion{RunnerID: runnerID,
-		JobID: jobID, LeaseToken: message.LeaseToken, Status: statusValue}); err != nil {
+		JobID: jobID, LeaseToken: message.LeaseToken, Status: statusValue, CleanupConfirmed: message.CleanupConfirmed}); err != nil {
+		if errors.Is(err, runmodel.ErrLeaseInvalid) {
+			return err
+		}
 		return workStoreError(err)
 	}
 	return nil
@@ -431,7 +448,7 @@ func capabilities(input *runnerv1.RunnerCapabilities, protocol uint32) (runnerau
 	default:
 		return runnerauth.Capabilities{}, errors.New("invalid isolation level")
 	}
-	if len(input.Labels) > 64 {
+	if len(input.Labels) > 128 {
 		return runnerauth.Capabilities{}, errors.New("too many labels")
 	}
 	labels := make(map[string]string, len(input.Labels))

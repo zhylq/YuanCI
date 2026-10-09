@@ -35,6 +35,8 @@ type Item struct {
 	RunID                uuid.UUID
 	Provider             string
 	CommitSHA            string
+	SourceEvent          string
+	SourceRef            string
 	Context              string
 	State                State
 	Description          string

@@ -76,10 +76,12 @@ func (s *Store) ClaimCommitStatus(ctx context.Context, leaseDuration time.Durati
 	FROM candidate WHERE o.id=candidate.id
 	RETURNING o.id,o.repository_id,(SELECT external_id FROM repositories WHERE id=o.repository_id),o.run_id,o.provider,o.commit_sha,o.context,o.commit_state,o.description,
 		COALESCE(o.target_url,''),o.deterministic_key,o.delivery_state,o.attempt_count,o.available_at,o.expires_at,
-		o.lease_owner,o.lease_expires_at`, leaseDuration.String()).Scan(&item.ID, &item.RepositoryID, &item.RepositoryExternalID, &item.RunID,
+		o.lease_owner,o.lease_expires_at,
+		COALESCE((SELECT event FROM runs WHERE id=o.run_id),''),
+		COALESCE((SELECT ref FROM runs WHERE id=o.run_id),'')`, leaseDuration.String()).Scan(&item.ID, &item.RepositoryID, &item.RepositoryExternalID, &item.RunID,
 		&item.Provider, &item.CommitSHA, &item.Context, &item.State, &item.Description, &item.TargetURL,
 		&item.DeterministicKey, &item.DeliveryState, &item.AttemptCount, &item.AvailableAt, &item.ExpiresAt,
-		&item.LeaseOwner, &item.LeaseExpiresAt)
+		&item.LeaseOwner, &item.LeaseExpiresAt, &item.SourceEvent, &item.SourceRef)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

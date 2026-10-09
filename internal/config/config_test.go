@@ -81,6 +81,21 @@ func TestRunnerGRPCClientConfiguration(t *testing.T) {
 	if cfg.GRPCAddress != "server:9443" || cfg.AvailableDiskBytes != 1<<30 || cfg.Executor != "docker" {
 		t.Fatalf("unexpected Runner configuration: %+v", cfg)
 	}
+	if cfg.IsolationLevel != "standard" {
+		t.Fatal("standard default changed")
+	}
+	t.Setenv("YUANCI_RUNNER_ISOLATION_LEVEL", "deployment")
+	if _, err := LoadRunner(); err == nil {
+		t.Fatal("deployment without policy accepted")
+	}
+	t.Setenv("YUANCI_RUNNER_DEPLOYMENT_POLICY_FILE", filepath.Join(t.TempDir(), "policy.json"))
+	if cfg, err := LoadRunner(); err != nil || cfg.IsolationLevel != "deployment" {
+		t.Fatalf("deployment config: %+v %v", cfg, err)
+	}
+	t.Setenv("YUANCI_RUNNER_ISOLATION_LEVEL", "privileged")
+	if _, err := LoadRunner(); err == nil {
+		t.Fatal("unsupported configured isolation accepted")
+	}
 }
 
 func TestRunnerGRPCClientRejectsUnsafeConfiguration(t *testing.T) {

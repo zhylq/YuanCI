@@ -43,8 +43,10 @@ type Store interface {
 }
 
 var (
-	ErrLeaseInvalid = errors.New("job lease is invalid or expired")
-	ErrJobNotFound  = errors.New("job not found")
+	ErrLeaseInvalid          = errors.New("job lease is invalid or expired")
+	ErrJobNotFound           = errors.New("job not found")
+	ErrInvalidDeployment     = errors.New("deployment requires a repository and immutable commit SHA with consistent plan metadata")
+	ErrDeploymentUnsupported = errors.New("deployments require durable PostgreSQL storage")
 )
 
 type ClaimRequest struct {
@@ -104,6 +106,16 @@ func (m *MemoryStore) Create(_ context.Context, record Record) (Record, error) {
 	var plan pipeline.Plan
 	if err := json.Unmarshal(record.Plan, &plan); err != nil {
 		return Record{}, fmt.Errorf("decode plan: %w", err)
+	}
+	if plan.Deployment != nil {
+		return Record{}, ErrDeploymentUnsupported
+	}
+	for _, stage := range plan.Stages {
+		for _, job := range stage.Jobs {
+			if job.Deployment != "" {
+				return Record{}, ErrDeploymentUnsupported
+			}
+		}
 	}
 	for _, existing := range m.records {
 		if existing.ID == record.ID {

@@ -135,7 +135,7 @@ function ProjectDetail({ userID, projectID }: { userID: string; projectID: strin
   </div>
 }
 
-type Job = { id: string; stage_name: string; job_name: string; status: string; spec: PlanJob; reused_from_job_id?: string }
+type Job = { id: string; stage_name: string; job_name: string; status: string; spec: PlanJob; cleanup_pending?: boolean; reused_from_job_id?: string }
 type RunDetail = { run: Run; jobs: Job[] }
 export function RunDetailPage() {
  const { projectID = '', runID = '' } = useParams()
@@ -144,7 +144,7 @@ export function RunDetailPage() {
 function RunView({ projectID, runID, userID }: { projectID: string; runID: string; userID: string }) {
  const session = useSession(true)
  const base = `/api/v1/projects/${encodeURIComponent(projectID)}/runs/${encodeURIComponent(runID)}`
- const detail = useQuery({ queryKey: ['run-detail', userID, projectID, runID], queryFn: ({ signal }) => request<RunDetail>(base, { signal }), retry: false, gcTime: 0, refetchInterval: q => q.state.data && terminal(q.state.data.run.status) ? false : 1000 })
+ const detail = useQuery({ queryKey: ['run-detail', userID, projectID, runID], queryFn: ({ signal }) => request<RunDetail>(base, { signal }), retry: false, gcTime: 0, refetchInterval: q => q.state.data && terminal(q.state.data.run.status) && !q.state.data.jobs.some(job => job.cleanup_pending) ? false : 1000 })
  const [selected, setSelected] = useState('')
  const [busy, setBusy] = useState(false)
  const [error, setError] = useState('')
@@ -166,14 +166,17 @@ function RunView({ projectID, runID, userID }: { projectID: string; runID: strin
  if (detail.isPending || session.isPending) return <Pending label="正在读取运行详情…" />
  if (detail.isError || session.isError || !session.data) return <ReadError error={detail.error ?? session.error ?? new ApiError('', 401)} retry={() => void detail.refetch()} />
  const { run, jobs } = detail.data
+ const deployment = jobs.some(job => Boolean(job.spec.deployment))
+ const cleanupPending = jobs.some(job => job.cleanup_pending)
  const job = jobs.find(j => j.id === selected) ?? jobs[0]
  const stages = new Map<string, Job[]>()
  for (const item of jobs) stages.set(item.stage_name, [...(stages.get(item.stage_name) ?? []), item])
  return <div className="min-w-0 space-y-6"><Link className={linkClass} to={`/projects/${projectID}`}>返回项目</Link>
   <header><h1 className="text-balance text-3xl font-semibold">{run.pipeline_name}</h1><div className="mt-3"><StatusBadge status={run.status} /></div></header>
   <section className={panel}><h2 className="text-balance text-xl font-semibold">运行来源</h2><dl className="mt-4 grid min-w-0 gap-4 text-sm sm:grid-cols-2"><div><dt>事件 / 引用</dt><dd className="mt-1 break-all">{run.event} · {run.ref || '无引用'}</dd></div><div><dt>提交 SHA</dt><dd className="mt-1 break-all font-mono">{run.commit_sha || '未记录'}</dd></div><div><dt>配置 SHA256</dt><dd className="mt-1 break-all font-mono">{run.config_sha256}</dd></div><div><dt>运行 ID</dt><dd className="mt-1 break-all font-mono">{run.id}</dd></div></dl>
-   <div className="mt-5 flex flex-wrap gap-3" aria-busy={busy}>{!terminal(run.status) ? <button className={buttonClass} disabled={busy} onClick={() => void action('cancel')}>取消运行</button> : <><button className={buttonClass} disabled={busy || !jobs.length} onClick={() => void action('full')}>完整重跑</button>{run.status === 'failed' ? <button className={buttonClass} disabled={busy || !jobs.length} onClick={() => void action('failed')}>重跑失败任务</button> : null}</>}</div>
-   <p className="mt-3 text-pretty text-sm text-slate-600">操作需要运行权限。重跑使用相同提交与配置；失败重跑保留成功任务的结果。</p>{error ? <p role="alert" className="mt-3 text-pretty text-red-800">{error}</p> : null}
+   <div className="mt-5 flex flex-wrap gap-3" aria-busy={busy}>{!terminal(run.status) ? <button className={buttonClass} disabled={busy} onClick={() => void action('cancel')}>{deployment ? '停止部署' : '取消运行'}</button> : !deployment ? <><button className={buttonClass} disabled={busy || !jobs.length} onClick={() => void action('full')}>完整重跑</button>{run.status === 'failed' ? <button className={buttonClass} disabled={busy || !jobs.length} onClick={() => void action('failed')}>重跑失败任务</button> : null}</> : null}</div>
+   {cleanupPending ? <p role="status" className="mt-3 text-pretty text-sm text-amber-800">部署命令正在停止，等待 Runner 确认资源清理；后续部署暂不启动。</p> : null}
+   <p className="mt-3 text-pretty text-sm text-slate-600">{deployment ? '停止部署不会回滚命令已产生的外部变更。部署不会自动重试。' : '操作需要运行权限。重跑使用相同提交与配置；失败重跑保留成功任务的结果。'}</p>{error ? <p role="alert" className="mt-3 text-pretty text-red-800">{error}</p> : null}
   </section>
   {Array.from(stages, ([stage, items]) => <section className={panel} key={stage}><h2 className="text-balance text-xl font-semibold">阶段：{stage}</h2><ul className="mt-4 space-y-4">{items.map(item => <li key={item.id}><h3 className="text-balance font-semibold">{item.job_name} · {item.status}</h3>{item.reused_from_job_id ? <p className="mt-1 break-all text-sm text-slate-600">复用成功任务：{item.reused_from_job_id}</p> : null}<ol aria-label={`${item.job_name} 步骤`} className="mt-2 list-decimal space-y-2 pl-5">{item.spec.steps.map((step, index) => <li key={index}><details><summary className="min-h-11 cursor-pointer py-2 focus-visible:outline-2 focus-visible:outline-blue-600">{step.name} · {step.image || item.spec.image || '默认镜像'}</summary><pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded bg-slate-50 p-3 text-sm">{step.commands.join('\n')}</pre></details></li>)}</ol></li>)}</ul></section>)}
   <section className={`${panel} min-w-0`}><h2 className="text-balance text-xl font-semibold">实时日志</h2>{job ? <><label className="mt-4 block text-sm font-semibold">选择任务<select className="mt-2 min-h-11 w-full rounded border border-slate-300 px-3" value={job.id} onChange={e => setSelected(e.target.value)}>{jobs.map(item => <option key={item.id} value={item.id}>{item.stage_name} / {item.job_name}</option>)}</select></label><LiveLogs key={job.id} path={`${base}/jobs/${job.id}/logs`} finished={terminal(job.status)} reused={Boolean(job.reused_from_job_id)} /></> : <p className="mt-3 text-pretty">此运行没有可执行任务，请检查配置。</p>}</section>

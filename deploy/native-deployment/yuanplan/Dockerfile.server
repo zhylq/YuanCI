@@ -1,0 +1,4 @@
+FROM yuanci-quickstart-server:a882e8d
+COPY bin/yuanci-server /usr/local/bin/yuanci-server
+COPY bin/yuancictl /usr/local/bin/yuancictl
+LABEL org.opencontainers.image.revision="6322c0f48403dcc36b06272dceee06cbd182740d"

@@ -156,6 +156,14 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		record, err = a.store.Create(r.Context(), record)
 	}
 	if err != nil {
+		if errors.Is(err, runmodel.ErrRunConflict) {
+			writeProblem(w, http.StatusConflict, "deployment already registered", "this commit is already registered for the repository and deployment environment")
+			return
+		}
+		if errors.Is(err, runmodel.ErrInvalidDeployment) || errors.Is(err, runmodel.ErrDeploymentUnsupported) {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid deployment", err.Error())
+			return
+		}
 		if accessError(w, err) {
 			return
 		}

@@ -1,0 +1,8 @@
+{
+  "repositories": [
+    { "provider": "gitee", "external_id": "50600000" }
+  ],
+  "host_mounts": [
+    { "source": "/srv/app/releases", "target": "/releases", "read_only": false }
+  ]
+}

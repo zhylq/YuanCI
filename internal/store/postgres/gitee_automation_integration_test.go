@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +19,7 @@ import (
 	"github.com/yuanci/yuanci/internal/githubci"
 	"github.com/yuanci/yuanci/internal/httpapi"
 	"github.com/yuanci/yuanci/internal/identity"
+	"github.com/yuanci/yuanci/internal/pipeline"
 	"github.com/yuanci/yuanci/internal/project"
 	"github.com/yuanci/yuanci/internal/provisioning"
 	runmodel "github.com/yuanci/yuanci/internal/run"
@@ -54,6 +57,178 @@ func giteeProjectFixture(t *testing.T) (*Store, *gitee.Service, identity.Credent
 		t.Fatal(err)
 	}
 	return s, service, session, imported[0].ID
+}
+
+type branchGiteePipeline struct{ *giteeProviderFixture }
+
+func (p branchGiteePipeline) File(_ context.Context, _ string, _ gitee.Repository, _ string, sha string) ([]byte, error) {
+	if sha != strings.Repeat("a", 40) {
+		return nil, scm.ErrNotFound
+	}
+	return []byte(githubCIPipeline + "triggers:\n  - event: push\n    branches: [main]\n"), nil
+}
+
+type failingTriggerGiteePipeline struct {
+	*giteeProviderFixture
+	source  []byte
+	missing bool
+}
+
+func (p failingTriggerGiteePipeline) File(context.Context, string, gitee.Repository, string, string) ([]byte, error) {
+	if p.missing {
+		return nil, scm.ErrNotFound
+	}
+	return p.source, nil
+}
+
+func TestGiteeTriggerPolicyConfigurationFailures(t *testing.T) {
+	invalidStages := "version: v1\nname: webhook\nstages: []\n"
+	unknownJobField := strings.Replace(githubCIPipeline, "        image: alpine:3.23", "        image: alpine:3.23\n        unknown_job_field: true", 1) + "triggers:\n  - event: push\n    branches: [main]\n"
+	badStageType := "version: v1\nname: webhook\nstages: invalid\ntriggers:\n  - event: push\n    branches: [main]\n"
+	for _, test := range []struct {
+		name, source, branch   string
+		missing, legacyEnabled bool
+		want                   githubci.Outcome
+	}{
+		{"legacy disabled missing", "", "main", true, false, githubci.OutcomeIgnoredTrigger},
+		{"legacy disabled invalid YAML", "invalid: [", "main", false, false, githubci.OutcomeIgnoredTrigger},
+		{"legacy disabled invalid stages", invalidStages, "main", false, false, githubci.OutcomeIgnoredTrigger},
+		{"legacy disabled empty policy", invalidStages + "triggers: []\n", "main", false, false, githubci.OutcomeIgnoredTrigger},
+		{"legacy disabled invalid policy", invalidStages + "triggers:\n  - event: push\n    paths: [src/**]\n", "main", false, false, githubci.OutcomeIgnoredTrigger},
+		{"explicit excluded branch", invalidStages + "triggers:\n  - event: push\n    branches: [main]\n", "feature", false, true, githubci.OutcomeIgnoredTrigger},
+		{"explicit match legacy disabled", invalidStages + "triggers:\n  - event: push\n    branches: [main]\n", "main", false, false, githubci.OutcomeFailedRunCreated},
+		{"unknown job field excluded branch", unknownJobField, "feature", false, true, githubci.OutcomeIgnoredTrigger},
+		{"unknown job field matching disabled legacy", unknownJobField, "main", false, false, githubci.OutcomeFailedRunCreated},
+		{"wrong stage type excluded branch", badStageType, "feature", false, true, githubci.OutcomeIgnoredTrigger},
+		{"wrong stage type matching disabled legacy", badStageType, "main", false, false, githubci.OutcomeFailedRunCreated},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s, service, session, id := giteeProjectFixture(t)
+			secret := []byte(strings.Repeat("s", 32))
+			if err := service.SaveWebhook(t.Context(), session.Token, id, 0, secret); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.ValidateProject(t.Context(), session.Token, id, 0); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.UpdateProjectAutomation(t.Context(), session.Token, id, project.AutomationUpdate{Enabled: true, PipelinePath: ".yuanci.yml", TriggerPush: test.legacyEnabled, TriggerPullRequest: true}); err != nil {
+				t.Fatal(err)
+			}
+			service.Provider = failingTriggerGiteePipeline{giteeProviderFixture: service.Provider.(*giteeProviderFixture), source: []byte(test.source), missing: test.missing}
+			headers := http.Header{"X-Gitee-Token": {string(secret)}, "X-Gitee-Timestamp": {fmt.Sprint(time.Now().UnixMilli())}, "X-Gitee-Event": {"Push Hook"}}
+			body := []byte(`{"ref":"refs/heads/` + test.branch + `","after":"` + strings.Repeat("a", 40) + `","repository":{"id":42}}`)
+			if _, err := service.ReceiveWebhook(t.Context(), "42", headers, body); err != nil {
+				t.Fatal(err)
+			}
+			delivery, err := s.ClaimWebhook(t.Context(), time.Minute)
+			if err != nil || delivery == nil {
+				t.Fatalf("claim=%+v err=%v", delivery, err)
+			}
+			orchestrator, _ := githubci.NewOrchestrator(s, service)
+			if test.want == githubci.OutcomeFailedRunCreated {
+				request := githubci.FailedRunCommit{Delivery: *delivery, RepositoryID: id, PipelinePath: ".yuanci.yml", ConfigSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(test.source))), ErrorCode: "pipeline_invalid", ErrorSummary: "Pipeline configuration is invalid", Triggers: []pipeline.Trigger{{Event: "push", Branches: []string{"main"}}}, CreatedAt: time.Now()}
+				for _, boundary := range []struct{ deny, restore string }{
+					{`UPDATE repository_automation_settings SET enabled=false WHERE repository_id=$1`, `UPDATE repository_automation_settings SET enabled=true WHERE repository_id=$1`},
+					{`UPDATE gitee_webhook_configs SET revision=revision+1 WHERE repository_id=$1`, `UPDATE gitee_webhook_configs SET revision=revision-1 WHERE repository_id=$1`},
+					{`UPDATE gitee_authorizations SET expires_at=clock_timestamp()-interval '1 second' WHERE id=(SELECT gitee_authorization_id FROM repositories WHERE id=$1)`, `UPDATE gitee_authorizations SET expires_at=clock_timestamp()+interval '1 hour' WHERE id=(SELECT gitee_authorization_id FROM repositories WHERE id=$1)`},
+				} {
+					if _, err := s.pool.Exec(t.Context(), boundary.deny, id); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := s.CommitWebhookFailedRun(t.Context(), request); !errors.Is(err, githubci.ErrInvalidCommit) {
+						t.Fatalf("explicit failed-run policy bypassed authorization/enablement gate: %v", err)
+					}
+					if _, err := s.pool.Exec(t.Context(), boundary.restore, id); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			outcome, err := orchestrator.Process(t.Context(), *delivery)
+			if err != nil || outcome != test.want {
+				t.Fatalf("outcome=%s want=%s err=%v", outcome, test.want, err)
+			}
+			var runs, jobs int
+			if err := s.pool.QueryRow(t.Context(), `SELECT count(*) FROM runs`).Scan(&runs); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs`).Scan(&jobs); err != nil || jobs != 0 {
+				t.Fatalf("configuration failure created jobs=%d err=%v", jobs, err)
+			}
+			wantRuns := 0
+			if test.want == githubci.OutcomeFailedRunCreated {
+				wantRuns = 1
+			}
+			if runs != wantRuns {
+				t.Fatalf("unexpected run count=%d want=%d", runs, wantRuns)
+			}
+			if wantRuns == 1 {
+				var event, status string
+				if err := s.pool.QueryRow(t.Context(), `SELECT compiled_plan->'triggers'->0->>'event',status FROM runs WHERE repository_id=$1`, id).Scan(&event, &status); err != nil || event != "push" || status != "failed" {
+					t.Fatalf("failure lost explicit trigger policy: event=%s status=%s err=%v", event, status, err)
+				}
+			}
+		})
+	}
+}
+
+func TestGiteeExplicitYAMLTriggerOverridesLegacyPushToggleTransactionally(t *testing.T) {
+	s, service, session, id := giteeProjectFixture(t)
+	service.Provider = branchGiteePipeline{service.Provider.(*giteeProviderFixture)}
+	secret := []byte(strings.Repeat("s", 32))
+	if err := service.SaveWebhook(t.Context(), session.Token, id, 0, secret); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ValidateProject(t.Context(), session.Token, id, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateProjectAutomation(t.Context(), session.Token, id, project.AutomationUpdate{Enabled: true, PipelinePath: ".yuanci.yml", TriggerPush: false, TriggerPullRequest: true}); err != nil {
+		t.Fatal(err)
+	}
+	headers := http.Header{"X-Gitee-Token": {string(secret)}, "X-Gitee-Timestamp": {fmt.Sprint(time.Now().UnixMilli())}, "X-Gitee-Event": {"Push Hook"}}
+	body := []byte(`{"ref":"refs/heads/main","after":"` + strings.Repeat("a", 40) + `","repository":{"id":42}}`)
+	if _, err := service.ReceiveWebhook(t.Context(), "42", headers, body); err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := s.ClaimWebhook(t.Context(), time.Minute)
+	if err != nil || delivery == nil {
+		t.Fatalf("claim=%+v err=%v", delivery, err)
+	}
+	source := []byte(githubCIPipeline + "triggers:\n  - event: push\n    branches: [main]\n")
+	plan, err := pipeline.Compile(source, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := githubci.RunCommit{Delivery: *delivery, RepositoryID: id, PipelinePath: ".yuanci.yml", PipelineSource: source, Plan: plan, CreatedAt: time.Now()}
+	// YAML policy overrides only the legacy toggle. Changes to authorization,
+	// global enablement, pipeline path and the authenticated hook still fence it.
+	for _, boundary := range []struct{ deny, restore string }{
+		{`UPDATE repository_automation_settings SET enabled=false WHERE repository_id=$1`, `UPDATE repository_automation_settings SET enabled=true WHERE repository_id=$1`},
+		{`UPDATE repository_automation_settings SET pipeline_path='other.yml' WHERE repository_id=$1`, `UPDATE repository_automation_settings SET pipeline_path='.yuanci.yml' WHERE repository_id=$1`},
+		{`UPDATE gitee_webhook_configs SET revision=revision+1 WHERE repository_id=$1`, `UPDATE gitee_webhook_configs SET revision=revision-1 WHERE repository_id=$1`},
+		{`UPDATE gitee_authorizations SET expires_at=clock_timestamp()-interval '1 second' WHERE id=(SELECT gitee_authorization_id FROM repositories WHERE id=$1)`, `UPDATE gitee_authorizations SET expires_at=clock_timestamp()+interval '1 hour' WHERE id=(SELECT gitee_authorization_id FROM repositories WHERE id=$1)`},
+	} {
+		if _, err := s.pool.Exec(t.Context(), boundary.deny, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.CommitWebhookRun(t.Context(), request); !errors.Is(err, githubci.ErrInvalidCommit) {
+			t.Fatalf("explicit YAML bypassed binding gate: %v", err)
+		}
+		if _, err := s.pool.Exec(t.Context(), boundary.restore, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	orchestrator, err := githubci.NewOrchestrator(s, service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := orchestrator.Process(t.Context(), *delivery)
+	if err != nil || outcome != githubci.OutcomeRunCreated {
+		t.Fatalf("YAML matching push was blocked by legacy toggle: outcome=%s err=%v", outcome, err)
+	}
+	var count int
+	if err := s.pool.QueryRow(t.Context(), `SELECT count(*) FROM runs WHERE repository_id=$1 AND commit_sha=$2 AND compiled_plan->'triggers'->0->>'event'='push'`, id, strings.Repeat("a", 40)).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("run/trigger policy not persisted: count=%d err=%v", count, err)
+	}
 }
 func TestGiteeWebhookDurabilityValidationAndSecretReplacement(t *testing.T) {
 	s, service, session, id := giteeProjectFixture(t)
@@ -144,6 +319,9 @@ func TestGiteeWebhookCreatesSharedRun(t *testing.T) {
 	if err != nil || status == nil {
 		t.Fatal("claim status", err)
 	}
+	if status.SourceEvent != "push" || status.SourceRef != "refs/heads/main" {
+		t.Fatalf("pending check lost trusted run provenance: event=%q ref=%q", status.SourceEvent, status.SourceRef)
+	}
 	if err := service.Deliver(t.Context(), *status); err != nil {
 		t.Fatal("pending delivery", err)
 	}
@@ -208,6 +386,9 @@ func TestGiteeWebhookCreatesSharedRun(t *testing.T) {
 	final, err := s.ClaimCommitStatus(t.Context(), time.Minute)
 	if err != nil || final == nil || final.State != commitstatus.StateSuccess {
 		t.Fatal("final outbox", err)
+	}
+	if final.SourceEvent != status.SourceEvent || final.SourceRef != status.SourceRef {
+		t.Fatal("terminal check provenance changed")
 	}
 	if err := service.Deliver(t.Context(), *final); err != nil {
 		t.Fatal("final delivery", err)

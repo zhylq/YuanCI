@@ -25,7 +25,8 @@ message RegisterRequest {
   // csr_pem is at most 16 KiB. The Runner generates and retains the private key.
   bytes csr_pem = 4;
   // Protocol 1 supports plan-only jobs. Protocol 2 adds authenticated source
-  // checkout fields. Servers continue to accept protocol 1 for source-free
+  // checkout fields. Protocol 3 adds deployment cleanup acknowledgements.
+  // Servers continue to accept protocol 1 for source-free
   // jobs during rolling upgrades.
   uint32 protocol_version = 5;
 }
@@ -46,7 +47,7 @@ message RegisterResponse {
 message RunnerCapabilities {
   string os = 1;
   string architecture = 2;
-  // At most 64 labels; each key/value is at most 128/512 UTF-8 bytes.
+  // At most 128 labels; each key/value is at most 128/512 UTF-8 bytes.
   map<string, string> labels = 3;
   // capacity must be in [1, 256].
   int32 capacity = 4;
@@ -79,6 +80,7 @@ message WorkResponse {
     LeaseRenewed lease_renewed = 3;
     JobRejected job_rejected = 4;
     LogAcknowledged log_acknowledged = 5;
+    JobCompletionAcknowledged job_completion_acknowledged = 6;
   }
 }
 
@@ -194,6 +196,12 @@ message JobCompleted {
   int32 exit_code = 4;
   google.protobuf.Duration duration = 5;
   string detail = 6;
+  // Protocol 3 deployment jobs retain capacity until local resources are absent.
+  bool cleanup_confirmed = 7;
+}
+
+message JobCompletionAcknowledged {
+  string job_id = 1;
 }
 
 enum JobConclusion {

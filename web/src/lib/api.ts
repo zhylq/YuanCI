@@ -21,6 +21,7 @@ export type Run = {
 }
 
 export type PlanJob = {
+  deployment?: string
   name: string
   image?: string
   depends_on?: string[]
@@ -30,6 +31,7 @@ export type PlanJob = {
 }
 
 export type PipelinePlan = {
+  deployment?: { environment: string }
   version: string
   name: string
   config_sha256: string

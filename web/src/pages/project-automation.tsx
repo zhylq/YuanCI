@@ -45,6 +45,7 @@ function AutomationForm({ settings, csrf, projectID, userID, provider }: { setti
   <fieldset disabled={busy} className="mt-4 space-y-4">
    <label className="block text-sm font-semibold">配置文件路径<input className="mt-2 min-h-11 w-full rounded-md border border-slate-300 px-3" value={draft.pipeline_path} maxLength={256} onChange={e => change({ ...draft, pipeline_path: e.target.value })} aria-describedby="automation-error" /></label>
    <div className="flex flex-wrap gap-5">{([['trigger_push', '分支推送'], ['trigger_tag', '标签推送'], ['trigger_pull_request', 'Pull Request']] as const).map(([key, label]) => <label key={key} className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={draft[key]} onChange={e => change({ ...draft, [key]: e.target.checked })} />{label}</label>)}</div>
+   <p className="text-pretty text-sm text-slate-600">事件与分支以 YAML triggers 为准；上述事件开关仅用于未声明 triggers 的旧配置。</p>
    <p className="text-pretty text-sm text-slate-600">Fork 事件会被拒绝。更换 App 或修改配置后需要重新验证。</p>
    <div className="flex flex-wrap gap-3">
     <button className={buttonClass} disabled={!dirty} onClick={() => void act('save')}>保存设置</button>

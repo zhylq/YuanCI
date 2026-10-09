@@ -15,7 +15,7 @@ func TestCheckRunDeliveryContract(t *testing.T) {
 		t.Run(string(state), func(t *testing.T) {
 			c := NewClient()
 			calls := 0
-			item := commitstatus.Item{RunID: uuid.New(), CommitSHA: strings.Repeat("a", 40), State: state, Description: "Run result"}
+			item := commitstatus.Item{RunID: uuid.New(), CommitSHA: strings.Repeat("a", 40), State: state, Description: "Run result", SourceEvent: "push", SourceRef: "refs/heads/main"}
 			c.http.Transport = transport(func(r *http.Request) (*http.Response, error) {
 				calls++
 				if r.Header.Get("Authorization") != "" || r.URL.Query().Get("access_token") != "private-token" {
@@ -25,7 +25,7 @@ func TestCheckRunDeliveryContract(t *testing.T) {
 					if r.Method != "GET" || r.URL.Query().Get("check_name") != "YuanCI/"+item.RunID.String() {
 						t.Fatal("missing deterministic name")
 					}
-					return response(r, 200, `[{"id":19,"name":"YuanCI/`+item.RunID.String()+`","head_sha":"`+item.CommitSHA+`","status":"queued"}]`), nil
+					return response(r, 200, `{"total_count":1,"check_runs":[{"id":19,"name":"YuanCI/`+item.RunID.String()+`","head_sha":"`+item.CommitSHA+`","status":"queued"}]}`), nil
 				}
 				if r.Method != "PATCH" || !strings.HasSuffix(r.URL.Path, "/check-runs/19") {
 					t.Fatal("must reuse check")
@@ -40,6 +40,12 @@ func TestCheckRunDeliveryContract(t *testing.T) {
 				}
 				if body["status"] != expected {
 					t.Fatal("state mapping")
+				}
+				output := body["output"].(map[string]any)
+				parts := strings.Split(output["summary"].(string), "\nYUANCI_SOURCE_V1 ")
+				var source map[string]string
+				if len(parts) != 2 || json.Unmarshal([]byte(parts[1]), &source) != nil || source["event"] != item.SourceEvent || source["ref"] != item.SourceRef || source["commit"] != item.CommitSHA {
+					t.Fatal("missing immutable source provenance")
 				}
 				return response(r, 200, `{}`), nil
 			})

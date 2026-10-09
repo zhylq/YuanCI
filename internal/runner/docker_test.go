@@ -19,7 +19,7 @@ func TestDockerArgsApplySecurityDefaults(t *testing.T) {
 		pipeline.PlanJob{Resources: pipeline.Resources{CPU: "2", Memory: "1Gi"}},
 		pipeline.Step{Name: "test", Commands: []string{"echo ok"}})
 	joined := strings.Join(args, " ")
-	for _, expected := range []string{"--network network", "--cap-drop ALL", "no-new-privileges", "--read-only", "--pids-limit 256", "--cpus 2", "--memory 1Gi"} {
+	for _, expected := range []string{"--network network", "--cap-drop ALL", "no-new-privileges", "--read-only", "--pids-limit 256", "--cpus 2", "--memory 1G"} {
 		if !strings.Contains(joined, expected) {
 			t.Errorf("expected %q in %q", expected, joined)
 		}
@@ -161,6 +161,18 @@ func TestDockerHelperProcess(t *testing.T) {
 	_, _ = file.WriteString(strings.Join(arguments[1:], " ") + "\n")
 	_ = file.Close()
 	joined := strings.Join(arguments[1:], " ")
+	if strings.Contains(joined, " ls ") {
+		if os.Getenv("DOCKER_HELPER_FAIL_QUERY") == "1" {
+			os.Exit(41)
+		}
+		if os.Getenv("DOCKER_HELPER_RESOURCE_REMAINS") == "1" {
+			for _, arg := range arguments {
+				if strings.HasPrefix(arg, "name=^") {
+					_, _ = os.Stdout.WriteString(strings.Trim(strings.TrimPrefix(arg, "name=^"), "/$") + "\n")
+				}
+			}
+		}
+	}
 	if len(arguments) > 1 && arguments[1] == "run" && os.Getenv("DOCKER_HELPER_REDACTION") == "1" {
 		_, _ = os.Stdout.WriteString("before synthetic-log-secret after\n")
 		_, _ = os.Stderr.WriteString("stderr synthetic-log-secret\n")
@@ -187,7 +199,7 @@ func dockerHelperCommandWith(t *testing.T, logFile string, extra ...string) func
 	return func(ctx context.Context, name string, arguments ...string) *exec.Cmd {
 		args := append([]string{"-test.run=TestDockerHelperProcess", "--", name}, arguments...)
 		command := exec.CommandContext(ctx, os.Args[0], args...)
-		command.Env = append(os.Environ(), append([]string{"GO_WANT_DOCKER_HELPER=1", "DOCKER_HELPER_LOG=" + logFile}, extra...)...)
+		command.Env = append(os.Environ(), append([]string{"GO_WANT_DOCKER_HELPER=1", "DOCKER_HELPER_LOG=" + logFile, "GORACE=" + os.Getenv("GORACE") + " atexit_sleep_ms=0"}, extra...)...)
 		return command
 	}
 }

@@ -83,8 +83,7 @@ func (v AutomationValidation) Validate() error {
 }
 
 func (u AutomationUpdate) Validate() error {
-	if u.ExpectedRevision < 0 || ValidatePipelinePath(u.PipelinePath) != nil ||
-		(u.Enabled && !u.TriggerPush && !u.TriggerTag && !u.TriggerPullRequest) {
+	if u.ExpectedRevision < 0 || ValidatePipelinePath(u.PipelinePath) != nil {
 		return ErrAutomationInvalid
 	}
 	return nil

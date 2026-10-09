@@ -28,6 +28,42 @@ stages:
             commands: ["true"]
 `
 
+func TestValidateWebhookFailedRunRequiresValidMatchingTriggerPolicy(t *testing.T) {
+	base := githubci.FailedRunCommit{
+		Delivery:     githubhook.WorkItem{ID: uuid.New(), LeaseID: uuid.New(), Event: scm.Event{Provider: scm.Gitee, DeliveryID: "delivery", Type: scm.EventPush, Ref: "refs/heads/main", AfterSHA: strings.Repeat("a", 40)}},
+		RepositoryID: uuid.New(), PipelinePath: ".yuanci.yml", ConfigSHA256: strings.Repeat("a", 64), ErrorCode: "pipeline_invalid", ErrorSummary: "Pipeline configuration is invalid", CreatedAt: time.Now(),
+	}
+	for _, test := range []struct {
+		name      string
+		triggers  []pipeline.Trigger
+		errorCode string
+		valid     bool
+	}{
+		{"legacy policy", nil, "pipeline_invalid", true},
+		{"explicit matching policy", []pipeline.Trigger{{Event: "push", Branches: []string{"main"}}}, "pipeline_invalid", true},
+		{"excluded branch", []pipeline.Trigger{{Event: "push", Branches: []string{"other"}}}, "pipeline_invalid", false},
+		{"wrong event", []pipeline.Trigger{{Event: "tag"}}, "pipeline_invalid", false},
+		{"invalid policy", []pipeline.Trigger{{Event: "push", Branches: []string{"*"}}}, "pipeline_invalid", false},
+		{"unsupported paths", []pipeline.Trigger{{Event: "push", Paths: []string{"src/**"}}}, "pipeline_invalid", false},
+		{"no policy from missing configuration", []pipeline.Trigger{{Event: "push"}}, "pipeline_not_found", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := base
+			request.Triggers, request.ErrorCode = test.triggers, test.errorCode
+			err := validateWebhookFailedRunCommit(request)
+			if test.valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, githubci.ErrInvalidCommit) {
+				t.Fatalf("invalid failed-run policy accepted: %v", err)
+			}
+		})
+	}
+}
+
 func claimedGitHubDelivery(t *testing.T, store *Store, externalID string) githubhook.WorkItem {
 	t.Helper()
 	event := scm.Event{Provider: scm.GitHub, DeliveryID: uuid.NewString(), Type: scm.EventPush,

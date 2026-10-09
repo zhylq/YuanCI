@@ -96,23 +96,39 @@ func (o *Orchestrator) process(ctx context.Context, delivery githubhook.WorkItem
 	if delivery.Event.Type == scm.EventPullRequest && delivery.Event.Metadata["fork"] != "false" {
 		return o.ignore(ctx, delivery, OutcomeIgnoredFork, "external_fork", "External fork pull request is not trusted")
 	}
-	if !triggerEnabled(settings, delivery.Event.Type) {
-		return o.ignore(ctx, delivery, OutcomeIgnoredTrigger, "trigger_disabled", "Event type is not enabled for this project")
+	if delivery.Event.Type != scm.EventPush && delivery.Event.Type != scm.EventTag && delivery.Event.Type != scm.EventPullRequest {
+		return o.ignore(ctx, delivery, OutcomeIgnoredTrigger, "trigger_disabled", "Event type is not supported for automation")
 	}
 	repository, source, err := o.fetcher.FetchPipeline(ctx, delivery.Event, settings.PipelinePath)
 	if err != nil {
+		// Without a usable YAML policy, preserve the legacy disabled-event gate.
+		if !triggerEnabled(settings, delivery.Event.Type) {
+			return o.ignore(ctx, delivery, OutcomeIgnoredTrigger, "trigger_disabled", "Event type is not enabled for this project")
+		}
 		if errors.Is(err, scm.ErrNotFound) {
-			return o.commitConfigurationFailure(ctx, delivery, repositoryID, settings.PipelinePath, nil, classifyFailure(err))
+			return o.commitConfigurationFailure(ctx, delivery, repositoryID, settings.PipelinePath, nil, nil, classifyFailure(err))
 		}
 		return "", err
 	}
 	if repository.ID != repositoryID {
 		return "", ErrRepositoryMismatch
 	}
+	// A valid explicit policy is authoritative even when executable stages are
+	// invalid. Absent, empty or ambiguous policy falls back to project switches.
+	var triggers []pipeline.Trigger
+	policy, policyErr := pipeline.ExtractTriggers(source)
+	if policyErr == nil && len(policy) > 0 {
+		triggers = policy
+		if !pipeline.MatchTriggers(triggers, delivery.Event) {
+			return o.ignore(ctx, delivery, OutcomeIgnoredTrigger, "trigger_mismatch", "Event does not match pipeline triggers")
+		}
+	} else if !triggerEnabled(settings, delivery.Event.Type) {
+		return o.ignore(ctx, delivery, OutcomeIgnoredTrigger, "trigger_disabled", "Event type is not enabled for this project")
+	}
 	now := o.now().UTC()
 	plan, err := pipeline.Compile(source, now)
 	if err != nil {
-		return o.commitConfigurationFailure(ctx, delivery, repositoryID, settings.PipelinePath, source,
+		return o.commitConfigurationFailure(ctx, delivery, repositoryID, settings.PipelinePath, source, triggers,
 			classifyFailure(fmt.Errorf("%w: %v", ErrInvalidPipeline, err)))
 	}
 	result, err := o.store.CommitWebhookRun(ctx, RunCommit{
@@ -129,12 +145,12 @@ func (o *Orchestrator) process(ctx context.Context, delivery githubhook.WorkItem
 }
 
 func (o *Orchestrator) commitConfigurationFailure(ctx context.Context, delivery githubhook.WorkItem,
-	repositoryID uuid.UUID, pipelinePath string, source []byte, failure failureClass) (Outcome, error) {
+	repositoryID uuid.UUID, pipelinePath string, source []byte, triggers []pipeline.Trigger, failure failureClass) (Outcome, error) {
 	digest := sha256.Sum256(source)
 	result, err := o.store.CommitWebhookFailedRun(ctx, FailedRunCommit{
 		Delivery: delivery, RepositoryID: repositoryID, PipelinePath: pipelinePath,
 		ConfigSHA256: hex.EncodeToString(digest[:]), ErrorCode: failure.code,
-		ErrorSummary: failure.summary, CreatedAt: o.now().UTC(),
+		ErrorSummary: failure.summary, Triggers: triggers, CreatedAt: o.now().UTC(),
 	})
 	if err != nil {
 		return "", err

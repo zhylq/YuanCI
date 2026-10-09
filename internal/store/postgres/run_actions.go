@@ -49,14 +49,15 @@ func (s *Store) GetAuthorizedRun(ctx context.Context, token string, projectID, r
 	// Job details carry the execution specs; avoid duplicating the full plan.
 	record.Plan = nil
 	detail := runmodel.Detail{Run: record, Jobs: []runmodel.JobDetail{}}
-	rows, err := tx.Query(ctx, `SELECT id,stage_name,job_name,status,spec,started_at,finished_at,reused_from_job_id FROM jobs WHERE run_id=$1 ORDER BY created_at,id LIMIT 1025`, runID)
+	rows, err := tx.Query(ctx, `SELECT id,stage_name,job_name,status,spec,started_at,finished_at,reused_from_job_id,execution_finished_at,
+	 (started_at IS NOT NULL AND execution_finished_at IS NULL AND EXISTS(SELECT 1 FROM deployment_runs WHERE run_id=jobs.run_id)) FROM jobs WHERE run_id=$1 ORDER BY created_at,id LIMIT 1025`, runID)
 	if err != nil {
 		return detail, err
 	}
 	for rows.Next() {
 		var job runmodel.JobDetail
 		var spec []byte
-		if err := rows.Scan(&job.ID, &job.StageName, &job.JobName, &job.Status, &spec, &job.StartedAt, &job.FinishedAt, &job.ReusedFrom); err != nil {
+		if err := rows.Scan(&job.ID, &job.StageName, &job.JobName, &job.Status, &spec, &job.StartedAt, &job.FinishedAt, &job.ReusedFrom, &job.ExecutionFinishedAt, &job.CleanupPending); err != nil {
 			rows.Close()
 			return detail, err
 		}
@@ -145,6 +146,9 @@ func (s *Store) CancelAuthorizedRun(ctx context.Context, token string, projectID
 		return "", err
 	}
 	if err := enqueueCommitStatusForRun(ctx, tx, runID, runmodel.StatusCanceled); err != nil {
+		return "", err
+	}
+	if err := releaseDeploymentRun(ctx, tx, runID); err != nil {
 		return "", err
 	}
 	if err := appendAudit(ctx, tx, session.UserID, "run.canceled", "run", runID); err != nil {

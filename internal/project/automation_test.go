@@ -25,13 +25,15 @@ func TestAutomationUpdateValidation(t *testing.T) {
 		func(v *AutomationUpdate) { v.PipelinePath = "ci/pipeline.json" },
 		func(v *AutomationUpdate) { v.PipelinePath = "ci/\x00pipeline.yml" },
 		func(v *AutomationUpdate) { v.PipelinePath = strings.Repeat("a", 257) + ".yml" },
-		func(v *AutomationUpdate) { v.Enabled, v.TriggerPush = true, false },
 	} {
 		candidate := valid
 		change(&candidate)
 		if err := candidate.Validate(); !errors.Is(err, ErrAutomationInvalid) {
 			t.Fatalf("invalid update accepted: %#v, error=%v", candidate, err)
 		}
+	}
+	if err := (AutomationUpdate{Enabled: true, PipelinePath: DefaultPipelinePath}).Validate(); err != nil {
+		t.Fatalf("YAML-only trigger policy rejected: %v", err)
 	}
 }
 

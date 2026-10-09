@@ -42,6 +42,9 @@ func (e ValidationErrors) Error() string {
 }
 
 func Parse(source []byte) (Pipeline, error) {
+	if _, err := decodePipelineDocument(source); err != nil {
+		return Pipeline{}, err
+	}
 	var value Pipeline
 	decoder := yaml.NewDecoder(strings.NewReader(string(source)))
 	decoder.KnownFields(true)
@@ -53,6 +56,21 @@ func Parse(source []byte) (Pipeline, error) {
 
 func Validate(value Pipeline) error {
 	var problems ValidationErrors
+	if value.Deployment != nil {
+		if !namePattern.MatchString(value.Deployment.Environment) {
+			problems = append(problems, ValidationError{"deployment.environment", "must be a valid 1-63 character name"})
+		}
+		if value.Concurrency != nil && (value.Concurrency.CancelPrevious || value.Concurrency.Limit > 1) {
+			problems = append(problems, ValidationError{"concurrency", "deployments require FIFO execution without cancellation or parallel runs"})
+		}
+		for _, stage := range value.Stages {
+			for _, job := range stage.Jobs {
+				if job.Retry != 0 {
+					problems = append(problems, ValidationError{"retry", "deployments cannot retry"})
+				}
+			}
+		}
+	}
 	if value.Version != APIVersion {
 		problems = append(problems, ValidationError{"version", "must be v1"})
 	}
@@ -84,12 +102,7 @@ func Validate(value Pipeline) error {
 	}
 	problems = append(problems, validateDependencies("stages", stageNames, stageDependencies(value.Stages))...)
 
-	allowedEvents := map[string]struct{}{"push": {}, "pull_request": {}, "tag": {}, "manual": {}, "cron": {}, "api": {}}
-	for i, trigger := range value.Triggers {
-		if _, ok := allowedEvents[trigger.Event]; !ok {
-			problems = append(problems, ValidationError{fmt.Sprintf("triggers[%d].event", i), "is not supported"})
-		}
-	}
+	problems = append(problems, validateTriggers(value.Triggers)...)
 
 	if len(problems) > 0 {
 		return problems
@@ -105,6 +118,14 @@ func Compile(source []byte, now time.Time) (Plan, error) {
 	if err := Validate(value); err != nil {
 		return Plan{}, err
 	}
+	// Normalize execution syntax before hashing and producing the persisted plan.
+	for i := range value.Stages {
+		for j := range value.Stages[i].Jobs {
+			job := &value.Stages[i].Jobs[j]
+			job.Steps = effectiveJobSteps(*job)
+			job.Commands = nil
+		}
+	}
 
 	canonical, err := json.Marshal(value)
 	if err != nil {
@@ -112,10 +133,12 @@ func Compile(source []byte, now time.Time) (Plan, error) {
 	}
 	digest := sha256.Sum256(canonical)
 	plan := Plan{
+		Deployment:   value.Deployment,
 		Version:      value.Version,
 		Name:         value.Name,
 		ConfigSHA256: hex.EncodeToString(digest[:]),
 		CompiledAt:   now.UTC(),
+		Triggers:     value.Triggers,
 		Stages:       make([]PlanStage, 0, len(value.Stages)),
 	}
 	for _, stage := range value.Stages {
@@ -145,10 +168,20 @@ func Compile(source []byte, now time.Time) (Plan, error) {
 				Environment: job.Environment, Services: job.Services, Resources: job.Resources,
 				Secrets: job.Secrets, Steps: job.Steps, RunsOn: runsOn, RequiredDiskBytes: diskBytes,
 			})
+			if value.Deployment != nil {
+				compiledStage.Jobs[len(compiledStage.Jobs)-1].Deployment = value.Deployment.Environment
+			}
 		}
 		plan.Stages = append(plan.Stages, compiledStage)
 	}
 	return plan, nil
+}
+
+func effectiveJobSteps(job Job) []Step {
+	if job.Commands != nil {
+		return []Step{{Name: "commands", Commands: job.Commands}}
+	}
+	return job.Steps
 }
 
 func validateJobs(path string, jobs []Job) ValidationErrors {
@@ -172,7 +205,11 @@ func validateJobs(path string, jobs []Job) ValidationErrors {
 				problems = append(problems, ValidationError{jobPath + "." + problem.Path, problem.Message})
 			}
 		}
-		if len(job.Steps) == 0 {
+		if job.Commands != nil && job.Steps != nil {
+			problems = append(problems, ValidationError{jobPath, "commands and steps are mutually exclusive"})
+		}
+		steps := effectiveJobSteps(job)
+		if len(steps) == 0 {
 			problems = append(problems, ValidationError{jobPath + ".steps", "must contain at least one step"})
 		}
 		if job.Retry < 0 || job.Retry > 5 {
@@ -203,7 +240,7 @@ func validateJobs(path string, jobs []Job) ValidationErrors {
 				problems = append(problems, ValidationError{jobPath + ".timeout", err.Error()})
 			}
 		}
-		for j, step := range job.Steps {
+		for j, step := range steps {
 			stepPath := fmt.Sprintf("%s.steps[%d]", jobPath, j)
 			if !namePattern.MatchString(step.Name) {
 				problems = append(problems, ValidationError{stepPath + ".name", "is invalid"})

@@ -506,7 +506,8 @@ paths:
         '201': { description: Run accepted and transactionally queued }
         '401': { description: Invalid session }
         '403': { description: Origin, CSRF or scoped permission denied }
-        '422': { description: Pipeline validation errors }
+        '409': { description: Deployment commit already registered for this repository and environment }
+        '422': { description: Pipeline validation errors or deployment requires a repository and immutable commit SHA }
 components:
   requestBodies:
     LoginCandidate:

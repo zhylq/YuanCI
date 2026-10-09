@@ -69,10 +69,11 @@ type HeartbeatResult struct {
 }
 
 type RunnerCompletion struct {
-	RunnerID   uuid.UUID
-	JobID      uuid.UUID
-	LeaseToken string
-	Status     JobStatus
+	CleanupConfirmed bool
+	RunnerID         uuid.UUID
+	JobID            uuid.UUID
+	LeaseToken       string
+	Status           JobStatus
 }
 
 type RunnerJobStore interface {
@@ -89,7 +90,7 @@ func ValidateHeartbeatRequest(request HeartbeatRequest) error {
 	if runner.ID == uuid.Nil || (runner.PoolType != "standard" && runner.PoolType != "privileged" && runner.PoolType != "deployment") ||
 		runner.OS == "" || len(runner.OS) > 64 || runner.Architecture == "" || len(runner.Architecture) > 64 ||
 		runner.Executor == "" || len(runner.Executor) > 64 || runner.Capacity < 1 || runner.Capacity > 256 ||
-		runner.AvailableDiskBytes < 0 || runner.ProtocolVersion < 1 || runner.ProtocolVersion > 2 ||
+		runner.AvailableDiskBytes < 0 || runner.ProtocolVersion < 1 || runner.ProtocolVersion > 3 ||
 		len(runner.Labels) > 128 || len(request.ActiveJobs) > MaximumHeartbeatJobCount ||
 		len(request.ActiveJobs) > runner.Capacity {
 		return ErrInvalidRunnerRequest

@@ -32,6 +32,7 @@ type FailedRunCommit struct {
 	ConfigSHA256 string
 	ErrorCode    string
 	ErrorSummary string
+	Triggers     []pipeline.Trigger
 	CreatedAt    time.Time
 }
 

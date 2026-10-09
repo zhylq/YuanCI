@@ -47,9 +47,10 @@ func (issuer *credentialIssuerStub) IssueCheckoutCredential(_ context.Context, r
 }
 
 type assignmentJobStore struct {
-	assignment *runmodel.Assignment
-	released   []runmodel.LeaseRequest
-	completed  []runmodel.RunnerCompletion
+	assignment    *runmodel.Assignment
+	released      []runmodel.LeaseRequest
+	completed     []runmodel.RunnerCompletion
+	completionErr error
 }
 
 func (store *assignmentJobStore) ClaimRunnerJob(context.Context, runmodel.RunnerClaim) (*runmodel.Assignment, error) {
@@ -72,7 +73,7 @@ func (store *assignmentJobStore) ReleaseRunnerJob(_ context.Context, request run
 }
 func (store *assignmentJobStore) CompleteRunnerJob(_ context.Context, request runmodel.RunnerCompletion) error {
 	store.completed = append(store.completed, request)
-	return nil
+	return store.completionErr
 }
 
 type captureWorkStream struct {

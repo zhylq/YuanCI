@@ -1,10 +1,58 @@
 package pipeline
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestCompilePreservesTriggers(t *testing.T) {
+	source := strings.Replace(validPipeline, "  - event: push", "  - event: push\n    branches: [main, release/stable]", 1)
+	plan, err := Compile([]byte(source), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted struct {
+		Triggers []Trigger `json:"triggers"`
+	}
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted.Triggers) != 1 || persisted.Triggers[0].Event != "push" || len(persisted.Triggers[0].Branches) != 2 || persisted.Triggers[0].Branches[1] != "release/stable" {
+		t.Fatalf("compiled plan discarded trigger policy: %s", data)
+	}
+}
+
+func TestValidateRejectsUnsupportedTriggerFilters(t *testing.T) {
+	base, err := Parse([]byte(validPipeline))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, trigger := range map[string]Trigger{
+		"paths":                {Event: "push", Paths: []string{"src/**"}},
+		"glob":                 {Event: "push", Branches: []string{"release/*"}},
+		"qualified branch":     {Event: "push", Branches: []string{"refs/heads/main"}},
+		"empty branch":         {Event: "push", Branches: []string{""}},
+		"malformed branch":     {Event: "push", Branches: []string{"main//next"}},
+		"lock branch":          {Event: "push", Branches: []string{"main.lock"}},
+		"hidden component":     {Event: "push", Branches: []string{"release/.hidden"}},
+		"tag branch filter":    {Event: "tag", Branches: []string{"main"}},
+		"manual branch filter": {Event: "manual", Branches: []string{"main"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			value := base
+			value.Triggers = []Trigger{trigger}
+			if err := Validate(value); err == nil || !strings.Contains(err.Error(), "triggers[0]") {
+				t.Fatalf("unsupported trigger filter accepted: %v", err)
+			}
+		})
+	}
+}
 
 const validPipeline = `version: v1
 name: verify
@@ -115,6 +163,20 @@ func TestCompileRejectsUnknownFields(t *testing.T) {
 	_, err := Compile([]byte(validPipeline+"unknown: true\n"), time.Now())
 	if err == nil || !strings.Contains(err.Error(), "field unknown not found") {
 		t.Fatalf("expected unknown field error, got %v", err)
+	}
+}
+
+func TestCompileRejectsAmbiguousTriggerYAML(t *testing.T) {
+	for name, source := range map[string]string{
+		"multiple documents": validPipeline + "\n---\ntriggers: [{event: tag}]\n",
+		"root merge":         strings.Replace(validPipeline, "version: v1", "<<: {version: v1}", 1),
+		"trigger aliases":    strings.Replace(validPipeline, "  - event: push", "  - event: push\n    branches: &branches [main]\n  - event: pull_request\n    branches: *branches", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Compile([]byte(source), time.Now()); err == nil {
+				t.Fatal("ambiguous YAML compiled to an executable plan")
+			}
+		})
 	}
 }
 

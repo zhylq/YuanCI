@@ -28,14 +28,16 @@ type RerunStore interface {
 }
 
 type JobDetail struct {
-	ID         uuid.UUID        `json:"id"`
-	StageName  string           `json:"stage_name"`
-	JobName    string           `json:"job_name"`
-	Status     JobStatus        `json:"status"`
-	Spec       pipeline.PlanJob `json:"spec"`
-	StartedAt  *time.Time       `json:"started_at,omitempty"`
-	FinishedAt *time.Time       `json:"finished_at,omitempty"`
-	ReusedFrom *uuid.UUID       `json:"reused_from_job_id,omitempty"`
+	CleanupPending      bool             `json:"cleanup_pending"`
+	ExecutionFinishedAt *time.Time       `json:"execution_finished_at,omitempty"`
+	ID                  uuid.UUID        `json:"id"`
+	StageName           string           `json:"stage_name"`
+	JobName             string           `json:"job_name"`
+	Status              JobStatus        `json:"status"`
+	Spec                pipeline.PlanJob `json:"spec"`
+	StartedAt           *time.Time       `json:"started_at,omitempty"`
+	FinishedAt          *time.Time       `json:"finished_at,omitempty"`
+	ReusedFrom          *uuid.UUID       `json:"reused_from_job_id,omitempty"`
 }
 type Detail struct {
 	Run  Record      `json:"run"`

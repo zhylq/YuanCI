@@ -86,7 +86,7 @@ func (s *Store) RecoverExpiredRunnerLeases(ctx context.Context, limit int) (runm
 			outcome := "assigned_requeued"
 			if job.status == runmodel.JobAssigned {
 				command, err := tx.Exec(ctx, `UPDATE jobs SET status='queued',runner_id=NULL,lease_token_hash=NULL,
-                    lease_expires_at=NULL,accepted_at=NULL,lease_renewed_at=NULL
+                    execution_token_hash=NULL,lease_expires_at=NULL,accepted_at=NULL,lease_renewed_at=NULL
                     WHERE id=$1 AND status='assigned' AND lease_expires_at <= clock_timestamp()`, job.id)
 				if err != nil {
 					return runmodel.RecoveryResult{}, fmt.Errorf("requeue expired job: %w", err)

@@ -1,5 +1,19 @@
 # Development log
 
+## 2026-10-08 — Gitee deployment source provenance
+
+- Commit-status claims now read immutable event/ref from their persisted Run.
+  Gitee Check Run summaries include a `YUANCI_SOURCE_V1` JSON marker with event,
+  ref and commit SHA, allowing a host publisher to distinguish main push checks
+  from checks of the same SHA on another branch. No schema migration is needed.
+- Consumers must require exact project/Run URLs, SHA, source metadata and the
+  latest completed/success check. This marker is not a digital signature;
+  repository and Check Run writers remain part of the deployment trust boundary.
+- Gitee/commitstatus/postgres package tests and vet passed. Three real temporary
+  PostgreSQL integration tests passed, including pending/final Run provenance.
+  Windows Git fixtures ran with test-only autocrlf disabled. Actual Gitee output
+  consumption and production publisher activation remain pending project setup.
+
 ## 2026-09-30 — CI-01 isolated Job service lifecycle
 
 - Jobs with `services` now create and start dependency containers on their own
@@ -1566,3 +1580,30 @@ the batch outcome and remaining work.
   URL identity validation now accepts exactly the canonical browser form or
   that form with one `.git` suffix; different origins and substituted paths
   remain rejected. Focused discovery tests cover the real form and rejection.
+
+## 2026-10-08 — Real YuanPlan Gitee acceptance and Docker memory units
+
+- Updated the Gitee sandbox Server/Runner to a882e8d after a protected database/config backup; PostgreSQL and authorization/identity volumes were retained. Public readiness and Runner online checks passed.
+- YuanPlan's pipeline validated online and branch push/PR automation was enabled. A real main push created Run cc1fb012-4935-4f06-b8e4-07479ce98194. Its failure was correctly delivered to Gitee with the exact commit/event/ref source marker.
+- That run exposed Docker's rejection of the supported pipeline memory value `4Gi`. Normalize the IEC `i` marker for both job and service Docker arguments, preserving the binary memory limit. Updated the security argument regression and exercised `256Mi` with actual Docker job/service integration tests.
+- Runner tests, vet and real Docker service integration passed. Production publication remains gated on successful main CI and administrator installation/activation.
+
+## 2026-10-08 — YuanPlan real main push verification passed
+
+- Gitee main commit `ad94d5c5e24cd19459d80bbc4331a7bb63890950` automatically created Run `a7e397f8-6a4e-490a-8c03-5d2ab8187eff`. The isolated PostgreSQL service, typecheck, 97 tests across 11 files, application build and API/web/JavaScript startup smoke checks all passed.
+- Prewarmed the locked public npm artifacts in `yuanplan-ci:node22-pg17-warm`; the final image contains no application source or production credentials. Offline installation with lifecycle scripts passed locally, and the real Runner installed dependencies in 19 seconds. Lockfile integrity checks remain active.
+- Gitee Check Run `26946057` reports completed/success for the exact main commit with the trusted push/ref source marker and the correct YuanCI Run URL. The installed publisher's read-only eligibility check selected this check successfully.
+- The administrator installed the protected containerized publisher, configuration and systemd units, then enabled `yuanplan-publish.timer`. The first automatic publication completed successfully for the same main commit and Check Run. Cold production dependency downloads dominated the approximately 16-minute first release.
+- Verified the protected deployment state is `success`, the application runs `yuanplan:ad94d5c5e24cd19459d80bbc4331a7bb63890950` and is healthy, and the original healthy database container was retained. The pre-migration backup contains a verified database dump and 2 attachments; migration/start checks passed, maintenance was disabled and public health returned `status: ok`.
+- Existing npm audit output reports 2 high and 2 critical findings; dependency remediation remains separate work.
+
+## 2026-10-09 — Native branch-triggered command deployment
+
+- Explicit YAML triggers now control event and exact branch matching before task creation. Delayed Gitee pushes retain their immutable commit instead of requiring current branch HEAD. Legacy project event switches remain the fallback when YAML has no triggers.
+- Optional `deployment.environment` registers a durable repository/environment/commit identity. Duplicate webhook deliveries reuse it; distinct commits queue in FIFO order. Deployment retries, reruns and automatic cancellation of an earlier commit are disabled.
+- Dedicated protocol v3 deployment Runners derive repository grants and optional step mounts from an administrator policy. Standard Runners retain protocol v2 and their existing isolation. The executor runs user commands without adding application tests, databases or image-building steps.
+- Stop deployment waits for bounded Docker stop/removal and verified resource absence before releasing the environment. Lost execution is never replayed. Completion acknowledgements survive reconnects; an audited administrator `deployment confirm-stopped` command resolves exceptional holds after physical verification.
+- Run detail provides the stop action, hides deployment reruns and continues polling terminal runs while cleanup remains pending. Frontend tests (35), lint/build, full Go tests, Linux race/PostgreSQL checks and static checks passed. A real Docker fixture verified ENTRYPOINT override and resource cleanup.
+- Independent specification and quality reviews approved the trigger, persistence, executor and recovery changes. Local Compose bootstrap verified a fresh protocol v3 deployment identity and preserved an older ordinary Runner identity through upgrade at protocol v2.
+- Prepared and reviewed a cached-image administrator upgrade package for the existing server. Its cutover waits for the old oneshot publisher and actual release lock before disabling the timer. The administrator upgraded Server/Runner; a legacy systemd `--value` incompatibility was corrected with property-prefix parsing and a reviewed restart-free handoff script. Production readiness, protocol v3 grants and ordinary protocol v2 identity were verified; the old timer is inactive and disabled.
+- YuanPlan main `7bcdac9a1ec9c301cdced5f7e8c2cdbbdcc3f1c6` created exactly one native Run `353c0ba0-9586-4789-a0cb-2c095f245869`, which succeeded in 72.109 seconds. It contained one user command step and zero service containers. Cleanup was acknowledged, the FIFO gate was released and the job's containers/network/volume were absent. The application runs the matching healthy image, the existing database is healthy and public health reports `ok`.

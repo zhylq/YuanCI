@@ -1,0 +1,14 @@
+version: v1
+name: deploy-production
+triggers:
+  - event: push
+    branches: [main]
+deployment:
+  environment: production
+stages:
+  - name: deploy
+    jobs:
+      - name: commands
+        image: alpine:3.21
+        commands:
+          - sh ./scripts/deploy.sh
