@@ -38,8 +38,10 @@ Executor delivery: `354ae6c`. Independent specification and quality reviews appr
 ### Delivery
 - [x] Update schema, examples, operational docs and development log.
 - [x] Run relevant backend/frontend checks and Linux race checks.
-- [ ] Commit and push authorized changes; prepare verified server update and migrate the sample only after replacement verification.
+- [x] Commit and push authorized changes; prepare verified server update and migrate the sample only after replacement verification.
 
 Operational recovery delivery: `6322c0f`, independently approved by specification and quality reviews. Audited administrator cleanup confirmation preserves deployment identity and original terminal results, and never replays commands. Full affected CLI/store tests passed with real PostgreSQL (58.665 seconds); final Linux race/PG checks passed (41.554 seconds), followed by affected-package vet.
 
-The reviewed administrator package is uploaded at `/home/deploy/yuanci-native-deployment-20261009`; all six transfer checksums passed. Real isolated Compose bootstrap verified deployment protocol v3 and ordinary Runner identity preservation at protocol v2. Production administrator installation and the main-only YuanPlan YAML push remain pending. Installer sources and pinned image/archive checksums are retained under `deploy/native-deployment/yuanplan`.
+The reviewed administrator package is uploaded at `/home/deploy/yuanci-native-deployment-20261009`; all transfer checksums passed. Real isolated Compose bootstrap verified deployment protocol v3 and ordinary Runner identity preservation at protocol v2. The administrator installed it, then executed a reviewed legacy-systemd-compatible handoff script. The old timer is inactive and disabled. Installer sources and pinned image/archive checksums are retained under `deploy/native-deployment/yuanplan`.
+
+Production acceptance: YuanPlan main `7bcdac9a1ec9c301cdced5f7e8c2cdbbdcc3f1c6`, native Run `353c0ba0-9586-4789-a0cb-2c095f245869`, succeeded in 72.109 seconds. Exactly one Run/registration, one step and zero services; explicit cleanup timestamp and gate release recorded. No matching job containers, network or workspace volume remain. The exact new application image and retained database are healthy, and public health returns `ok`. Both project repositories were committed and pushed.
