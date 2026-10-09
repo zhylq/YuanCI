@@ -17,11 +17,13 @@
 Trigger delivery: commits `29555ae`, `8145a33`, `1a20c7a`. Independent specification and quality reviews approved. Unit packages and real disposable PostgreSQL trigger/failure-policy integrations passed. Trigger extraction is independent of executable YAML decoding; ambiguous policy and multiple documents are rejected consistently. Valid tag refs and legacy disabled-event behavior remain supported.
 
 ### Deployment persistence and FIFO queue
-- [ ] Add additive migration for unique repository/environment/SHA identity and execution cleanup tracking.
-- [ ] Compile optional deployment metadata; disable deployment retries and reruns.
-- [ ] Register/reuse deployment in Run creation under transaction locks.
-- [ ] Gate Runner claims by environment FIFO and serialize deployment jobs.
-- [ ] Verify concurrent duplicate delivery, distinct commits, independent environments and ordinary CI using disposable PostgreSQL.
+- [x] Add additive migration for unique repository/environment/SHA identity and execution cleanup tracking.
+- [x] Compile optional deployment metadata; disable deployment retries and reruns.
+- [x] Register/reuse deployment in Run creation under transaction locks.
+- [x] Gate Runner claims by environment FIFO and serialize deployment jobs.
+- [x] Verify concurrent duplicate delivery, distinct commits, independent environments and ordinary CI using disposable PostgreSQL.
+
+Backend delivery: commit `f7067ef`. Independent specification and quality reviews approved. Full Go suite with disposable PostgreSQL passed (PostgreSQL package 57.087 seconds). Regressions cover a stale-snapshot cross-Runner claim race, original-token late cleanup and terminal timestamp preservation, and downgrade refusal after any registration. Existing standard Runner protocols remain unchanged; deployment requires the upcoming protocol v3 executor.
 
 ### Cancellation and execution
 - [ ] Retain deployment gate until Runner reports actual execution cleanup; do not replay lost execution.
