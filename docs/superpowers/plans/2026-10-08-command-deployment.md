@@ -25,11 +25,15 @@ Trigger delivery: commits `29555ae`, `8145a33`, `1a20c7a`. Independent specifica
 
 Backend delivery: commit `f7067ef`. Independent specification and quality reviews approved. Full Go suite with disposable PostgreSQL passed (PostgreSQL package 57.087 seconds). Regressions cover a stale-snapshot cross-Runner claim race, original-token late cleanup and terminal timestamp preservation, and downgrade refusal after any registration. Existing standard Runner protocols remain unchanged; deployment requires the upcoming protocol v3 executor.
 
+Linux verification of snapshot `07f612f`: race checks passed for the backend packages, including real disposable PostgreSQL (50.434 seconds). Runner helper subprocess tests initially exhausted deadlines because each race-instrumented child adds an exit wait; rerunning with `GORACE=atexit_sleep_ms=0` passed the Runner package (3.559 seconds) without changing assertions. `go vet ./...` passed. The later protocol/executor changes require their own final verification.
+
 ### Cancellation and execution
-- [ ] Retain deployment gate until Runner reports actual execution cleanup; do not replay lost execution.
-- [ ] Add administrator-controlled deployment Runner access using the existing commands executor.
-- [ ] Make Run detail show stop deployment and suppress duplicate deployment rerun actions.
-- [ ] Verify stop, lost-lease cleanup, policy denial and commands-only Docker execution.
+- [x] Retain deployment gate until Runner reports actual execution cleanup; do not replay lost execution.
+- [x] Add administrator-controlled deployment Runner access using the existing commands executor.
+- [x] Make Run detail show stop deployment and suppress duplicate deployment rerun actions.
+- [x] Verify stop, lost-lease cleanup, policy denial and commands-only Docker execution.
+
+Executor delivery candidate: `354ae6c`. Independent specification review approved; quality review is in progress. Full Go tests, 35 frontend tests, lint and build passed. Real Docker ENTRYPOINT/commands/resource-cleanup verification passed (2.900 seconds). Complete Linux race tests and disposable PostgreSQL integrations passed (PostgreSQL 41.412 seconds), followed by `go vet ./...`. Completion acknowledgement is limited to protocol v3; older standard Runner binaries remain compatible.
 
 ### Delivery
 - [ ] Update schema, examples, operational docs and development log.
