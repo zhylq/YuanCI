@@ -21,6 +21,17 @@ func main() {
 		os.Exit(2)
 	}
 	executor := runner.NewDockerExecutor(os.Stdout, os.Stderr)
+	if cfg.IsolationLevel == "deployment" {
+		policy, err := runner.LoadDeploymentPolicy(cfg.DeploymentPolicyFile)
+		if err != nil {
+			logger.Error("invalid deployment policy", "error", err)
+			os.Exit(2)
+		}
+		executor.DeploymentPolicy = policy
+		for key, value := range policy.Labels() {
+			cfg.Labels[key] = value
+		}
+	}
 	checkCtx, checkDone := context.WithTimeout(context.Background(), 10*time.Second)
 	if err := executor.Check(checkCtx); err != nil {
 		checkDone()

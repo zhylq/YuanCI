@@ -183,3 +183,38 @@ test('Run cancellation refreshes status and log access failure hides old output'
  expect(await screen.findByRole('alert')).toHaveTextContent('日志权限已失效')
  expect(screen.queryByLabelText('任务日志')).not.toBeInTheDocument()
 })
+
+test('deployment stop uses authenticated cancel and terminal cleanup keeps polling until confirmed', async () => {
+ let canceled = false, confirmed = false, reads = 0
+ const writes: RequestInit[] = []
+ vi.stubGlobal('fetch', vi.fn(async (path: string, options?: RequestInit) => {
+  if (path.endsWith('/auth/status')) return reply(status)
+  if (path.endsWith('/session')) return reply(session)
+  if (path.endsWith('/cancel')) { writes.push(options!); canceled = true; return reply({ status: 'canceled' }) }
+  if (path.includes('/logs')) return reply({ items: [], next_sequence: 0, expired: false })
+  reads++
+  return reply({ run: { ...detailRun, status: canceled ? 'canceled' : 'running' }, jobs: [{ ...detailJob, status: canceled ? 'canceled' : 'running', cleanup_pending: canceled && !confirmed, spec: { ...detailJob.spec, deployment: 'production' } }] })
+ }))
+ mount(`/projects/${id}/runs/${otherID}`)
+ fireEvent.click(await screen.findByRole('button', { name: '停止部署' }))
+ expect(await screen.findByText(/等待 Runner 确认资源清理/)).toHaveAttribute('role', 'status')
+ expect(writes).toHaveLength(1)
+ expect(writes[0]).toMatchObject({ method: 'POST', headers: { 'X-CSRF-Token': 'fixture' } })
+ expect(screen.queryByRole('button', { name: /重跑/ })).not.toBeInTheDocument()
+ const pendingReads = reads
+ await waitFor(() => expect(reads).toBeGreaterThan(pendingReads), { timeout: 2500 })
+ confirmed = true
+ await waitFor(() => expect(screen.queryByText(/等待 Runner 确认资源清理/)).not.toBeInTheDocument(), { timeout: 2500 })
+ const finishedReads = reads
+ await new Promise(resolve => setTimeout(resolve, 1200))
+ expect(reads).toBe(finishedReads)
+ expect(screen.queryByRole('button', { name: /重跑/ })).not.toBeInTheDocument()
+})
+
+test('failed deployment never offers full or failed rerun', async () => {
+ mock(path => path.includes('/logs') ? reply({ items: [], next_sequence: 0, expired: false }) : reply({ run: detailRun, jobs: [{ ...detailJob, spec: { ...detailJob.spec, deployment: 'production' } }] }))
+ mount(`/projects/${id}/runs/${otherID}`)
+ await screen.findByRole('heading', { name: 'CI fixture' })
+ expect(screen.queryByRole('button', { name: /重跑/ })).not.toBeInTheDocument()
+ expect(screen.getByText(/不会回滚/)).toBeInTheDocument()
+})

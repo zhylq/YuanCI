@@ -86,10 +86,11 @@ type localSource struct {
 }
 
 type executionResult struct {
-	jobID      uuid.UUID
-	conclusion runnerv1.JobConclusion
-	detail     string
-	duration   time.Duration
+	jobID            uuid.UUID
+	conclusion       runnerv1.JobConclusion
+	detail           string
+	duration         time.Duration
+	cleanupConfirmed bool
 }
 
 func NewWorkClient(config WorkConfig) (*WorkClient, error) {
@@ -127,7 +128,7 @@ func (client *WorkClient) Run(ctx context.Context, executor Executor) error {
 		if errors.Is(err, errCertificateRotationDue) {
 			rotationCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			rotated, rotationErr := RotateCredentials(rotationCtx, RotationConfig{Address: client.config.Address,
-				ServerName: client.config.ServerName, StateDir: client.config.StateDir, Current: client.config.Credentials})
+				ServerName: client.config.ServerName, StateDir: client.config.StateDir, Current: client.config.Credentials, ProtocolVersion: protocolFor(client.config.Capabilities)})
 			cancel()
 			if rotationErr == nil {
 				client.config.Credentials = rotated
@@ -206,16 +207,7 @@ func (client *WorkClient) runSession(ctx context.Context, executor Executor, act
 				return err
 			}
 		case result := <-results:
-			job := active[result.jobID]
-			if job == nil || job.phase != jobRunning || job.authorityLost.Load() || !time.Now().Before(job.leaseExpires) {
-				if job != nil && (!time.Now().Before(job.leaseExpires) || job.authorityLost.Load()) {
-					forgetJob(active, job)
-				}
-				continue
-			}
-			job.phase = jobCompleted
-			job.result = &result
-			if err := stream.Send(completionRequest(job, result)); err != nil {
+			if err := recordExecutionResult(stream, active, result); err != nil {
 				return err
 			}
 		case <-ticker.C:
@@ -246,7 +238,9 @@ func (client *WorkClient) runSession(ctx context.Context, executor Executor, act
 			}
 		case jobID := <-leaseLosses:
 			if job := active[jobID]; job != nil && job.authorityLost.Load() {
-				forgetJob(active, job)
+				if err := stopLocalJob(stream, active, job); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -298,13 +292,11 @@ func (client *WorkClient) handleResponse(ctx context.Context,
 			return errors.New("unknown Runner lease renewal")
 		}
 		if job.authorityLost.Load() {
-			forgetJob(active, job)
-			return nil
+			return stopLocalJob(stream, active, job)
 		}
 		job.leaseExpires = body.LeaseRenewed.ExpiresAt.AsTime()
 		if !resetLeaseDeadline(job, leaseLosses) {
-			forgetJob(active, job)
-			return nil
+			return stopLocalJob(stream, active, job)
 		}
 		switch job.phase {
 		case jobAwaitingAcceptance:
@@ -347,7 +339,7 @@ func (client *WorkClient) handleResponse(ctx context.Context,
 			return errors.New("invalid Runner cancellation")
 		}
 		if job := active[jobID]; job != nil {
-			forgetJob(active, job)
+			return stopLocalJob(stream, active, job)
 		}
 		return nil
 	case *runnerv1.WorkResponse_JobRejected:
@@ -357,8 +349,24 @@ func (client *WorkClient) handleResponse(ctx context.Context,
 		jobID, err := uuid.Parse(body.JobRejected.JobId)
 		if err == nil {
 			if job := active[jobID]; job != nil {
-				forgetJob(active, job)
+				if job.phase == jobCompleted {
+					forgetJob(active, job)
+				} else {
+					return stopLocalJob(stream, active, job)
+				}
 			}
+		}
+		return nil
+	case *runnerv1.WorkResponse_JobCompletionAcknowledged:
+		if body.JobCompletionAcknowledged == nil {
+			return errors.New("invalid completion acknowledgement")
+		}
+		id, err := uuid.Parse(body.JobCompletionAcknowledged.JobId)
+		if err != nil {
+			return errors.New("invalid completion acknowledgement")
+		}
+		if job := active[id]; job != nil && job.phase == jobCompleted {
+			forgetJob(active, job)
 		}
 		return nil
 	default:
@@ -407,6 +415,10 @@ func decodeAssignment(assignment *runnerv1.JobAssignment) (*localJob, error) {
 
 func resendTransition(stream grpc.BidiStreamingClient[runnerv1.WorkRequest, runnerv1.WorkResponse], job *localJob) error {
 	switch job.phase {
+	case jobCompleted:
+		if job.plan.Deployment != "" && job.result != nil {
+			return stream.Send(completionRequest(job, *job.result))
+		}
 	case jobAwaitingAcceptance:
 		return stream.Send(&runnerv1.WorkRequest{Body: &runnerv1.WorkRequest_JobAccepted{JobAccepted: &runnerv1.JobAccepted{
 			JobId: job.id.String(), LeaseToken: job.leaseToken}}})
@@ -428,14 +440,57 @@ func sendHeartbeat(stream grpc.BidiStreamingClient[runnerv1.WorkRequest, runnerv
 			State: runnerv1.LocalJobState_LOCAL_JOB_STATE_RUNNING})
 	}
 	return stream.Send(&runnerv1.WorkRequest{Body: &runnerv1.WorkRequest_Heartbeat{Heartbeat: &runnerv1.Heartbeat{
-		Capabilities: capabilities, ActiveLeases: leases, ProtocolVersion: runnerProtocolVersion}}})
+		Capabilities: capabilities, ActiveLeases: leases, ProtocolVersion: protocolFor(capabilities)}}})
+}
+
+func protocolFor(capabilities *runnerv1.RunnerCapabilities) uint32 {
+	if capabilities != nil && capabilities.IsolationLevel == runnerv1.IsolationLevel_ISOLATION_LEVEL_DEPLOYMENT {
+		return 3
+	}
+	return runnerProtocolVersion
+}
+
+func recordExecutionResult(stream grpc.BidiStreamingClient[runnerv1.WorkRequest, runnerv1.WorkResponse], active map[uuid.UUID]*localJob, result executionResult) error {
+	job := active[result.jobID]
+	if job == nil || job.phase != jobRunning {
+		return nil
+	}
+	if job.plan.Deployment == "" && (job.authorityLost.Load() || !time.Now().Before(job.leaseExpires)) {
+		forgetJob(active, job)
+		return nil
+	}
+	job.phase, job.result = jobCompleted, &result
+	return stream.Send(completionRequest(job, result))
+}
+
+// Deployment authority loss stops commands but retains local capacity until the
+// executor has returned from cleanup and the server acknowledges completion.
+func stopLocalJob(stream grpc.BidiStreamingClient[runnerv1.WorkRequest, runnerv1.WorkResponse], active map[uuid.UUID]*localJob, job *localJob) error {
+	if job.plan.Deployment == "" {
+		forgetJob(active, job)
+		return nil
+	}
+	job.authorityLost.Store(true)
+	job.cancel()
+	if job.leaseTimer != nil {
+		job.leaseTimer.Stop()
+	}
+	if job.phase == jobRunning {
+		return nil
+	}
+	if job.phase != jobCompleted {
+		job.phase = jobCompleted
+		job.result = &executionResult{jobID: job.id, conclusion: runnerv1.JobConclusion_JOB_CONCLUSION_CANCELED, cleanupConfirmed: true}
+	}
+	return resendTransition(stream, job)
 }
 
 func executeJob(ctx context.Context, executor Executor, job *localJob, results chan<- executionResult) {
 	started := time.Now()
 	conclusion := runnerv1.JobConclusion_JOB_CONCLUSION_SUCCEEDED
 	detail := ""
-	if err := executor.Execute(ctx, job.id, job.plan, job.source); err != nil {
+	executionErr := executor.Execute(ctx, job.id, job.plan, job.source)
+	if err := executionErr; err != nil {
 		conclusion = runnerv1.JobConclusion_JOB_CONCLUSION_FAILED
 		detail = "job execution failed"
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -443,17 +498,15 @@ func executeJob(ctx context.Context, executor Executor, job *localJob, results c
 			detail = "job execution canceled"
 		}
 	}
-	result := executionResult{jobID: job.id, conclusion: conclusion, detail: detail, duration: time.Since(started)}
-	select {
-	case results <- result:
-	case <-ctx.Done():
-	}
+	result := executionResult{jobID: job.id, conclusion: conclusion, detail: detail, duration: time.Since(started), cleanupConfirmed: !errors.Is(executionErr, ErrDeploymentCleanupUnconfirmed)}
+	clearJobSource(job)
+	results <- result
 }
 
 func completionRequest(job *localJob, result executionResult) *runnerv1.WorkRequest {
 	return &runnerv1.WorkRequest{Body: &runnerv1.WorkRequest_JobCompleted{JobCompleted: &runnerv1.JobCompleted{
 		JobId: job.id.String(), LeaseToken: job.leaseToken, Conclusion: result.conclusion,
-		Duration: durationpb.New(result.duration), Detail: result.detail}}}
+		Duration: durationpb.New(result.duration), Detail: result.detail, CleanupConfirmed: result.cleanupConfirmed}}}
 }
 
 func receiveWork(ctx context.Context, stream grpc.BidiStreamingClient[runnerv1.WorkRequest, runnerv1.WorkResponse],
@@ -482,7 +535,9 @@ func cancelJobs(active map[uuid.UUID]*localJob) {
 		}
 		job.authorityLost.Store(true)
 		job.cancel()
-		clearJobSource(job)
+		if job.phase != jobRunning {
+			clearJobSource(job)
+		}
 	}
 }
 
@@ -523,7 +578,9 @@ func forgetJob(active map[uuid.UUID]*localJob, job *localJob) {
 	}
 	job.authorityLost.Store(true)
 	job.cancel()
-	clearJobSource(job)
+	if job.phase != jobRunning {
+		clearJobSource(job)
+	}
 	delete(active, job.id)
 }
 

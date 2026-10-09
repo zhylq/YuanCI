@@ -23,7 +23,9 @@ func serviceTestExecutor(t *testing.T, mode string) (*DockerExecutor, string) {
 	e.command = func(ctx context.Context, name string, arguments ...string) *exec.Cmd {
 		args := append([]string{"-test.run=^TestDockerServiceHelperProcess$", "--"}, arguments...)
 		cmd := exec.CommandContext(ctx, os.Args[0], args...)
-		cmd.Env = append(os.Environ(), "YUANCI_SERVICE_HELPER=1", "YUANCI_SERVICE_CALLS="+logFile, "YUANCI_SERVICE_MODE="+mode)
+		// Race-instrumented helper processes otherwise sleep one second on exit,
+		// consuming the job deadline without doing any Docker work.
+		cmd.Env = append(os.Environ(), "YUANCI_SERVICE_HELPER=1", "YUANCI_SERVICE_CALLS="+logFile, "YUANCI_SERVICE_MODE="+mode, "GORACE="+os.Getenv("GORACE")+" atexit_sleep_ms=0")
 		return cmd
 	}
 	return e, logFile
@@ -222,8 +224,8 @@ CMD ["sh", "-ec", "if [ \"$MODE\" = unhealthy ]; then exec sleep 300; else exec 
 			}
 			job := pipeline.PlanJob{Name: "docker-service", Image: "alpine:3.21", Timeout: 90 * time.Second,
 				Resources: pipeline.Resources{CPU: "1", Memory: "256Mi"},
-				Services: []pipeline.Service{{Name: "web", Image: image, Environment: map[string]string{"MODE": mode}}},
-				Steps:    []pipeline.Step{{Name: "query", Commands: []string{"wget -q -O - http://web:8080 | grep service-ready"}}}}
+				Services:  []pipeline.Service{{Name: "web", Image: image, Environment: map[string]string{"MODE": mode}}},
+				Steps:     []pipeline.Step{{Name: "query", Commands: []string{"wget -q -O - http://web:8080 | grep service-ready"}}}}
 			if mode == "postgres" {
 				job.Image = "postgres:17-alpine"
 				job.Services = []pipeline.Service{{Name: "db", Image: job.Image, Environment: map[string]string{"POSTGRES_USER": "test", "POSTGRES_PASSWORD": "disposable-service-test"}}}

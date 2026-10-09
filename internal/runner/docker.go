@@ -18,6 +18,7 @@ import (
 )
 
 type DockerExecutor struct {
+	DeploymentPolicy    *DeploymentPolicy
 	Binary              string
 	Stdout              io.Writer
 	Stderr              io.Writer
@@ -41,6 +42,11 @@ func (e *DockerExecutor) Check(ctx context.Context) error {
 }
 
 func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipeline.PlanJob, source *localSource) (result error) {
+	if spec.Deployment != "" {
+		if err := e.DeploymentPolicy.authorize(source); err != nil {
+			return err
+		}
+	}
 	values := checkoutRedactionValues(source)
 	defer func() {
 		for _, value := range values {
@@ -76,10 +82,17 @@ func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipe
 		return err
 	}
 	volume, network := dockerResourceNames(jobID)
+	if spec.Deployment != "" {
+		defer func() {
+			result = errors.Join(result, e.cleanupDeployment(jobID, len(spec.Steps), volume, network, len(spec.Services)))
+		}()
+	}
 	if err := e.run(jobCtx, "volume", "create", volume); err != nil {
 		return err
 	}
-	defer e.cleanup(jobID, len(spec.Steps), volume, network, len(spec.Services))
+	if spec.Deployment == "" {
+		defer e.cleanup(jobID, len(spec.Steps), volume, network, len(spec.Services))
+	}
 	if err := e.run(jobCtx, "network", "create", "--driver", "bridge", network); err != nil {
 		return err
 	}
@@ -115,7 +128,11 @@ func (e *DockerExecutor) Execute(ctx context.Context, jobID uuid.UUID, spec pipe
 			}
 			stepCtx, cancel = context.WithTimeout(jobCtx, duration)
 		}
-		args := buildDockerArgs(volume, network, jobID, index, image, spec, step)
+		var mountArgs []string
+		if spec.Deployment != "" {
+			mountArgs = e.DeploymentPolicy.dockerMountArgs()
+		}
+		args := buildDockerArgs(volume, network, jobID, index, image, spec, step, mountArgs...)
 		command := e.commandFor(stepCtx, e.Binary, args...)
 		out, errOut := jobLogWriters(stepCtx, index, e.Stdout, e.Stderr)
 		stepOut, _ := newRedactingWriter(out, values)
@@ -164,7 +181,7 @@ func (e *DockerExecutor) checkout(ctx context.Context, jobID uuid.UUID, volume, 
 	return errors.Join(command.Run(), stdout.Close(), stderr.Close())
 }
 
-func buildDockerArgs(volume, network string, jobID uuid.UUID, index int, image string, job pipeline.PlanJob, step pipeline.Step) []string {
+func buildDockerArgs(volume, network string, jobID uuid.UUID, index int, image string, job pipeline.PlanJob, step pipeline.Step, administratorMountArgs ...string) []string {
 	name := dockerContainerName(jobID, index)
 	args := []string{"run", "--rm", "--name", name, "--network", network, "--log-driver", "none", "--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges", "--pids-limit", "256", "--read-only",
@@ -194,7 +211,8 @@ func buildDockerArgs(volume, network string, jobID uuid.UUID, index int, image s
 	for _, key := range keys {
 		args = append(args, "--env", key+"="+environment[key])
 	}
-	args = append(args, image, "sh", "-euc", strings.Join(step.Commands, "\n"))
+	args = append(args, administratorMountArgs...)
+	args = append(args, "--entrypoint", "sh", image, "-euc", strings.Join(step.Commands, "\n"))
 	return args
 }
 
@@ -245,6 +263,56 @@ func (e *DockerExecutor) runQuiet(ctx context.Context, args ...string) {
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard
 	_ = command.Run()
+}
+
+// ErrDeploymentCleanupUnconfirmed keeps the deployment queue closed when a
+// daemon failure prevents verifying that all job resources are absent.
+var ErrDeploymentCleanupUnconfirmed = errors.New("deployment cleanup could not be confirmed")
+
+func (e *DockerExecutor) cleanupDeployment(jobID uuid.UUID, steps int, volume, network string, services int) error {
+	timeout := e.CleanupTimeout
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	names := []string{dockerCheckoutContainerName(jobID)}
+	for i := 0; i < steps; i++ {
+		names = append(names, dockerContainerName(jobID, i))
+	}
+	for i := 0; i < services; i++ {
+		names = append(names, dockerServiceContainerName(jobID, i))
+	}
+	// Give user shell traps a bounded opportunity before forcing removal.
+	stopCtx, stopCancel := context.WithTimeout(ctx, 5*time.Second)
+	e.runQuiet(stopCtx, append([]string{"container", "stop", "--time", "3"}, names...)...)
+	stopCancel()
+	e.runQuiet(ctx, append([]string{"container", "rm", "-f", "-v"}, names...)...)
+	e.runQuiet(ctx, "network", "rm", network)
+	e.runQuiet(ctx, "volume", "rm", "-f", volume)
+	for _, name := range names {
+		if !e.resourceAbsent(ctx, []string{"container", "ls", "--all", "--filter", "name=^/" + name + "$", "--format", "{{.Names}}"}, name) {
+			return ErrDeploymentCleanupUnconfirmed
+		}
+	}
+	if !e.resourceAbsent(ctx, []string{"network", "ls", "--filter", "name=^" + network + "$", "--format", "{{.Name}}"}, network) ||
+		!e.resourceAbsent(ctx, []string{"volume", "ls", "--filter", "name=^" + volume + "$", "--format", "{{.Name}}"}, volume) {
+		return ErrDeploymentCleanupUnconfirmed
+	}
+	return nil
+}
+
+func (e *DockerExecutor) resourceAbsent(ctx context.Context, args []string, name string) bool {
+	output, err := e.commandFor(ctx, e.Binary, args...).Output()
+	if err != nil || ctx.Err() != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.TrimSpace(line) == name {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *DockerExecutor) commandFor(ctx context.Context, name string, args ...string) *exec.Cmd {

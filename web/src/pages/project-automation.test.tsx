@@ -16,7 +16,8 @@ test('enabling requires immutable validation and sends revision plus CSRF', asyn
  await screen.findByRole('button', { name: '停用自动构建' })
  const [, options] = fetch.mock.calls.find(([, opts]) => opts?.method === 'PUT')!
  expect(options?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' })
- expect(JSON.parse(String(options?.body))).toMatchObject({ expected_revision: 4, enabled: true })
+ expect(JSON.parse(String(options?.body))).toMatchObject({ expected_revision: 4, enabled: true, cancel_older_commits: true })
+ expect(screen.getByText(/仅用于未声明 triggers 的旧配置/)).toBeInTheDocument()
 })
 
 test('access failure hides controls', async () => {

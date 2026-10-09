@@ -55,10 +55,11 @@ type Credentials struct {
 }
 
 type RotationConfig struct {
-	Address    string
-	ServerName string
-	StateDir   string
-	Current    Credentials
+	Address         string
+	ServerName      string
+	StateDir        string
+	Current         Credentials
+	ProtocolVersion uint32
 }
 
 type credentialMetadata struct {
@@ -105,7 +106,7 @@ func LoadOrEnroll(ctx context.Context, config EnrollmentConfig) (Credentials, er
 	}
 	defer connection.Close()
 	response, err := runnerv1.NewRunnerServiceClient(connection).Register(ctx, &runnerv1.RegisterRequest{
-		OneTimeToken: token, Name: config.Name, Capabilities: config.Capabilities, CsrPem: csrPEM, ProtocolVersion: runnerProtocolVersion})
+		OneTimeToken: token, Name: config.Name, Capabilities: config.Capabilities, CsrPem: csrPEM, ProtocolVersion: protocolFor(config.Capabilities)})
 	if err != nil {
 		return Credentials{}, errors.New("Runner enrollment failed")
 	}
@@ -195,8 +196,12 @@ func RotateCredentials(ctx context.Context, config RotationConfig) (Credentials,
 		return Credentials{}, errors.New("cannot create Runner rotation connection")
 	}
 	defer connection.Close()
+	protocol := config.ProtocolVersion
+	if protocol == 0 {
+		protocol = runnerProtocolVersion
+	}
 	response, err := runnerv1.NewRunnerServiceClient(connection).RotateCertificate(ctx, &runnerv1.RotateCertificateRequest{
-		CsrPem: csrPEM, ProtocolVersion: runnerProtocolVersion})
+		CsrPem: csrPEM, ProtocolVersion: protocol})
 	if err != nil {
 		return Credentials{}, errors.New("Runner certificate rotation failed")
 	}

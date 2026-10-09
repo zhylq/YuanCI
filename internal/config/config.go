@@ -205,6 +205,7 @@ type Runner struct {
 	Architecture          string
 	Executor              string
 	IsolationLevel        string
+	DeploymentPolicyFile  string
 	AvailableDiskBytes    int64
 }
 
@@ -226,7 +227,14 @@ func LoadRunner() (Runner, error) {
 		OS:                    runtime.GOOS,
 		Architecture:          runtime.GOARCH,
 		Executor:              "docker",
-		IsolationLevel:        "standard",
+		IsolationLevel:        env("YUANCI_RUNNER_ISOLATION_LEVEL", "standard"),
+		DeploymentPolicyFile:  os.Getenv("YUANCI_RUNNER_DEPLOYMENT_POLICY_FILE"),
+	}
+	if cfg.IsolationLevel != "standard" && cfg.IsolationLevel != "deployment" {
+		return Runner{}, errors.New("YUANCI_RUNNER_ISOLATION_LEVEL must be standard or deployment")
+	}
+	if cfg.IsolationLevel == "deployment" && !filepath.IsAbs(cfg.DeploymentPolicyFile) {
+		return Runner{}, errors.New("deployment Runner requires an absolute YUANCI_RUNNER_DEPLOYMENT_POLICY_FILE")
 	}
 	if raw := os.Getenv("YUANCI_RUNNER_AVAILABLE_DISK_BYTES"); raw != "" {
 		value, parseErr := strconv.ParseInt(raw, 10, 64)
