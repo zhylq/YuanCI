@@ -1,0 +1,3 @@
+FROM yuanci-quickstart-runner:c8a7dee
+COPY bin/yuanci-runner /usr/local/bin/yuanci-runner
+LABEL org.opencontainers.image.revision="354ae6c8282498b1fcbebd73fee61510802130b8"

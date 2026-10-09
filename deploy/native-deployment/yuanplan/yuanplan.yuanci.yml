@@ -1,0 +1,28 @@
+version: v1
+name: yuanplan-deploy
+triggers:
+  - event: push
+    branches: [main]
+deployment:
+  environment: production
+stages:
+  - name: deploy
+    jobs:
+      - name: release
+        image: yuanplan-publisher:python312-buildkit
+        timeout: 30m
+        resources:
+          cpu: "2"
+          memory: 4Gi
+          pids: 512
+          disk: 8GiB
+        steps:
+          - name: release
+            commands:
+              - |
+                SHA=$(git rev-parse HEAD)
+                ARCHIVE="/opt/yuanplan/.data/automation/source-$SHA.tar"
+                mkdir -p /opt/yuanplan/.data/automation
+                git archive --format=tar --output="$ARCHIVE" HEAD
+                bash /workspace/deploy/automation/release.sh "$SHA" "$ARCHIVE" /opt/yuanplan
+                rm -f "$ARCHIVE"

@@ -1,0 +1,9 @@
+{
+  "repositories": [
+    { "provider": "gitee", "external_id": "50685632" }
+  ],
+  "host_mounts": [
+    { "source": "/var/run/docker.sock", "target": "/var/run/docker.sock", "read_only": false },
+    { "source": "/opt/yuanplan", "target": "/opt/yuanplan", "read_only": false }
+  ]
+}

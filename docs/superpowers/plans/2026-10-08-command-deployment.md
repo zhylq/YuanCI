@@ -33,9 +33,13 @@ Linux verification of snapshot `07f612f`: race checks passed for the backend pac
 - [x] Make Run detail show stop deployment and suppress duplicate deployment rerun actions.
 - [x] Verify stop, lost-lease cleanup, policy denial and commands-only Docker execution.
 
-Executor delivery candidate: `354ae6c`. Independent specification review approved; quality review is in progress. Full Go tests, 35 frontend tests, lint and build passed. Real Docker ENTRYPOINT/commands/resource-cleanup verification passed (2.900 seconds). Complete Linux race tests and disposable PostgreSQL integrations passed (PostgreSQL 41.412 seconds), followed by `go vet ./...`. Completion acknowledgement is limited to protocol v3; older standard Runner binaries remain compatible.
+Executor delivery: `354ae6c`. Independent specification and quality reviews approved. Full Go tests, 35 frontend tests, lint and build passed. Real Docker ENTRYPOINT/commands/resource-cleanup verification passed (2.900 seconds). Complete Linux race tests and disposable PostgreSQL integrations passed (PostgreSQL 41.412 seconds), followed by `go vet ./...`. Completion acknowledgement is limited to protocol v3; older standard Runner binaries remain compatible.
 
 ### Delivery
-- [ ] Update schema, examples, operational docs and development log.
-- [ ] Run relevant backend/frontend checks and Linux race checks.
+- [x] Update schema, examples, operational docs and development log.
+- [x] Run relevant backend/frontend checks and Linux race checks.
 - [ ] Commit and push authorized changes; prepare verified server update and migrate the sample only after replacement verification.
+
+Operational recovery delivery: `6322c0f`, independently approved by specification and quality reviews. Audited administrator cleanup confirmation preserves deployment identity and original terminal results, and never replays commands. Full affected CLI/store tests passed with real PostgreSQL (58.665 seconds); final Linux race/PG checks passed (41.554 seconds), followed by affected-package vet.
+
+The reviewed administrator package is uploaded at `/home/deploy/yuanci-native-deployment-20261009`; all six transfer checksums passed. Real isolated Compose bootstrap verified deployment protocol v3 and ordinary Runner identity preservation at protocol v2. Production administrator installation and the main-only YuanPlan YAML push remain pending. Installer sources and pinned image/archive checksums are retained under `deploy/native-deployment/yuanplan`.
