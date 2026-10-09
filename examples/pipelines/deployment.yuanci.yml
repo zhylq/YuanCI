@@ -10,7 +10,5 @@ stages:
     jobs:
       - name: commands
         image: alpine:3.21
-        steps:
-          - name: release
-            commands:
-              - sh ./scripts/deploy.sh
+        commands:
+          - sh ./scripts/deploy.sh

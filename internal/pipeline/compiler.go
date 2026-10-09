@@ -118,6 +118,14 @@ func Compile(source []byte, now time.Time) (Plan, error) {
 	if err := Validate(value); err != nil {
 		return Plan{}, err
 	}
+	// Normalize execution syntax before hashing and producing the persisted plan.
+	for i := range value.Stages {
+		for j := range value.Stages[i].Jobs {
+			job := &value.Stages[i].Jobs[j]
+			job.Steps = effectiveJobSteps(*job)
+			job.Commands = nil
+		}
+	}
 
 	canonical, err := json.Marshal(value)
 	if err != nil {
@@ -169,6 +177,13 @@ func Compile(source []byte, now time.Time) (Plan, error) {
 	return plan, nil
 }
 
+func effectiveJobSteps(job Job) []Step {
+	if job.Commands != nil {
+		return []Step{{Name: "commands", Commands: job.Commands}}
+	}
+	return job.Steps
+}
+
 func validateJobs(path string, jobs []Job) ValidationErrors {
 	var problems ValidationErrors
 	if len(jobs) == 0 {
@@ -190,7 +205,11 @@ func validateJobs(path string, jobs []Job) ValidationErrors {
 				problems = append(problems, ValidationError{jobPath + "." + problem.Path, problem.Message})
 			}
 		}
-		if len(job.Steps) == 0 {
+		if job.Commands != nil && job.Steps != nil {
+			problems = append(problems, ValidationError{jobPath, "commands and steps are mutually exclusive"})
+		}
+		steps := effectiveJobSteps(job)
+		if len(steps) == 0 {
 			problems = append(problems, ValidationError{jobPath + ".steps", "must contain at least one step"})
 		}
 		if job.Retry < 0 || job.Retry > 5 {
@@ -221,7 +240,7 @@ func validateJobs(path string, jobs []Job) ValidationErrors {
 				problems = append(problems, ValidationError{jobPath + ".timeout", err.Error()})
 			}
 		}
-		for j, step := range job.Steps {
+		for j, step := range steps {
 			stepPath := fmt.Sprintf("%s.steps[%d]", jobPath, j)
 			if !namePattern.MatchString(step.Name) {
 				problems = append(problems, ValidationError{stepPath + ".name", "is invalid"})

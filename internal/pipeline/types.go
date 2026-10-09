@@ -48,6 +48,7 @@ type Job struct {
 	Matrix      map[string][]string `yaml:"matrix,omitempty" json:"matrix,omitempty"`
 	Resources   Resources           `yaml:"resources,omitempty" json:"resources,omitempty"`
 	RunsOn      RunnerRequirements  `yaml:"runs_on,omitempty" json:"runs_on,omitempty"`
+	Commands    []string            `yaml:"commands,omitempty" json:"commands,omitempty"`
 	Steps       []Step              `yaml:"steps" json:"steps"`
 }
 

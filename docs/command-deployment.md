@@ -6,6 +6,25 @@ repository and enable the project's webhook automation. A matching push to `main
 the events and branches; project event switches are the fallback for older YAML
 without triggers.
 
+A Job can use `commands` directly for a single script:
+
+```yaml
+jobs:
+  - name: release
+    image: alpine:3.21
+    commands:
+      - sh ./scripts/deploy.sh
+```
+
+YuanCI compiles these commands into one step named `commands`, using the Job's
+image and environment. Resources are optional and retain the existing defaults.
+Use explicit `steps` when you need separate images, timeouts, working directories
+or log segments. Each step runs in a separate container sharing the Job workspace;
+shell state does not carry between steps. Existing explicit steps keep their
+names and behavior. A Job must supply either `commands` or `steps`, and cannot
+supply both, even if one is an empty list. A null value is treated as omitted.
+Commands must be nonempty, and direct Job commands require a Job image.
+
 YuanCI dispatches at most one deployment for each repository commit and environment.
 Deployments for the same repository and environment execute in FIFO order. Each
 Runner step runs only the commands you wrote, at the assigned commit. Tests,
